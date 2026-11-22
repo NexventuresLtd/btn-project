@@ -1,0 +1,5 @@
+-- +goose NO TRANSACTION
+-- +goose Up
+ALTER TYPE "Role" ADD VALUE IF NOT EXISTS 'SUPER_ADMIN';
+-- +goose Down
+SELECT 1;

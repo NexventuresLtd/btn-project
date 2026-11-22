@@ -1,0 +1,44 @@
+# /etc/systemd/system/btn-ops-api.service — BTN Operations API (Go) on a VM / bare metal.
+#
+# Build on any machine with Go:  cd backend && CGO_ENABLED=0 go build -trimpath -tags timetzdata \
+#                                   -ldflags="-s -w" -o bin/ ./cmd/server ./cmd/migrate ./cmd/seed ./cmd/import
+# Install:  /opt/btn-ops/backend/bin/{server,migrate,seed,import}  +  /opt/btn-ops/backend/.env (chmod 600)
+# First install only:  sudo -u btnops /opt/btn-ops/backend/bin/seed
+# Enable:   systemctl daemon-reload && systemctl enable --now btn-ops-api
+[Unit]
+Description=BTN Operations API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=btnops
+Group=btnops
+WorkingDirectory=/opt/btn-ops/backend
+EnvironmentFile=/opt/btn-ops/backend/.env
+Environment=APP_ENV=production
+# Apply pending database migrations before every start.
+ExecStartPre=/opt/btn-ops/backend/bin/migrate up
+ExecStart=/opt/btn-ops/backend/bin/server
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+ReadOnlyPaths=/opt/btn-ops/backend
+
+[Install]
+WantedBy=multi-user.target

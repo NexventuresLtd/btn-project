@@ -1,0 +1,6 @@
+bin/
+.env
+.env.*
+!.env.example
+run-dev.sh
+**/*_test.go

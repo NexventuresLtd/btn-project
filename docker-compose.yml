@@ -1,0 +1,70 @@
+# Production-style stack: PostgreSQL + migrations + Go API + web. Put the TLS proxy from
+# deploy/nginx.conf in front (the web container only listens on 127.0.0.1:8080).
+#
+#   cp backend/.env.example backend/.env      # fill in real values; DATABASE_URL host must be "db"
+#   export POSTGRES_PASSWORD=...              # same password as in DATABASE_URL
+#   docker compose up -d --build
+#   docker compose run --rm api-tools /app/seed    # first install only: catalogue + Super Admin
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: btn_ops
+      POSTGRES_USER: btn_ops
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U btn_ops -d btn_ops"]
+      interval: 10s
+      retries: 6
+
+  # Applies pending database migrations, then exits. The API waits for it.
+  migrate:
+    build: ./backend
+    env_file: ./backend/.env
+    entrypoint: ["/app/migrate", "up"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      APP_ENV: production
+      PORT: "4000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/app/server", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # One-off admin commands: seed, import. Not started by `up`.
+  api-tools:
+    build: ./backend
+    env_file: ./backend/.env
+    profiles: ["tools"]
+    volumes:
+      - ./data/samples:/data/samples:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

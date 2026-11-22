@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* BTN brand tokens — navy from the logo (#0C234B), amber accent from btnlimited.com */
+/* Brand scale. Defaults match the BTN logo; branding.ts overrides --brand-* at runtime (Super Admin → Branding). */
+:root {
+  --brand-50: #eef2f9; --brand-100: #d9e1f0; --brand-200: #b4c3e0; --brand-300: #8299c6; --brand-400: #5372ac;
+  --brand-500: #34558f; --brand-600: #234274; --brand-700: #18335e; --brand-800: #0c234b; --brand-900: #081a39; --brand-950: #050f24;
+  --brand-accent: #f59e0b;
+  --brand-accent-strong: #d97706;
+  --brand-font: Inter, "Noto Sans Ethiopic", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --brand-font-size: 16px;
+}
+
+@theme {
+  --font-sans: var(--brand-font);
+
+  --color-navy-50: var(--brand-50);
+  --color-navy-100: var(--brand-100);
+  --color-navy-200: var(--brand-200);
+  --color-navy-300: var(--brand-300);
+  --color-navy-400: var(--brand-400);
+  --color-navy-500: var(--brand-500);
+  --color-navy-600: var(--brand-600);
+  --color-navy-700: var(--brand-700);
+  --color-navy-800: var(--brand-800);
+  --color-navy-900: var(--brand-900);
+  --color-navy-950: var(--brand-950);
+
+  --color-brand: var(--brand-800);
+  --color-accent: var(--brand-accent);
+  --color-accent-strong: var(--brand-accent-strong);
+  --color-surface: #f4f6fa;
+  --color-line: #e5e9f0;
+
+  /* chart series, in order */
+  --color-chart-1: var(--brand-800);
+  --color-chart-2: var(--brand-accent);
+  --color-chart-3: #3b82f6;
+  --color-chart-4: #14b8a6;
+  --color-chart-5: #a855f7;
+
+  --shadow-card: 0 1px 2px rgb(12 35 75 / 0.04), 0 4px 16px rgb(12 35 75 / 0.05);
+  --radius-card: 1rem;
+}
+
+@layer base {
+  html { -webkit-font-smoothing: antialiased; font-size: var(--brand-font-size); }
+  /* longer Amharic / Kinyarwanda strings: let headings and buttons wrap instead of clipping */
+  h1, h2, h3 { overflow-wrap: anywhere; }
+  button, a { overflow-wrap: break-word; }
+  :lang(am) { line-height: 1.55; }
+  body { @apply bg-surface text-slate-900; font-feature-settings: "cv11", "ss01"; }
+  :focus-visible { @apply outline-2 outline-offset-2 outline-navy-500; }
+  input[type="number"]::-webkit-inner-spin-button { opacity: 0.4; }
+}
+
+@utility tabular { font-variant-numeric: tabular-nums; }
