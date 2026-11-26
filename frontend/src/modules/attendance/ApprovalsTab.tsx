@@ -49,7 +49,7 @@ export function ApprovalsTab({ site }: { site: Site }) {
       <Card>
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-4">
           <h2 className="text-[15px] font-semibold text-slate-900">{t("attendance.approvals.daysTitle")}</h2>
-          {canApprove ? <Button className="ml-auto" size="sm" variant="secondary" icon={<ShieldCheck className="size-4" />} onClick={() => setRangeOpen(true)}>{t("attendance.approvals.approvePeriod")}</Button> : null}
+          {canApprove ? <Button onlineOnly className="ml-auto" size="sm" variant="secondary" icon={<ShieldCheck className="size-4" />} onClick={() => setRangeOpen(true)}>{t("attendance.approvals.approvePeriod")}</Button> : null}
         </div>
         {pending.isError ? <ErrorState error={pending.error} retry={() => pending.refetch()} /> : pending.isLoading ? <div className="flex justify-center py-10"><Spinner /></div> : !pending.data?.items.length ? (
           <EmptyState icon={<ClipboardCheck />} title={t("attendance.approvals.noneDays")} />
@@ -70,7 +70,7 @@ export function ApprovalsTab({ site }: { site: Site }) {
                     <td className="tabular px-4 py-2.5 text-right">{d.present + d.half * 0.5}</td>
                     <td className="tabular px-4 py-2.5 text-right">{formatQty(d.overtimeHours)}</td>
                     <td className="px-4 py-2.5 text-xs text-slate-500">{d.submittedBy ?? "—"}{d.submittedAt ? ` · ${formatDateTime(d.submittedAt)}` : ""}</td>
-                    <td className="px-4 py-2.5 text-right">{canApprove ? <Button size="sm" icon={<Check className="size-3.5" />} loading={busy === `${d.plant.id}|${d.date}`} onClick={() => void approve(d.plant.id, d.date)}>{t("attendance.day.approve")}</Button> : null}</td>
+                    <td className="px-4 py-2.5 text-right">{canApprove ? <Button onlineOnly size="sm" icon={<Check className="size-3.5" />} loading={busy === `${d.plant.id}|${d.date}`} onClick={() => void approve(d.plant.id, d.date)}>{t("attendance.day.approve")}</Button> : null}</td>
                   </tr>
                 ))}
               </tbody>
@@ -105,8 +105,8 @@ export function ApprovalsTab({ site }: { site: Site }) {
                 </div>
                 {c.status === "PENDING" && canApprove ? (
                   <div className="flex gap-2">
-                    <Button size="sm" icon={<Check className="size-3.5" />} disabled={c.requestedById === user?.id} title={c.requestedById === user?.id ? t("attendance.correction.ownHint") : undefined} onClick={() => setDecide({ c, approve: true })}>{t("attendance.correction.approve")}</Button>
-                    <Button size="sm" variant="secondary" icon={<X className="size-3.5" />} disabled={c.requestedById === user?.id} onClick={() => setDecide({ c, approve: false })}>{t("attendance.correction.reject")}</Button>
+                    <Button onlineOnly size="sm" icon={<Check className="size-3.5" />} disabled={c.requestedById === user?.id} title={c.requestedById === user?.id ? t("attendance.correction.ownHint") : undefined} onClick={() => setDecide({ c, approve: true })}>{t("attendance.correction.approve")}</Button>
+                    <Button onlineOnly size="sm" variant="secondary" icon={<X className="size-3.5" />} disabled={c.requestedById === user?.id} onClick={() => setDecide({ c, approve: false })}>{t("attendance.correction.reject")}</Button>
                   </div>
                 ) : c.status === "PENDING" ? <Badge tone="amber">{t("attendance.correction.status.PENDING")}</Badge> : <Badge tone={c.status === "APPROVED" ? "green" : "slate"}>{t(`attendance.correction.status.${c.status}`)}</Badge>}
               </li>
@@ -130,7 +130,7 @@ function RangeModal({ site, onClose, onApprove }: { site: Site; onClose: () => v
   const [busy, setBusy] = useState(false);
   return (
     <Modal open onClose={onClose} title={t("attendance.approvals.approvePeriod")} description={t("attendance.approvals.periodHint")}
-      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button><Button loading={busy} onClick={async () => { setBusy(true); await onApprove(plantId, from, to, accept); setBusy(false); }}>{t("attendance.day.approve")}</Button></>}>
+      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button><Button onlineOnly loading={busy} onClick={async () => { setBusy(true); await onApprove(plantId, from, to, accept); setBusy(false); }}>{t("attendance.day.approve")}</Button></>}>
       <div className="grid gap-4 sm:grid-cols-3">
         <Field label={t("attendance.site")} htmlFor="rng-site">
           <Select id="rng-site" value={plantId} disabled={!!site.pinned} onChange={(e) => setPlantId(e.target.value)}>{site.plants.map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}</Select>
@@ -165,7 +165,7 @@ function DecideModal({ c, approve, onClose }: { c: Correction; approve: boolean;
   };
   return (
     <Modal open onClose={onClose} size="sm" title={t(approve ? "attendance.correction.approve" : "attendance.correction.reject")} description={`${c.workerName} · ${c.plant.code} · ${formatDate(c.date)}`}
-      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button><Button loading={busy} variant={approve ? "primary" : "secondary"} onClick={() => void go()}>{t(approve ? "attendance.correction.approve" : "attendance.correction.reject")}</Button></>}>
+      footer={<><Button variant="ghost" onClick={onClose}>{t("common.cancel")}</Button><Button onlineOnly loading={busy} variant={approve ? "primary" : "secondary"} onClick={() => void go()}>{t(approve ? "attendance.correction.approve" : "attendance.correction.reject")}</Button></>}>
       {err ? <div className="mb-3"><Alert tone="red">{err}</Alert></div> : null}
       {approve ? <p className="mb-3 text-sm text-slate-600">{t("attendance.correction.approveHint")}</p> : null}
       <Field label={t(approve ? "attendance.correction.noteOptional" : "attendance.correction.noteRequired")} htmlFor="dec-note">

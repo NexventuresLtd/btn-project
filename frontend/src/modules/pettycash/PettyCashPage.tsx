@@ -189,8 +189,8 @@ export function PettyCashPage() {
         <div className="flex items-center justify-end gap-1.5">
           {canReview(e) ? (
             <>
-              <Button size="sm" variant="success" icon={<Check className="size-3.5" />} onClick={() => setApproving(e)} disabled={!net.reachable} title={!net.reachable ? t("pettycash.offline.approvalOnline") : undefined}>{t("common.approve")}</Button>
-              <Button size="sm" variant="secondary" icon={<X className="size-3.5" />} onClick={() => setRejecting(e)} className="text-red-700" disabled={!net.reachable} title={!net.reachable ? t("pettycash.offline.approvalOnline") : undefined}>{t("common.reject")}</Button>
+              <Button onlineOnly size="sm" variant="success" icon={<Check className="size-3.5" />} onClick={() => setApproving(e)}>{t("common.approve")}</Button>
+              <Button onlineOnly size="sm" variant="secondary" icon={<X className="size-3.5" />} onClick={() => setRejecting(e)} className="text-red-700">{t("common.reject")}</Button>
             </>
           ) : null}
           {canEdit(e) ? (
@@ -198,7 +198,7 @@ export function PettyCashPage() {
               <Pencil className="size-4" />
             </Button>
           ) : null}
-          <Button size="icon" variant="ghost" title={t("pettycash.voucherPdf")} aria-label={t("pettycash.voucherPdfFor", { number: e.number })} onClick={() => openPdf(`/pettycash/pdf/voucher/${e.id}`)}>
+          <Button onlineOnly="download" size="icon" variant="ghost" title={t("pettycash.voucherPdf")} aria-label={t("pettycash.voucherPdfFor", { number: e.number })} onClick={() => openPdf(`/pettycash/pdf/voucher/${e.id}`)}>
             <FileDown className="size-4" />
           </Button>
         </div>
@@ -433,6 +433,7 @@ function ApproveDialog({ entry, balance, onClose }: { entry: PettyEntry | null; 
   const short = entry?.type === "EXPENSE" && balance != null && entry.total > balance;
   return (
     <ConfirmDialog
+      onlineOnly
       open={!!entry}
       onClose={() => {
         approve.reset();
@@ -488,7 +489,7 @@ function RejectDialog({ entry, onClose }: { entry: PettyEntry | null; onClose: (
       footer={
         <>
           <Button variant="secondary" onClick={close}>{t("common.cancel")}</Button>
-          <Button
+          <Button onlineOnly
             variant="danger"
             loading={reject.isPending}
             onClick={() => {

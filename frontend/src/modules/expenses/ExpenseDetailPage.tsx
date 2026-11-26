@@ -168,13 +168,13 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
             <div className="flex flex-wrap gap-2">
               {a.approveOverrun ? (
                 <>
-                  <Button variant="danger" icon={<XCircle className="size-4" />} disabled={!online} onClick={() => setDialog("overrunReject")}>{t("expenses.detail.overrunReject")}</Button>
-                  <Button variant="success" icon={<ShieldCheck className="size-4" />} disabled={!online} onClick={() => setDialog("overrunApprove")}>{t("expenses.detail.overrunApprove")}</Button>
+                  <Button onlineOnly variant="danger" icon={<XCircle className="size-4" />} onClick={() => setDialog("overrunReject")}>{t("expenses.detail.overrunReject")}</Button>
+                  <Button onlineOnly variant="success" icon={<ShieldCheck className="size-4" />} onClick={() => setDialog("overrunApprove")}>{t("expenses.detail.overrunApprove")}</Button>
                 </>
               ) : a.approve ? (
                 <>
-                  <Button variant="danger" icon={<XCircle className="size-4" />} disabled={!online} onClick={() => setDialog("reject")}>{t("common.reject")}</Button>
-                  <Button variant="success" icon={<CheckCircle2 className="size-4" />} disabled={!online} onClick={() => setDialog("approve")}>{t("common.approve")}</Button>
+                  <Button onlineOnly variant="danger" icon={<XCircle className="size-4" />} onClick={() => setDialog("reject")}>{t("common.reject")}</Button>
+                  <Button onlineOnly variant="success" icon={<CheckCircle2 className="size-4" />} onClick={() => setDialog("approve")}>{t("common.approve")}</Button>
                 </>
               ) : null}
             </div>
@@ -185,7 +185,7 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
         <Card className="mb-5 border-navy-100 bg-navy-50/40">
           <CardBody className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-slate-700">{t("expenses.detail.recordPaymentHint", { method: tx(`expenses.method.${e.paymentMethod}`) })}</p>
-            <Button icon={<ClipboardCheck className="size-4" />} disabled={!online} onClick={() => setDialog("recordPayment")}>{t("expenses.detail.recordPayment")}</Button>
+            <Button onlineOnly icon={<ClipboardCheck className="size-4" />} onClick={() => setDialog("recordPayment")}>{t("expenses.detail.recordPayment")}</Button>
           </CardBody>
         </Card>
       ) : null}
@@ -277,7 +277,7 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
       <ExpenseFormModal open={editing} onClose={() => setEditing(false)} expense={e} />
 
       {dialog && dialog !== "recordPayment" ? (
-        <ConfirmDialog
+        <ConfirmDialog onlineOnly
           open
           onClose={close}
           onConfirm={confirm}
@@ -302,7 +302,7 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
         size="sm"
         title={dialogTitle.recordPayment}
         description={`${e.number} · ${formatRWF(e.amount)}`}
-        footer={<><Button variant="secondary" onClick={close}>{t("common.cancel")}</Button><Button loading={act.isPending} onClick={recordPayment}>{t("expenses.detail.recordPayment")}</Button></>}
+        footer={<><Button variant="secondary" onClick={close}>{t("common.cancel")}</Button><Button onlineOnly loading={act.isPending} onClick={recordPayment}>{t("expenses.detail.recordPayment")}</Button></>}
       >
         <div className="space-y-4">
           <p className="text-sm text-slate-600">{t("expenses.detail.recordPaymentNote")}</p>
@@ -428,7 +428,7 @@ function Receipts({ e, online, onChanged }: { e: Expense; online: boolean; onCha
                 </div>
                 <div className="flex items-center gap-1">
                   <Button size="icon" variant="ghost" title={t("expenses.receipt.view")} aria-label={t("expenses.receipt.viewFile", { name: f.fileName })} onClick={() => openReceipt(e.id, f.id)}><Eye className="size-4" /></Button>
-                  <Button size="icon" variant="ghost" title={t("common.download")} aria-label={t("expenses.receipt.downloadFile", { name: f.fileName })} onClick={() => downloadFile(receiptDownloadPath(e.id, f.id))}><Download className="size-4" /></Button>
+                  <Button onlineOnly="download" size="icon" variant="ghost" title={t("common.download")} aria-label={t("expenses.receipt.downloadFile", { name: f.fileName })} onClick={() => downloadFile(receiptDownloadPath(e.id, f.id))}><Download className="size-4" /></Button>
                   {canRemove ? <Button size="icon" variant="ghost" className="text-red-700" title={t("common.remove")} aria-label={t("expenses.receipt.removeFile", { name: f.fileName })} disabled={!online} onClick={() => setRemoving(f.id)}><Trash2 className="size-4" /></Button> : null}
                 </div>
               </li>

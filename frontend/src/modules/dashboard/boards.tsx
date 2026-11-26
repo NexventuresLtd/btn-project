@@ -8,6 +8,7 @@ import { formatDate, formatDateTime } from "@/lib/dates";
 import { formatInt, formatQty, formatRWF } from "@/lib/format";
 import { useT } from "@/i18n";
 import type { CutoffInfo } from "@/components/DataCutoff";
+import { useReportCache } from "@/offline/cache";
 
 /** Role dashboards (RPT-01, SRS §10): GET /dashboard/boards and /dashboard/boards/:board. */
 export type BoardKey = "executive" | "production" | "finance" | "procurement" | "supervisor" | "admin";
@@ -32,18 +33,22 @@ export interface Board {
 }
 
 export function useBoards() {
+  const cached = useReportCache();
   return useQuery({
     queryKey: ["dashboard", "boards"],
-    queryFn: ({ signal }) => get<{ default: BoardKey; boards: BoardRef[] }>("/dashboard/boards", signal),
+    networkMode: "always",
+    queryFn: cached("dashboard:boards", "", (signal) => get<{ default: BoardKey; boards: BoardRef[] }>("/dashboard/boards", signal)),
     staleTime: 10 * 60_000,
   });
 }
 
 export function useBoard(key: BoardKey | null, query: string) {
+  const cached = useReportCache();
   return useQuery({
     enabled: !!key,
     queryKey: ["dashboard", "board", key, query],
-    queryFn: ({ signal }) => get<Board>(`/dashboard/boards/${key}${query}`, signal),
+    networkMode: "always",
+    queryFn: cached(`dashboard:board:${key}`, query, (signal) => get<Board>(`/dashboard/boards/${key}${query}`, signal)),
     placeholderData: keepPreviousData,
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,

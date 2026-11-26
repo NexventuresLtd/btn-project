@@ -72,14 +72,14 @@ export function BudgetDetailPage() {
             <PdfButton path={`/budgets/pdf/${b.id}`} label={t("budgets.detail.pdf")} />
             <ExportMenu path={`/budgets/${b.id}`} />
             {a.edit ? <Button variant="secondary" icon={<Pencil className="size-4" />} onClick={() => setEditing(true)}>{b.status === "APPROVED" ? t("budgets.action.revise") : t("budgets.action.edit")}</Button> : null}
-            {a.submit ? <Button icon={<Send className="size-4" />} onClick={() => setConfirm("submit")}>{t("budgets.action.submit")}</Button> : null}
+            {a.submit ? <Button onlineOnly icon={<Send className="size-4" />} onClick={() => setConfirm("submit")}>{t("budgets.action.submit")}</Button> : null}
             {a.approve ? (
               <>
-                <Button variant="success" icon={<Check className="size-4" />} disabled={offline} onClick={() => setApproving(true)}>{t("budgets.action.approve")}</Button>
-                <Button variant="secondary" className="text-red-700" icon={<X className="size-4" />} disabled={offline} onClick={() => setRejecting(true)}>{t("budgets.action.reject")}</Button>
+                <Button onlineOnly variant="success" icon={<Check className="size-4" />} onClick={() => setApproving(true)}>{t("budgets.action.approve")}</Button>
+                <Button onlineOnly variant="secondary" className="text-red-700" icon={<X className="size-4" />} onClick={() => setRejecting(true)}>{t("budgets.action.reject")}</Button>
               </>
             ) : null}
-            {a.archive ? <Button variant="ghost" icon={<Archive className="size-4" />} onClick={() => setConfirm("archive")}>{t("budgets.action.archive")}</Button> : null}
+            {a.archive ? <Button onlineOnly variant="ghost" icon={<Archive className="size-4" />} onClick={() => setConfirm("archive")}>{t("budgets.action.archive")}</Button> : null}
             {a.delete ? <Button variant="ghost" className="text-red-700" icon={<Trash2 className="size-4" />} onClick={() => setConfirm("delete")}>{t("budgets.action.delete")}</Button> : null}
           </>
         }
@@ -143,7 +143,7 @@ export function BudgetDetailPage() {
         tone={confirm === "delete" ? "danger" : "primary"}
         loading={submit.isPending || archive.isPending || remove.isPending}
       />
-      <ConfirmDialog open={approving} onClose={() => setApproving(false)} onConfirm={() => approve.mutate({ id: b.id, comment: comment.trim() || undefined })}
+      <ConfirmDialog onlineOnly open={approving} onClose={() => setApproving(false)} onConfirm={() => approve.mutate({ id: b.id, comment: comment.trim() || undefined })}
         title={t("budgets.confirm.approveTitle", { number: b.number })} confirmLabel={t("budgets.action.approve")} tone="success" loading={approve.isPending}>
         <p className="mb-3 text-sm text-slate-600">{t("budgets.confirm.approveText", { total: formatRWF(b.lines.reduce((s, l) => s + l.amount, 0)) })}</p>
         <Field label={t("budgets.confirm.comment")} htmlFor="bud-approve-comment">
@@ -155,7 +155,7 @@ export function BudgetDetailPage() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setRejecting(false)}>{t("budgets.action.cancel")}</Button>
-            <Button variant="danger" loading={reject.isPending} onClick={() => { setTouched(true); if (reason.trim().length >= 3) reject.mutate({ id: b.id, comment: reason.trim() }); }}>{t("budgets.action.reject")}</Button>
+            <Button onlineOnly variant="danger" loading={reject.isPending} onClick={() => { setTouched(true); if (reason.trim().length >= 3) reject.mutate({ id: b.id, comment: reason.trim() }); }}>{t("budgets.action.reject")}</Button>
           </>
         }>
         <Field label={t("budgets.confirm.reason")} required error={rejectErr} htmlFor="bud-reject">

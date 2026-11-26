@@ -2,6 +2,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { get, patch, post, qs, upload } from "@/lib/api";
 import { withOfflineCache } from "@/offline/hooks";
+import { useReportCache } from "@/offline/cache";
 
 export const PROC_KEY = ["procurement"] as const;
 
@@ -167,10 +168,10 @@ export function uploadAttachment(entity: string, entityId: string, kind: string,
   return upload<Attachment>("/procurement/attachments", f);
 }
 export const useTrace = (p: { requestId?: string; purchaseOrderId?: string }, enabled: boolean) =>
-  useQuery({ queryKey: [...PROC_KEY, "trace", p], enabled, queryFn: () => get<Trace>(`/procurement/trace${qs(p)}`) });
+  useQuery({ queryKey: [...PROC_KEY, "trace", p], enabled, networkMode: "always", queryFn: useReportCache()("procurement:trace", qs(p), () => get<Trace>(`/procurement/trace${qs(p)}`)) });
 export const useSpend = (p: Params) =>
-  useQuery({ queryKey: [...PROC_KEY, "spend", p], queryFn: () => get<SpendReport>(`/procurement/reports/spend${qs(p)}`), placeholderData: keepPreviousData });
-export const useSummary = (plantId: string) => useQuery({ queryKey: [...PROC_KEY, "summary", plantId], queryFn: () => get<Summary>(`/procurement/summary${qs({ plantId })}`) });
+  useQuery({ queryKey: [...PROC_KEY, "spend", p], networkMode: "always", queryFn: useReportCache()("procurement:spend", qs(p), () => get<SpendReport>(`/procurement/reports/spend${qs(p)}`)), placeholderData: keepPreviousData });
+export const useSummary = (plantId: string) => useQuery({ queryKey: [...PROC_KEY, "summary", plantId], networkMode: "always", queryFn: useReportCache()("procurement:summary", plantId, () => get<Summary>(`/procurement/summary${qs({ plantId })}`)) });
 
 /** Line value in RWF (quantity × unit price, rounded like the server). */
 export const lineValue = (qty: number, price: number) => Math.round(qty * price);

@@ -32,7 +32,7 @@ export function ReturnModal({ open, onClose, period }: { open: boolean; onClose:
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button>
-          <Button
+          <Button onlineOnly
             variant="danger"
             loading={ret.isPending}
             onClick={() => {
@@ -98,7 +98,7 @@ export function RecordPaymentsModal({ open, onClose, period, canRecordPettyCash 
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button>
-          <Button
+          <Button onlineOnly
             variant="success"
             loading={pay.isPending}
             disabled={!!dateError && !fieldError(pay.error, "paidOn")}

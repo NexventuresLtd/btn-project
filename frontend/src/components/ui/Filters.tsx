@@ -122,11 +122,12 @@ export function PdfButton({ path, params, label, variant = "secondary" }: { path
 
   return (
     <div ref={ref} className="relative inline-flex" data-tour="pdf-button">
-      <Button variant={variant} icon={<FileDown className="size-4" />} onClick={() => openPdf(full, shape)} className="rounded-r-none">
+      <Button variant={variant} icon={<FileDown className="size-4" />} onClick={() => openPdf(full, shape)} className="rounded-r-none" onlineOnly="download">
         {label ?? t("common.pdfReport")}
       </Button>
       <Button
         variant={variant}
+        onlineOnly="download"
         aria-label={t("common.pdfOptions")}
         aria-haspopup="dialog"
         aria-expanded={open}

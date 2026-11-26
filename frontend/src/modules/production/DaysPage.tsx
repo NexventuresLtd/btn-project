@@ -55,8 +55,8 @@ export function DaysPage() {
     {
       key: "act", header: <span className="sr-only">{t("common.actions")}</span>, align: "right",
       cell: (d) => !can("production.close") ? null : d.status === "CLOSED"
-        ? <Button size="sm" variant="ghost" icon={<LockOpen className="size-3.5" />} onClick={() => { setReason(""); setReopening(d); }}>{t("production.reopen")}</Button>
-        : <Button size="sm" variant="secondary" icon={<Lock className="size-3.5" />} onClick={() => setClosing(d)}>{t("production.closeDay")}</Button>,
+        ? <Button onlineOnly size="sm" variant="ghost" icon={<LockOpen className="size-3.5" />} onClick={() => { setReason(""); setReopening(d); }}>{t("production.reopen")}</Button>
+        : <Button onlineOnly size="sm" variant="secondary" icon={<Lock className="size-3.5" />} onClick={() => setClosing(d)}>{t("production.closeDay")}</Button>,
     },
   ];
 
@@ -72,7 +72,7 @@ export function DaysPage() {
       </Card>
       {can("settings.manage") ? <SettingsCard /> : <SettingsSummary />}
 
-      <ConfirmDialog
+      <ConfirmDialog onlineOnly
         open={!!closing}
         onClose={() => setClosing(null)}
         onConfirm={() => closing && close.mutate(closing)}
@@ -82,7 +82,7 @@ export function DaysPage() {
         loading={close.isPending}
       />
       <Modal open={!!reopening} onClose={() => setReopening(null)} size="sm" title={t("production.reopenTitle", { plant: reopening?.plant ?? "", date: reopening ? formatDate(reopening.date) : "" })} description={t("production.reopenDesc")}
-        footer={<><Button variant="secondary" onClick={() => setReopening(null)}>{t("common.cancel")}</Button><Button loading={reopen.isPending} onClick={() => reopening && reopen.mutate(reopening)}>{t("production.reopen")}</Button></>}>
+        footer={<><Button variant="secondary" onClick={() => setReopening(null)}>{t("common.cancel")}</Button><Button onlineOnly loading={reopen.isPending} onClick={() => reopening && reopen.mutate(reopening)}>{t("production.reopen")}</Button></>}>
         <Field label={t("production.reason")} required error={fieldError(reopen.error, "reason")}>
           <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} maxLength={500} autoFocus invalid={!!fieldError(reopen.error, "reason")} />
         </Field>
@@ -118,7 +118,7 @@ function SettingsCard() {
         <Field label={t("production.tolerance")} error={fieldError(save.error, "varianceTolerancePct")}>
           <Input type="number" min={0} max={100} step="0.5" value={form.varianceTolerancePct} onChange={(e) => setForm({ ...form, varianceTolerancePct: e.target.value })} className="tabular text-right" />
         </Field>
-        <Button icon={<Save className="size-4" />} loading={save.isPending} onClick={() => save.mutate(undefined)}>{t("common.save")}</Button>
+        <Button onlineOnly icon={<Save className="size-4" />} loading={save.isPending} onClick={() => save.mutate(undefined)}>{t("common.save")}</Button>
       </CardBody>
     </Card>
   );

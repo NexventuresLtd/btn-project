@@ -46,7 +46,7 @@ export function Modal({ open, onClose, title, description, children, footer, siz
   );
 }
 
-export function ConfirmDialog({ open, onClose, onConfirm, title, message, confirmLabel, tone = "primary", loading, children }: {
+export function ConfirmDialog({ open, onClose, onConfirm, title, message, confirmLabel, tone = "primary", loading, onlineOnly, children }: {
   open: boolean;
   onClose: () => void;
   onConfirm: () => void;
@@ -55,6 +55,8 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, message, confir
   confirmLabel?: string;
   tone?: "primary" | "danger" | "success";
   loading?: boolean;
+  /** the confirmed action needs the server (approval, admin change…): unavailable offline with the reason (SRS §5.2) */
+  onlineOnly?: boolean;
   children?: ReactNode;
 }) {
   const { t } = useT();
@@ -62,7 +64,7 @@ export function ConfirmDialog({ open, onClose, onConfirm, title, message, confir
     <Modal open={open} onClose={onClose} title={title} size="sm" footer={
       <>
         <Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button>
-        <Button variant={tone} loading={loading} onClick={onConfirm}>{confirmLabel ?? t("common.confirm")}</Button>
+        <Button variant={tone} loading={loading} onClick={onConfirm} onlineOnly={onlineOnly}>{confirmLabel ?? t("common.confirm")}</Button>
       </>
     }>
       {message ? <p className="text-sm text-slate-600">{message}</p> : null}

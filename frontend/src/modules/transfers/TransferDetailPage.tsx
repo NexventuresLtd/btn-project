@@ -42,7 +42,7 @@ export function TransferDetailPage() {
           <>
             <ExportMenu path={`/transfers/${tr.id}`} />
             <PdfButton path={`/transfers/pdf/${tr.id}`} label={t("transfers.detail.note")} />
-            {has("dispatch") ? <Button icon={<Truck className="size-4" />} disabled={!online} onClick={() => setDialog("dispatch")} data-tour="transfers-dispatch">{t("transfers.action.dispatch")}</Button> : null}
+            {has("dispatch") ? <Button onlineOnly icon={<Truck className="size-4" />} onClick={() => setDialog("dispatch")} data-tour="transfers-dispatch">{t("transfers.action.dispatch")}</Button> : null}
             {has("receive") && !pendingReceipt ? <Button variant="success" icon={<PackageCheck className="size-4" />} onClick={() => setDialog("receive")} data-tour="transfers-receive">{t("transfers.action.receive")}</Button> : null}
             {has("cancel") ? <Button variant="ghost" icon={<Undo2 className="size-4" />} disabled={!online} onClick={() => setDialog("cancel")}>{t("transfers.action.cancel")}</Button> : null}
             {has("reverse") ? <Button variant="ghost" icon={<RotateCcw className="size-4" />} disabled={!online} onClick={() => setDialog("reverse")}>{t("transfers.action.reverse")}</Button> : null}
@@ -70,8 +70,8 @@ export function TransferDetailPage() {
               <p className="text-sm text-slate-600">{t("transfers.detail.decisionHint")}</p>
             </div>
             <div className="flex gap-2">
-              {has("reject") ? <Button variant="danger" icon={<XCircle className="size-4" />} disabled={!online} onClick={() => setDialog("reject")}>{t("common.reject")}</Button> : null}
-              {has("approve") ? <Button variant="success" icon={<CheckCircle2 className="size-4" />} disabled={!online} onClick={() => setDialog("approve")} data-tour="transfers-approve">{t("common.approve")}</Button> : null}
+              {has("reject") ? <Button onlineOnly variant="danger" icon={<XCircle className="size-4" />} onClick={() => setDialog("reject")}>{t("common.reject")}</Button> : null}
+              {has("approve") ? <Button onlineOnly variant="success" icon={<CheckCircle2 className="size-4" />} onClick={() => setDialog("approve")} data-tour="transfers-approve">{t("common.approve")}</Button> : null}
             </div>
           </CardBody>
         </Card>
@@ -249,7 +249,7 @@ function TextDialog({ tr, act, onClose }: { tr: Transfer; act: TextAct | null; o
   const err = fieldError(m.error, "reason");
   if (act === "reverse") {
     return (
-      <ConfirmDialog open onClose={onClose} title={t("transfers.reverse.title")} message={t("transfers.reverse.text", { from: tr.from.code })} tone="danger"
+      <ConfirmDialog onlineOnly open onClose={onClose} title={t("transfers.reverse.title")} message={t("transfers.reverse.text", { from: tr.from.code })} tone="danger"
         confirmLabel={t("transfers.action.reverse")} loading={m.isPending} onConfirm={() => { if (text.trim().length >= 3) m.mutate({ a: "reverse", body: { reason: text.trim() } }); else toast.error(t("transfers.v.reason")); }}>
         <Field label={t("transfers.field.reason")} required error={err} htmlFor="tr-rev" hint={t("transfers.v.reason")}>
           <Textarea id="tr-rev" value={text} onChange={(e) => setText(e.target.value)} maxLength={300} autoFocus />
@@ -264,7 +264,7 @@ function TextDialog({ tr, act, onClose }: { tr: Transfer; act: TextAct | null; o
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button>
-          <Button variant={act === "approve" ? "success" : "danger"} loading={m.isPending} disabled={needs && text.trim().length < 3}
+          <Button onlineOnly variant={act === "approve" ? "success" : "danger"} loading={m.isPending} disabled={needs && text.trim().length < 3}
             onClick={() => act && m.mutate({ a: act, body: act === "approve" ? { note: text.trim() || null } : { reason: text.trim() } })}>
             {act === "approve" ? t("common.approve") : act === "reject" ? t("common.reject") : t("transfers.action.cancel")}
           </Button>
@@ -307,7 +307,7 @@ function DispatchModal({ tr, onClose }: { tr: Transfer; onClose: () => void }) {
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button>
-          <Button icon={<Truck className="size-4" />} loading={m.isPending} disabled={!date || nothing || problems.some(Boolean)} onClick={submit}>{t("transfers.action.dispatch")}</Button>
+          <Button onlineOnly icon={<Truck className="size-4" />} loading={m.isPending} disabled={!date || nothing || problems.some(Boolean)} onClick={submit}>{t("transfers.action.dispatch")}</Button>
         </>
       }>
       <div className="grid gap-4 sm:grid-cols-3">

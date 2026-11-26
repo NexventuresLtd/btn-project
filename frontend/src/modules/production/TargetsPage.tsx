@@ -124,7 +124,7 @@ export function TargetsPage() {
                 </div>
               ))}
             </div>
-            <div className="flex justify-end"><Button icon={<Save className="size-4" />} loading={save.isPending} disabled={!editPlant || !Object.values(draft).some((v) => v.trim() !== "")} onClick={() => save.mutate(undefined)}>{t("production.saveTargets")}</Button></div>
+            <div className="flex justify-end"><Button onlineOnly icon={<Save className="size-4" />} loading={save.isPending} disabled={!editPlant || !Object.values(draft).some((v) => v.trim() !== "")} onClick={() => save.mutate(undefined)}>{t("production.saveTargets")}</Button></div>
           </CardBody>
         </Card>
       ) : null}

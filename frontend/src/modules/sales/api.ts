@@ -1,5 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { get, qs } from "@/lib/api";
+import { useReportCache } from "@/offline/cache";
 
 /** Order lifecycle (SRS Figure 3). */
 export type SaleStatus = "DRAFT" | "QUOTED" | "CONFIRMED" | "IN_PRODUCTION" | "FROM_STOCK" | "READY" | "DISPATCHED" | "DELIVERED" | "CLOSED" | "CANCELLED";
@@ -501,7 +502,8 @@ export function usePendingDeliveries(q: { plantId?: string; customerId?: string;
 }
 
 export function useOrdersReport(q: Record<string, string | undefined>) {
-  return useQuery({ queryKey: salesKeys.report(q), queryFn: ({ signal }) => get<OrdersReport>(`/sales/reports/orders${qs(q)}`, signal), placeholderData: keepPreviousData });
+  const cached = useReportCache();
+  return useQuery({ queryKey: salesKeys.report(q), networkMode: "always", queryFn: cached("sales:orders-report", qs(q), (signal) => get<OrdersReport>(`/sales/reports/orders${qs(q)}`, signal)), placeholderData: keepPreviousData });
 }
 
 export function useLineAvailability(saleId: string, enabled: boolean) {

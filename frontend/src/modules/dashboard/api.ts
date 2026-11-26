@@ -1,5 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { get } from "@/lib/api";
+import { useReportCache } from "@/offline/cache";
 
 export type KpiKey =
   | "produced" | "good" | "achievement" | "quality" | "rejection" | "availability" | "cementPer1000" | "costPerBlock"
@@ -93,10 +94,12 @@ export interface Dashboard {
 }
 
 export function useDashboard(query: string, enabled = true) {
+  const cached = useReportCache();
   return useQuery({
     enabled,
     queryKey: ["dashboard", query],
-    queryFn: ({ signal }) => get<Dashboard>(`/dashboard${query}`, signal),
+    networkMode: "always",
+    queryFn: cached("dashboard:overview", query, (signal) => get<Dashboard>(`/dashboard${query}`, signal)),
     placeholderData: keepPreviousData,
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,

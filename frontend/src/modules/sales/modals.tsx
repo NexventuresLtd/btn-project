@@ -577,7 +577,7 @@ export function DecideModal({ state, onClose, saleId }: { state: { approval: App
   return (
     <Modal open={!!state} onClose={onClose} size="sm" title={state?.approve ? t("orders.approval.approveTitle") : t("orders.approval.rejectTitle")}
       description={a ? t("orders.approval.decideDesc", { kind: t(`orders.approval.kind.${a.kind}`), no: a.saleNumber ?? "", level: a.nextLevel?.label ?? "" }) : undefined}
-      footer={<><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button><Button variant={state?.approve ? "success" : "danger"} loading={save.isPending} disabled={!state?.approve && !note.trim()} onClick={() => save.mutate(undefined)}>{state?.approve ? t("orders.approval.approve") : t("orders.approval.reject")}</Button></>}>
+      footer={<><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button><Button onlineOnly variant={state?.approve ? "success" : "danger"} loading={save.isPending} disabled={!state?.approve && !note.trim()} onClick={() => save.mutate(undefined)}>{state?.approve ? t("orders.approval.approve") : t("orders.approval.reject")}</Button></>}>
       <GeneralError error={save.error} />
       {a?.reason ? <p className="mb-3 text-sm text-slate-700">{t("orders.approval.reason", { reason: a.reason })}</p> : null}
       <Field label={state?.approve ? t("orders.approval.note") : t("sales.reason.label")} required={!state?.approve} error={fieldError(save.error, "note")}>

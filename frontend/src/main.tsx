@@ -19,6 +19,9 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       retry: (count, err) => !(err instanceof ApiError && err.status < 500) && count < 2,
     },
+    // SRS §5.2: a direct mutation (approval, admin change…) is never paused offline and replayed later — it runs and
+    // lib/api refuses it with an explanation. Offline capture goes through the encrypted outbox instead.
+    mutations: { networkMode: "always", retry: false },
   },
 });
 

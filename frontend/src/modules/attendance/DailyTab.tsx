@@ -228,8 +228,8 @@ export function DailyTab({ site }: { site: Site }) {
                 : t("attendance.day.openHint")}
           </span>
           <div className="ml-auto flex gap-2">
-            {can("attendance.record") && day.status === "OPEN" ? <Button size="sm" variant="secondary" icon={<Send className="size-3.5" />} loading={dayBusy} disabled={!online || dirty || !entries.length} onClick={() => void doSubmitDay()}>{t("attendance.day.submit")}</Button> : null}
-            {can("attendance.approve") && day.status !== "APPROVED" ? <Button size="sm" icon={<ShieldCheck className="size-3.5" />} loading={dayBusy} disabled={!online || dirty || !entries.length} onClick={() => void doApproveDay()}>{t("attendance.day.approve")}</Button> : null}
+            {can("attendance.record") && day.status === "OPEN" ? <Button onlineOnly size="sm" variant="secondary" icon={<Send className="size-3.5" />} loading={dayBusy} disabled={dirty || !entries.length} onClick={() => void doSubmitDay()}>{t("attendance.day.submit")}</Button> : null}
+            {can("attendance.approve") && day.status !== "APPROVED" ? <Button onlineOnly size="sm" icon={<ShieldCheck className="size-3.5" />} loading={dayBusy} disabled={dirty || !entries.length} onClick={() => void doApproveDay()}>{t("attendance.day.approve")}</Button> : null}
           </div>
         </div>
       ) : null}

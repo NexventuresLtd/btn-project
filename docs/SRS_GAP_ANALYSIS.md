@@ -12,7 +12,7 @@ Legend: ✅ met · ⚠️ partial (the missing clause is stated) · ❌ missing 
 
 **122 numbered requirements: 110 ✅ · 7 ⚠️ · 0 ❌ · 5 env.**
 
-There are also 12 ⚠️ findings in the cross-cutting sections: §5.2 (2), §5.5 (2), §6.3 (1), §7.2 (1), §7.4 (1),
+There are also 10 ⚠️ findings in the cross-cutting sections (§5.2 closed, see below): §5.5 (2), §6.3 (1), §7.2 (1), §7.4 (1),
 §8 (1, many cells), §9.2 sync (1) and §10 scheduled reports (2).
 
 | Module | Reqs | ✅ | ⚠️ | ❌ | env | Open points |
@@ -224,7 +224,7 @@ Local first, event-based records, server-authoritative "Provisional" balances, s
 per-record state (SyncBadge in 16 offline-capable screens), and an encrypted, user/device-bound store are all in place
 (see OFF-03, 06, 09, 13).
 
-### §5.2 offline capability matrix
+### §5.2 offline capability matrix — ✅
 | Row | Status | Evidence | Missing → fix |
 |---|---|---|---|
 | Sign-in on a used device | ✅ | OfflineUnlockScreen, 14-day window | |
@@ -235,8 +235,8 @@ per-record state (SyncBadge in 16 offline-capable screens), and an encrypted, us
 | Order capture & dispatch notes | ✅ | `sales/offline.ts`, OfflineOrders.tsx; reservation confirmed on sync | |
 | Petty cash & expense entries | ✅ | `pettycash`, `expenses`, `income` offline.ts; approve disabled offline | |
 | Client / product / stock look-up | ✅ | refdata, sites, products, materials, customers, workers pulls + balances | |
-| Cached reports & last dashboard, "as of" | ⚠️ | `withOfflineCache` used only by production, transfers, stockcount, pettycash, procurement | **Dashboard and reports are not cached on the device**, so nothing shows offline after a restart → wrap board/report queries in `withOfflineCache` and label them with "as of" |
-| Approvals, user admin, email, live dashboards disabled with a message | ⚠️ | Disabled with a message for petty cash approve and attendance submit/approve | **No global online-only gate**: admin, procurement and sales approvals fail with a raw network error → add a shared `requireOnline` guard on approval/admin actions |
+| Cached reports & last dashboard, "as of" | ✅ | `offline/cache.ts` `offlineQueryFn`/`useReportCache`: role dashboard + boards, reports hub catalog + cut-off, finance dashboard / cash flow / unbudgeted / trace, procurement spend / summary / trace, sales orders report, production period summary, workforce summary / headcount are stored AES-GCM-encrypted in the user's offline store (key = screen + user + pinned site + filters; a screen opened offline with new filters shows its last copy, flagged). `ui/OfflineDataBanner.tsx` shows "Offline — data as of DD/MM/YYYY HH:mm" and re-runs those queries on reconnect. Same store rules: unreadable when locked/expired, erased on sign-out/revocation, 60-day prune. PDF/Excel/CSV buttons are disabled offline with a reason (server-rendered, not cached — decision in `offline/README.md`). Tests: `cache.test.ts`; `e2e/offline-viewing.mjs` (reload with no network → dashboard, reports hub and finance dashboard from cache, banner time checked, cache encrypted at rest, refresh on reconnect, wiped on sign-out) | |
+| Approvals, user admin, email, live dashboards disabled with a message | ✅ | Shared guard `offline/onlineOnly.tsx`: `<Button onlineOnly>` / `ConfirmDialog onlineOnly` (aria-disabled, tooltip + described-by reason, click only explains) on every approve/reject/verify/void/authorise/record-payment/submit-for-approval/close-reopen and admin-config action (income verify/void, expense approve/reject/overrun/record payment, budget submit/approve/reject/archive, petty cash approve/reject/reconciliation review, payroll steps/return/pay, production submit/approve/reject/corrections/day close-reopen/settings/targets/recipes, stock adjustment decisions, stock counts, procurement requests/orders, transfers, sales approvals/withdraw, attendance submit/approve/corrections, rate rules, piece rates, delivery charges); `/admin/*`, `/reports/schedules` (email) and `/sync/conflicts` are wrapped in `OnlineOnlyZone` (notice + disabled fieldset). `lib/api` refuses any direct write while offline with the same message and mutations run `networkMode: "always"`, so nothing is paused/replayed; no approval/admin type is registered in the outbox. Tests: `onlineOnly.test.ts`; `e2e/offline-viewing.mjs` (approval step aria-disabled with reason, click → no request, outbox unchanged; admin page notice) | |
 
 ### §5.5 conflict rules
 | Rule | Status | Evidence | Missing → fix |

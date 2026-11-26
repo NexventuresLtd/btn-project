@@ -77,12 +77,12 @@ export function PeriodDetailPage() {
           <>
             <div className="flex flex-wrap items-center gap-2"><PdfButton path={`/payroll/pdf/period/${p.id}`} label={t("payroll.detail.pdf")} /><ExportMenu path={`/payroll/periods/${p.id}`} /></div>
             {a.return.visible ? (
-              <Button variant="secondary" icon={<RotateCcw className="size-4" />} onClick={() => setReturning(true)}>{t("payroll.return.title")}</Button>
+              <Button onlineOnly variant="secondary" icon={<RotateCcw className="size-4" />} onClick={() => setReturning(true)}>{t("payroll.return.title")}</Button>
             ) : null}
             {visibleSteps.map((s) => {
               const disabled = !a[s].allowed || (s === "prepare" && dirty);
               return (
-                <Button
+                <Button onlineOnly
                   key={s}
                   variant={s === "authorize" || s === "pay" ? "success" : "primary"}
                   icon={s === "pay" ? <ClipboardCheck className="size-4" /> : s === "authorize" ? <ShieldCheck className="size-4" /> : <BadgeCheck className="size-4" />}
@@ -183,7 +183,7 @@ export function PeriodDetailPage() {
       <MoneyPanel entityType="payroll_period" entityId={p.id} className="mt-5" />
 
       {confirm ? (
-        <ConfirmDialog
+        <ConfirmDialog onlineOnly
           open
           onClose={() => setConfirm(null)}
           onConfirm={() => step.mutate({ id: p.id, step: confirm })}

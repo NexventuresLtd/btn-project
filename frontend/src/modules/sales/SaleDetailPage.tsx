@@ -171,7 +171,7 @@ function SaleView({ sale }: { sale: SaleDetail }) {
       align: "right",
       cell: (d) => (
         <div className="flex justify-end gap-1">
-          <Button variant="ghost" size="sm" icon={<FileDown className="size-4" />} onClick={() => openPdf(`/sales/pdf/delivery-note/${d.id}`)}>{tt("sales.detail.dnButton")}</Button>
+          <Button onlineOnly="download" variant="ghost" size="sm" icon={<FileDown className="size-4" />} onClick={() => openPdf(`/sales/pdf/delivery-note/${d.id}`)}>{tt("sales.detail.dnButton")}</Button>
           {d.status === "DISPATCHED" && can("deliveries.create") ? <Button variant="ghost" size="sm" icon={<CheckCircle2 className="size-4" />} onClick={() => setPodFor(d)}>{tt("sales.deliveryProgress.DELIVERED")}</Button> : null}
           {d.status !== "CANCELLED" && st !== "CLOSED" && can("sales.cancel") ? <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50 hover:text-red-700" onClick={() => setCancelDn(d)}>{tt("common.cancel")}</Button> : null}
         </div>
@@ -479,9 +479,9 @@ export function ApprovalPanel({ approval, userId, onDecide, onWithdraw, withdraw
         description={t("orders.approval.pendingDesc", { by: approval.requestedBy.name, when: formatDateTime(approval.requestedAt), amount: formatRWF(approval.amount) })}
         actions={
           <div className="flex flex-wrap gap-2">
-            {approval.canDecide ? <Button size="sm" variant="success" onClick={() => onDecide(true)}>{t("orders.approval.approve")}</Button> : null}
-            {approval.canDecide ? <Button size="sm" variant="danger" onClick={() => onDecide(false)}>{t("orders.approval.reject")}</Button> : null}
-            {approval.requestedBy.id === userId ? <Button size="sm" variant="secondary" icon={<Undo2 className="size-4" />} loading={withdrawing} onClick={onWithdraw}>{t("orders.approval.withdraw")}</Button> : null}
+            {approval.canDecide ? <Button onlineOnly size="sm" variant="success" onClick={() => onDecide(true)}>{t("orders.approval.approve")}</Button> : null}
+            {approval.canDecide ? <Button onlineOnly size="sm" variant="danger" onClick={() => onDecide(false)}>{t("orders.approval.reject")}</Button> : null}
+            {approval.requestedBy.id === userId ? <Button onlineOnly size="sm" variant="secondary" icon={<Undo2 className="size-4" />} loading={withdrawing} onClick={onWithdraw}>{t("orders.approval.withdraw")}</Button> : null}
           </div>
         }
       />

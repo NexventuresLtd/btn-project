@@ -88,6 +88,36 @@ const p = provisional(balance, { pending: 3 });   // { value, provisional: true,
 **Other hooks**: `useConnectivity()` → `{ status: "online"|"offline"|"syncing", reachable, pending, issues, lastSyncAt,
 nextRetryAt, blocked, syncNow }`; `useOfflineState()` (vault phase, counts, quota, slots); `useOutbox()` (sync centre data).
 
+## Read-only screens and online-only actions (SRS §5.2)
+
+**Dashboards and reports** use `useReportCache()` (`cache.ts`) in their query hooks:
+
+```ts
+const cached = useReportCache();
+useQuery({ queryKey: ["finance", "dashboard", query], networkMode: "always",
+  queryFn: cached("finance:dashboard", query, (signal) => get(`/finance/dashboard${query}`, signal)) });
+```
+
+Each answer is stored encrypted in the user's store under `report:<screen>|u=<user>|site=<pinned site>|<filters>`, plus a
+`…|last` pointer so a screen opened offline with filters never loaded (e.g. the next day's default range) shows its last
+copy. `ui/OfflineDataBanner.tsx` (in `AppLayout`) shows **"Offline — data as of DD/MM/YYYY HH:mm"** while any query on the
+page was answered from the device, and re-runs exactly those queries when the probe says online. `withOfflineCache` uses
+the same path, so its screens get the banner too. Nothing extra is needed for expiry/revocation/sign-out: the cache is a
+table of the user's store (locked → unreadable, wiped with the user, pruned after 60 days).
+
+**PDF / Excel / CSV downloads are disabled offline** (`<Button onlineOnly="download">` in `PdfButton`, `ExportMenu` and the
+reports hub): files are rendered by the server per request and filter set; caching them would mean storing binary
+blobs for every combination, and the on-screen figures are already available from the cache.
+
+**Approvals and admin are online-only** (`onlineOnly.tsx`): put `onlineOnly` on the `Button` (or `ConfirmDialog`) of any
+approve / reject / verify / void / authorise / record-payment / admin action — offline it is `aria-disabled`, keeps focus,
+explains why (tooltip + `aria-describedby`) and a click only shows the reason. Admin pages (`/admin/*`), email schedules and
+server conflict resolution are wrapped whole in `OnlineOnlyZone` by `AppLayout` (`ONLINE_ONLY_PATHS`). Behind the UI,
+`lib/api` refuses every direct write while offline with the same message and mutations run with
+`networkMode: "always"` (`main.tsx`), so an approval is never paused and replayed; such actions must never be registered
+as outbox record types (`onlineOnly.test.ts` checks the registry). Tests: `cache.test.ts`, `onlineOnly.test.ts`,
+`pnpm test:e2e:viewing` (`e2e/offline-viewing.mjs`).
+
 ## Server contract (F3 `syncsvc`; adapter: `core/transport.ts`)
 
 `POST /api/v1/sync/push {deviceId, clientTime, records:[{uuid, type, schemaVersion, seq, revision, capturedAt, payload}]}`

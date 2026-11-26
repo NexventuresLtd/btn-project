@@ -11,6 +11,7 @@ import { cn } from "@/lib/cn";
 import { monthStartISO, todayISO } from "@/lib/dates";
 import { useT } from "@/i18n";
 import { pinnedPlantId } from "@/lib/scope";
+import { useReportCache } from "@/offline/cache";
 
 type ReportParam = "range" | "date" | "plant" | "plantRequired";
 type ReportGroup = "Production" | "Inventory" | "Sales" | "Procurement" | "Finance" | "Workforce" | "Management" | "Administration";
@@ -42,9 +43,11 @@ const GROUP_META: Record<ReportGroup, { icon: ReactNode; tone: string }> = {
 };
 
 function useCatalog() {
+  const cached = useReportCache();
   return useQuery({
     queryKey: ["reports", "catalog"],
-    queryFn: ({ signal }) => get<{ groups: { group: ReportGroup; reports: ReportEntry[] }[] }>("/reports/catalog", signal),
+    networkMode: "always",
+    queryFn: cached("reports:catalog", "", (signal) => get<{ groups: { group: ReportGroup; reports: ReportEntry[] }[] }>("/reports/catalog", signal)),
     staleTime: 10 * 60_000,
   });
 }
@@ -100,7 +103,7 @@ function ReportCard({ report, highlight }: { report: ReportEntry; highlight: boo
         <div className="min-w-0">
           <h3 className="text-[15px] font-semibold text-slate-900">{tx(`reports.item.${report.key}.title`, undefined, report.title)}</h3>
           <p className="mt-1 text-[13px] leading-relaxed text-slate-500">{tx(`reports.item.${report.key}.desc`, undefined, report.description)}</p>
-          <p className="mt-1.5 text-[11px] font-semibold tracking-wide text-slate-400 uppercase">{t("reports.formats")}: PDF · CSV · Excel · JSON</p>
+          <p className="mt-1.5 text-[11px] font-semibold tracking-wide text-slate-600 uppercase">{t("reports.formats")}: PDF · CSV · Excel · JSON</p>
         </div>
       </div>
 
@@ -143,8 +146,8 @@ function ReportCard({ report, highlight }: { report: ReportEntry; highlight: boo
       </div>
 
       <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">
-        <Button onClick={() => go(false)} icon={<ExternalLink className="size-4" />} className="flex-1 sm:flex-none">{t("reports.open")}</Button>
-        <Button variant="secondary" onClick={() => go(true)} icon={<Download className="size-4" />} className="flex-1 sm:flex-none">{t("reports.download")}</Button>
+        <Button onClick={() => go(false)} icon={<ExternalLink className="size-4" />} className="flex-1 sm:flex-none" onlineOnly="download">{t("reports.open")}</Button>
+        <Button variant="secondary" onClick={() => go(true)} icon={<Download className="size-4" />} className="flex-1 sm:flex-none" onlineOnly="download">{t("reports.download")}</Button>
         {report.exportPath ? <ExportMenu path={report.exportPath} params={params} className="flex-1 sm:flex-none" /> : null}
       </div>
     </Card>

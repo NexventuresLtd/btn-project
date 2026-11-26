@@ -140,7 +140,7 @@ function RuleModal({ rule, onClose }: { rule: RateRule | null; onClose: () => vo
 
   return (
     <Modal open onClose={onClose} size="lg" title={rule ? t("workforce.rules.edit") : t("workforce.rules.new")} description={t("workforce.rules.modalHint")}
-      footer={<><Button variant="ghost" onClick={onClose}>{t("workforce.cancel")}</Button><Button loading={save.isPending} onClick={submit}>{t("workforce.saveApprove")}</Button></>}>
+      footer={<><Button variant="ghost" onClick={onClose}>{t("workforce.cancel")}</Button><Button onlineOnly loading={save.isPending} onClick={submit}>{t("workforce.saveApprove")}</Button></>}>
       <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); submit(); }}>
         <Field label={t("workforce.rules.name")} required error={err("name")} className="sm:col-span-2" htmlFor="rr-name">
           <Input id="rr-name" value={f.name} onChange={(e) => up({ name: e.target.value })} maxLength={80} invalid={!!err("name")} />

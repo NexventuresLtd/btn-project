@@ -1,5 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { get, patch, post, qs } from "@/lib/api";
+import { useReportCache } from "@/offline/cache";
 
 /** Query keys of this module start with "workforce". */
 export const WF_KEY = ["workforce"] as const;
@@ -233,9 +234,11 @@ export interface SummaryReport {
 }
 
 export function useSummaryReport(from: string, to: string, plantId: string, enabled = true) {
+  const cached = useReportCache();
   return useQuery({
     queryKey: [...WF_KEY, "summary", from, to, plantId],
-    queryFn: ({ signal }) => get<SummaryReport>(`/workforce/reports/summary${qs({ from, to, plantId })}`, signal),
+    networkMode: "always",
+    queryFn: cached("workforce:summary", qs({ from, to, plantId }), (signal) => get<SummaryReport>(`/workforce/reports/summary${qs({ from, to, plantId })}`, signal)),
     enabled,
     placeholderData: keepPreviousData,
   });
@@ -265,9 +268,11 @@ export interface HeadcountReport {
 }
 
 export function useHeadcount(from: string, to: string, plantId: string, enabled = true) {
+  const cached = useReportCache();
   return useQuery({
     queryKey: [...WF_KEY, "headcount", from, to, plantId],
-    queryFn: ({ signal }) => get<HeadcountReport>(`/workforce/reports/headcount${qs({ from, to, plantId })}`, signal),
+    networkMode: "always",
+    queryFn: cached("workforce:headcount", qs({ from, to, plantId }), (signal) => get<HeadcountReport>(`/workforce/reports/headcount${qs({ from, to, plantId })}`, signal)),
     enabled,
     placeholderData: keepPreviousData,
   });

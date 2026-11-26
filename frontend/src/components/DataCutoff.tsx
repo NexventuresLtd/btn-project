@@ -3,6 +3,7 @@ import { CloudOff, Clock3 } from "lucide-react";
 import { get, qs } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useT } from "@/i18n";
+import { useReportCache } from "@/offline/cache";
 
 /** RPT-06 statement from GET /reports/cutoff (server data cut-off + sites still holding offline data). */
 export interface CutoffInfo {
@@ -18,10 +19,12 @@ export interface CutoffInfo {
 }
 
 export function useCutoff(plantId?: string, enabled = true) {
+  const cached = useReportCache();
   return useQuery({
     enabled,
     queryKey: ["reports", "cutoff", plantId ?? ""],
-    queryFn: ({ signal }) => get<CutoffInfo>(`/reports/cutoff${qs({ plantId: plantId || undefined })}`, signal),
+    networkMode: "always",
+    queryFn: cached("reports:cutoff", plantId ?? "", (signal) => get<CutoffInfo>(`/reports/cutoff${qs({ plantId: plantId || undefined })}`, signal)),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });

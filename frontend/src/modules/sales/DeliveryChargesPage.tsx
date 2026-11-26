@@ -67,7 +67,7 @@ function RuleModal({ rule, zones, onClose }: { rule: ChargeRule | "new" | null; 
   const err = (k: string) => fieldError(save.error, k);
   return (
     <Modal open={!!rule} onClose={onClose} title={rule === "new" ? t("orders.charges.add") : t("orders.charges.edit")}
-      footer={<><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button><Button type="submit" form="rule-form" loading={save.isPending}>{t("common.save")}</Button></>}>
+      footer={<><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button><Button onlineOnly type="submit" form="rule-form" loading={save.isPending}>{t("common.save")}</Button></>}>
       <form id="rule-form" className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); save.mutate(undefined); }}>
         <Field label={t("orders.charges.name")} required error={err("name")} className="sm:col-span-2"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} maxLength={120} autoFocus /></Field>
         <Field label={t("orders.charges.method")} required error={err("method")}>

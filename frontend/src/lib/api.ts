@@ -3,6 +3,7 @@
 
 import { getLang, tr } from "@/i18n";
 import { deviceHeaders } from "@/offline/core/deviceId";
+import { connectivity } from "@/offline/core/connectivity";
 
 export class ApiError extends Error {
   status: number;
@@ -106,7 +107,19 @@ export async function ensureFreshSession(): Promise<void> {
   if (accessExpiresAt && Date.now() > accessExpiresAt - 30_000) await refreshSession();
 }
 
+/**
+ * SRS §5.2: a direct write (approval, verification, admin change, email send…) needs the server. While the
+ * reachability probe says offline it is refused at once with an explanation — never queued or replayed later.
+ * Field capture that must work offline goes through the encrypted outbox (offline/hooks useOfflineMutation), not here.
+ * Sign-in/out (`/auth/*`) keep their own offline handling.
+ */
+function assertOnlineWrite(path: string, method: string) {
+  if (method === "GET" || path.startsWith("/auth/")) return;
+  if (connectivity.get().status === "offline") throw new ApiError(0, "network", tr("offlineview.online.action"));
+}
+
 async function send(path: string, init: { method?: string; body?: Json; signal?: AbortSignal }): Promise<Response> {
+  assertOnlineWrite(path, init.method ?? (init.body ? "POST" : "GET"));
   try {
     return await fetch(apiUrl(path), {
       method: init.method ?? (init.body ? "POST" : "GET"),
@@ -154,6 +167,7 @@ export async function api<T = unknown>(path: string, init: { method?: string; bo
 /** Multipart upload (browser sets the boundary header). */
 export async function upload<T = unknown>(path: string, form: FormData, method = "POST"): Promise<T> {
   const once = async () => {
+    assertOnlineWrite(path, method);
     try {
       return await fetch(apiUrl(path), { method, credentials: "include", body: form, headers: { Accept: "application/json", "Accept-Language": getLang(), "X-Requested-With": "btn-ops", ...deviceHeaders() } });
     } catch {

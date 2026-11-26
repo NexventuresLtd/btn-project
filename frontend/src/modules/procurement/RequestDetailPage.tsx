@@ -53,9 +53,9 @@ export function RequestDetailPage() {
           <>
             <PdfButton path={`/procurement/pdf/requests/${r.id}`} />
             {can.edit ? <Button variant="secondary" icon={<Pencil className="size-4" />} disabled={!online} onClick={() => navigate(`/procurement/requests/${r.id}/edit`)}>{t("common.edit")}</Button> : null}
-            {can.submit ? <Button icon={<Send className="size-4" />} disabled={!online} loading={act.isPending} onClick={() => act.mutate({ a: "submit" })}>{t("procurement.detail.submit")}</Button> : null}
+            {can.submit ? <Button onlineOnly icon={<Send className="size-4" />} loading={act.isPending} onClick={() => act.mutate({ a: "submit" })}>{t("procurement.detail.submit")}</Button> : null}
             {can.recall ? <Button variant="secondary" icon={<Undo2 className="size-4" />} disabled={!online} onClick={() => setDialog("recall")}>{t("procurement.detail.recall")}</Button> : null}
-            {can.revise ? <Button variant="secondary" icon={<RotateCcw className="size-4" />} disabled={!online} onClick={() => act.mutate({ a: "revise" })}>{t("procurement.detail.revise")}</Button> : null}
+            {can.revise ? <Button onlineOnly variant="secondary" icon={<RotateCcw className="size-4" />} onClick={() => act.mutate({ a: "revise" })}>{t("procurement.detail.revise")}</Button> : null}
             {can.order ? <Button variant="accent" icon={<FilePlus2 className="size-4" />} disabled={!online} onClick={() => navigate(`/procurement/orders/new?requestId=${r.id}`)}>{t("procurement.detail.createOrder")}</Button> : null}
             {can.close ? <Button variant="ghost" icon={<Lock className="size-4" />} disabled={!online} onClick={() => setDialog("close")}>{t("procurement.detail.close")}</Button> : null}
           </>
@@ -74,8 +74,8 @@ export function RequestDetailPage() {
             </div>
             {can.approve ? (
               <div className="flex gap-2">
-                <Button variant="danger" icon={<XCircle className="size-4" />} disabled={!online} onClick={() => setDialog("reject")}>{t("common.reject")}</Button>
-                <Button variant="success" icon={<CheckCircle2 className="size-4" />} disabled={!online} onClick={() => setDialog("approve")}>{t("common.approve")}</Button>
+                <Button onlineOnly variant="danger" icon={<XCircle className="size-4" />} onClick={() => setDialog("reject")}>{t("common.reject")}</Button>
+                <Button onlineOnly variant="success" icon={<CheckCircle2 className="size-4" />} onClick={() => setDialog("approve")}>{t("common.approve")}</Button>
               </div>
             ) : null}
           </CardBody>
@@ -132,13 +132,13 @@ export function RequestDetailPage() {
         </div>
       </div>
 
-      <ConfirmDialog open={dialog === "recall"} onClose={() => setDialog(null)} title={t("procurement.detail.recall")} message={t("procurement.detail.recallText")} loading={act.isPending} onConfirm={() => act.mutate({ a: "recall" })} />
+      <ConfirmDialog onlineOnly open={dialog === "recall"} onClose={() => setDialog(null)} title={t("procurement.detail.recall")} message={t("procurement.detail.recallText")} loading={act.isPending} onConfirm={() => act.mutate({ a: "recall" })} />
       <Modal open={dialog === "approve" || dialog === "reject" || dialog === "close"} onClose={() => setDialog(null)} size="sm"
         title={dialog === "approve" ? t("procurement.detail.approveTitle") : dialog === "reject" ? t("procurement.detail.rejectTitle") : t("procurement.detail.closeTitle")}
         footer={
           <>
             <Button variant="secondary" onClick={() => setDialog(null)}>{t("common.cancel")}</Button>
-            <Button variant={dialog === "approve" ? "success" : dialog === "reject" ? "danger" : "primary"} loading={act.isPending} disabled={needsText && text.trim().length < 3}
+            <Button onlineOnly variant={dialog === "approve" ? "success" : dialog === "reject" ? "danger" : "primary"} loading={act.isPending} disabled={needsText && text.trim().length < 3}
               onClick={() => act.mutate({ a: dialog!, body: dialog === "approve" ? { comment: text.trim() || null } : { reason: text.trim() || null } })}>
               {dialog === "approve" ? t("common.approve") : dialog === "reject" ? t("common.reject") : t("procurement.detail.close")}
             </Button>

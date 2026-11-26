@@ -64,7 +64,7 @@ export function ExportMenu({ path, params, label, size = "md", className }: {
 
   return (
     <div ref={ref} className={cn("relative inline-flex", className)} data-tour="export-menu">
-      <Button variant="secondary" size={size} icon={<Sheet className="size-4" />} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <Button variant="secondary" size={size} icon={<Sheet className="size-4" />} onlineOnly="download" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         {label ?? t("exports.menu.label")}
         <ChevronDown className={cn("size-4 transition-transform", open && "rotate-180")} />
       </Button>

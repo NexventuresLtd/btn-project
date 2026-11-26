@@ -70,7 +70,7 @@ function PieceRateModal({ rate, onClose }: { rate: PieceRate | null; onClose: ()
     effectiveTo: f.effectiveTo || null, isActive: f.isActive, note: f.note.trim() || null });
   return (
     <Modal open onClose={onClose} title={rate ? t("workforce.piece.editRate") : t("workforce.piece.newRate")}
-      footer={<><Button variant="ghost" onClick={onClose}>{t("workforce.cancel")}</Button><Button loading={save.isPending} onClick={submit}>{t("workforce.saveApprove")}</Button></>}>
+      footer={<><Button variant="ghost" onClick={onClose}>{t("workforce.cancel")}</Button><Button onlineOnly loading={save.isPending} onClick={submit}>{t("workforce.saveApprove")}</Button></>}>
       <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => { e.preventDefault(); submit(); }}>
         <Field label={t("workforce.col.product")} required error={err("productId")} className="sm:col-span-2" htmlFor="pr-product">
           <Select id="pr-product" value={f.productId} onChange={(e) => up({ productId: e.target.value })} invalid={!!err("productId")}>

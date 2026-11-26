@@ -193,8 +193,8 @@ export function StockCountDetailPage() {
               <p className="text-sm text-slate-600">{t("stockcount.decisionText", { value: formatRWF(s?.absValue ?? c.varianceValue) })}</p>
             </div>
             <div className="flex gap-2">
-              {c.actions.includes("reject") ? <Button variant="danger" icon={<XCircle className="size-4" />} disabled={!net.reachable} onClick={() => setDialog("reject")}>{t("stockcount.action.reject")}</Button> : null}
-              {c.actions.includes("approve") ? <Button variant="success" icon={<CheckCircle2 className="size-4" />} disabled={!net.reachable} onClick={() => setDialog("approve")}>{t("common.approve")}</Button> : null}
+              {c.actions.includes("reject") ? <Button onlineOnly variant="danger" icon={<XCircle className="size-4" />} onClick={() => setDialog("reject")}>{t("stockcount.action.reject")}</Button> : null}
+              {c.actions.includes("approve") ? <Button onlineOnly variant="success" icon={<CheckCircle2 className="size-4" />} onClick={() => setDialog("approve")}>{t("common.approve")}</Button> : null}
             </div>
           </CardBody>
         </Card>
@@ -327,7 +327,7 @@ export function StockCountDetailPage() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setDialog(null)}>{t("common.cancel")}</Button>
-            <Button variant={dialog === "approve" ? "success" : "danger"} loading={act.isPending} disabled={dialog !== "approve" && text.trim().length < 3}
+            <Button onlineOnly variant={dialog === "approve" ? "success" : "danger"} loading={act.isPending} disabled={dialog !== "approve" && text.trim().length < 3}
               onClick={() => act.mutate({ a: dialog as "approve" | "reject" | "cancel", body: dialog === "approve" ? { note: text.trim() || undefined } : { reason: text.trim() } })}>
               {dialog === "approve" ? t("common.approve") : dialog === "reject" ? t("stockcount.action.reject") : t("stockcount.action.cancel")}
             </Button>

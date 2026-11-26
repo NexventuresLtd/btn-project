@@ -1,6 +1,8 @@
-import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { forwardRef, useId, type ButtonHTMLAttributes, type MouseEvent, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/cn";
+import { useOnlineOnly, type OnlineOnlyKind } from "@/offline/onlineOnly";
 
 const variants = {
   primary: "bg-navy-800 text-white hover:bg-navy-700 shadow-sm",
@@ -23,12 +25,18 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   size?: keyof typeof sizes;
   loading?: boolean;
   icon?: ReactNode;
+  /** SRS §5.2: approval / admin action (`true`) or server download (`"download"`) — unavailable offline, with the reason
+   * as tooltip + description; the button stays focusable and a click only shows the reason. */
+  onlineOnly?: boolean | OnlineOnlyKind;
 }
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = "primary", size = "md", loading, icon, className, children, disabled, type = "button", ...rest },
+  { variant = "primary", size = "md", loading, icon, className, children, disabled, type = "button", onlineOnly, ...rest },
   ref,
 ) {
+  const guard = useOnlineOnly(onlineOnly ? (onlineOnly === true ? "action" : onlineOnly) : false);
+  const reasonId = useId();
+  const blocked = guard.blocked && !disabled && !loading;
   return (
     <button
       ref={ref}
@@ -38,12 +46,27 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         "inline-flex items-center justify-center font-semibold text-center leading-tight transition-colors disabled:pointer-events-none disabled:opacity-55",
         variants[variant],
         sizes[size],
+        blocked && "cursor-not-allowed opacity-55",
         className,
       )}
       {...rest}
+      {...(blocked
+        ? {
+            "aria-disabled": true,
+            "aria-describedby": cn(rest["aria-describedby"], reasonId),
+            "data-online-only": "blocked",
+            title: guard.reason,
+            onClick: (e: MouseEvent<HTMLButtonElement>) => {
+              e.preventDefault();
+              e.stopPropagation();
+              toast.info(guard.reason, { id: "online-only" });
+            },
+          }
+        : {})}
     >
       {loading ? <Loader2 className="size-4 animate-spin" /> : icon}
       {children}
+      {blocked ? <span id={reasonId} hidden>{guard.reason}</span> : null}
     </button>
   );
 });

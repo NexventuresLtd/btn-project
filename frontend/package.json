@@ -11,7 +11,8 @@
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
     "test:e2e:offline": "node e2e/offline-attendance.mjs",
-    "test:e2e:acceptance": "node e2e/offline-acceptance.mjs"
+    "test:e2e:acceptance": "node e2e/offline-acceptance.mjs",
+    "test:e2e:viewing": "node e2e/offline-viewing.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^7.0.8",

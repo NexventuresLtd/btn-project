@@ -64,8 +64,8 @@ export function CorrectionsPage() {
                       <div className="flex flex-wrap gap-2">
                         {can("production.close") && c.requestedBy.id !== user?.id ? (
                           <>
-                            <Button size="sm" variant="secondary" icon={<X className="size-3.5" />} onClick={() => { setComment(""); setDeciding({ c, verdict: "reject" }); }}>{t("common.reject")}</Button>
-                            <Button size="sm" variant="success" icon={<Check className="size-3.5" />} onClick={() => { setComment(""); setDeciding({ c, verdict: "approve" }); }}>{t("production.applyCorrection")}</Button>
+                            <Button onlineOnly size="sm" variant="secondary" icon={<X className="size-3.5" />} onClick={() => { setComment(""); setDeciding({ c, verdict: "reject" }); }}>{t("common.reject")}</Button>
+                            <Button onlineOnly size="sm" variant="success" icon={<Check className="size-3.5" />} onClick={() => { setComment(""); setDeciding({ c, verdict: "approve" }); }}>{t("production.applyCorrection")}</Button>
                           </>
                         ) : null}
                         {c.requestedBy.id === user?.id ? <Button size="sm" variant="ghost" icon={<Undo2 className="size-3.5" />} loading={cancel.isPending} onClick={() => cancel.mutate(c)}>{t("production.withdraw")}</Button> : null}
@@ -85,7 +85,7 @@ export function CorrectionsPage() {
       <Modal open={!!deciding} onClose={() => setDeciding(null)} size="sm"
         title={deciding?.verdict === "approve" ? t("production.applyCorrectionTitle", { number: deciding.c.reportNumber }) : t("production.rejectCorrectionTitle", { number: deciding?.c.reportNumber ?? "" })}
         description={deciding?.verdict === "approve" ? t("production.applyCorrectionDesc") : undefined}
-        footer={<><Button variant="secondary" onClick={() => setDeciding(null)}>{t("common.cancel")}</Button><Button variant={deciding?.verdict === "approve" ? "success" : "danger"} loading={decide.isPending} onClick={() => deciding && decide.mutate(deciding)}>{deciding?.verdict === "approve" ? t("production.applyCorrection") : t("common.reject")}</Button></>}>
+        footer={<><Button onlineOnly variant="secondary" onClick={() => setDeciding(null)}>{t("common.cancel")}</Button><Button variant={deciding?.verdict === "approve" ? "success" : "danger"} loading={decide.isPending} onClick={() => deciding && decide.mutate(deciding)}>{deciding?.verdict === "approve" ? t("production.applyCorrection") : t("common.reject")}</Button></>}>
         <Field label={deciding?.verdict === "approve" ? `${t("production.comment")} (${t("common.optional")})` : t("production.reason")} required={deciding?.verdict === "reject"} error={fieldError(decide.error, "comment")}>
           <Textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={3} maxLength={1000} autoFocus />
         </Field>

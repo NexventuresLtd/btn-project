@@ -36,8 +36,8 @@ export function ApprovalsPage() {
                 key: "x", header: "", align: "right",
                 cell: (a) => (a.canDecide ? (
                   <div className="flex justify-end gap-1">
-                    <Button size="sm" variant="success" onClick={() => setDecide({ approval: a, approve: true })}>{t("orders.approval.approve")}</Button>
-                    <Button size="sm" variant="danger" onClick={() => setDecide({ approval: a, approve: false })}>{t("orders.approval.reject")}</Button>
+                    <Button onlineOnly size="sm" variant="success" onClick={() => setDecide({ approval: a, approve: true })}>{t("orders.approval.approve")}</Button>
+                    <Button onlineOnly size="sm" variant="danger" onClick={() => setDecide({ approval: a, approve: false })}>{t("orders.approval.reject")}</Button>
                   </div>
                 ) : null),
               },

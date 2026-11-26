@@ -85,7 +85,7 @@ export function DeliveriesPage() {
       header: "",
       align: "right",
       cell: (r) => (
-        <Button variant="ghost" size="sm" icon={<FileDown className="size-4" />} onClick={(e) => { e.stopPropagation(); openPdf(`/sales/pdf/delivery-note/${r.id}`); }} aria-label={t("sales.deliveries.pdfAria", { dn: r.dnNumber })}>
+        <Button onlineOnly="download" variant="ghost" size="sm" icon={<FileDown className="size-4" />} onClick={(e) => { e.stopPropagation(); openPdf(`/sales/pdf/delivery-note/${r.id}`); }} aria-label={t("sales.deliveries.pdfAria", { dn: r.dnNumber })}>
           {t("sales.deliveries.pdf")}
         </Button>
       ),

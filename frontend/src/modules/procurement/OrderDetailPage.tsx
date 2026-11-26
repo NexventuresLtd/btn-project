@@ -54,7 +54,7 @@ export function OrderDetailPage() {
           <>
             <PdfButton path={`/procurement/pdf/orders/${o.id}`} label={t("procurement.orderDetail.pdf")} />
             {o.can.edit ? <Button variant="secondary" icon={<Pencil className="size-4" />} disabled={!online} onClick={() => navigate(`/procurement/orders/${o.id}/edit`)}>{t("common.edit")}</Button> : null}
-            {o.can.send ? <Button icon={<Send className="size-4" />} disabled={!online} onClick={() => setDialog("send")}>{t("procurement.orderDetail.send")}</Button> : null}
+            {o.can.send ? <Button onlineOnly icon={<Send className="size-4" />} onClick={() => setDialog("send")}>{t("procurement.orderDetail.send")}</Button> : null}
             {o.can.receive ? <Button variant="accent" icon={<PackageCheck className="size-4" />} disabled={!online} onClick={() => setDialog("receive")} data-tour="proc-receive-button">{t("procurement.orderDetail.receive")}</Button> : null}
             {o.can.invoice ? <Button variant="secondary" icon={<ReceiptIcon className="size-4" />} disabled={!online} onClick={() => setDialog("invoice")}>{t("procurement.orderDetail.invoice")}</Button> : null}
             {o.can.close ? <Button variant="ghost" icon={<Lock className="size-4" />} disabled={!online} onClick={() => setDialog("close")}>{t("procurement.orderDetail.close")}</Button> : null}
@@ -141,11 +141,11 @@ export function OrderDetailPage() {
         </div>
       </div>
 
-      <ConfirmDialog open={dialog === "send"} onClose={() => setDialog(null)} title={t("procurement.orderDetail.send")} message={t("procurement.orderDetail.sendText", { supplier: o.supplier.name })} loading={act.isPending} onConfirm={() => act.mutate({ a: "send" })} />
+      <ConfirmDialog onlineOnly open={dialog === "send"} onClose={() => setDialog(null)} title={t("procurement.orderDetail.send")} message={t("procurement.orderDetail.sendText", { supplier: o.supplier.name })} loading={act.isPending} onConfirm={() => act.mutate({ a: "send" })} />
       <Modal open={dialog === "cancel" || dialog === "close"} onClose={() => setDialog(null)} size="sm" title={dialog === "cancel" ? t("procurement.orderDetail.cancel") : t("procurement.orderDetail.close")}
         description={short ? t("procurement.orderDetail.shortText") : dialog === "close" ? t("procurement.orderDetail.closeText") : t("procurement.orderDetail.cancelText")}
         footer={<><Button variant="secondary" onClick={() => setDialog(null)}>{t("common.cancel")}</Button>
-          <Button variant={dialog === "cancel" ? "danger" : "primary"} loading={act.isPending} disabled={(dialog === "cancel" || short) && reason.trim().length < 3}
+          <Button onlineOnly variant={dialog === "cancel" ? "danger" : "primary"} loading={act.isPending} disabled={(dialog === "cancel" || short) && reason.trim().length < 3}
             onClick={() => act.mutate({ a: dialog as "cancel" | "close", body: { reason: reason.trim() || null } })}>{dialog === "cancel" ? t("procurement.orderDetail.cancel") : t("procurement.orderDetail.close")}</Button></>}>
         <Field label={t("procurement.detail.reason")} required={dialog === "cancel" || short} htmlFor="po-reason" error={fieldError(act.error, "reason")}><Textarea id="po-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} autoFocus /></Field>
       </Modal>

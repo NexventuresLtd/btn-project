@@ -197,8 +197,8 @@ export function AdjustmentsPage() {
     { key: "st", header: t("stock.adj.col.status"), cell: (a) => <div><Badge tone={ADJ_TONE[a.status]}>{t(`stock.adj.status.${a.status}`)}</Badge>{a.status === "PENDING" && a.requiredLevels.length > 1 ? <p className="mt-1 text-[11px] text-slate-500">{t("stock.adj.levels", { done: a.approvals.length, total: a.requiredLevels.length })}</p> : null}</div> },
     { key: "act", header: "", align: "right", cell: (a) => a.canApprove ? (
       <div className="flex justify-end gap-1.5">
-        <Button size="sm" icon={<Check className="size-3.5" />} onClick={() => setDecide({ a, approve: true })}>{t("stock.adj.approve")}</Button>
-        <Button size="sm" variant="secondary" icon={<X className="size-3.5" />} onClick={() => setDecide({ a, approve: false })}>{t("stock.adj.reject")}</Button>
+        <Button onlineOnly size="sm" icon={<Check className="size-3.5" />} onClick={() => setDecide({ a, approve: true })}>{t("stock.adj.approve")}</Button>
+        <Button onlineOnly size="sm" variant="secondary" icon={<X className="size-3.5" />} onClick={() => setDecide({ a, approve: false })}>{t("stock.adj.reject")}</Button>
       </div>
     ) : null },
   ];
@@ -228,7 +228,7 @@ function DecideModal({ a, approve, onClose }: { a: Adjustment; approve: boolean;
   return (
     <Modal open onClose={onClose} title={t(approve ? "stock.adj.approveTitle" : "stock.adj.rejectTitle", { number: a.number })}
       description={approve ? (a.quantity < 0 ? t("stock.adj.approveRemove", { qty: formatQty(-a.quantity), unit: a.item.unit, item: a.item.name, plant: a.plant }) : t("stock.adj.approveAdd", { qty: formatQty(a.quantity), unit: a.item.unit, item: a.item.name, plant: a.plant })) : t("stock.adj.rejectDesc")}
-      footer={<><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button><Button variant={approve ? "primary" : "secondary"} loading={m.isPending} onClick={() => m.mutate({ id: a.id, approve, note })}>{approve ? t("stock.adj.approve") : t("stock.adj.reject")}</Button></>}>
+      footer={<><Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button><Button onlineOnly variant={approve ? "primary" : "secondary"} loading={m.isPending} onClick={() => m.mutate({ id: a.id, approve, note })}>{approve ? t("stock.adj.approve") : t("stock.adj.reject")}</Button></>}>
       {m.error && !fieldError(m.error, "note") ? <div className="mb-3"><Alert tone="red">{m.error.message}</Alert></div> : null}
       <Field label={t(approve ? "stock.adj.noteOptional" : "stock.adj.reason")} required={!approve} error={fieldError(m.error, "note")} htmlFor="adj-note">
         <Textarea id="adj-note" rows={3} maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} />

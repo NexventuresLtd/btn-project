@@ -8,6 +8,7 @@ import { connectivity } from "./core/connectivity";
 import { getRecordType } from "./core/registry";
 import type { LocalRecordRow } from "./core/db";
 import { openOfflineDialog } from "./ui/dialogBus";
+import { isNetworkError, offlineQueryFn } from "./cache";
 import { getEngine, getOfflineState, getStore, registerDirtyForm, requestBackgroundSync, subscribeOffline, syncNow, type OfflineState } from "./runtime";
 
 export class OfflineLockedError extends Error {
@@ -171,32 +172,14 @@ export function useOfflineRecord<T = Record<string, unknown>>(type: string, uuid
 
 /**
  * Wrap a TanStack queryFn: on success the response is cached encrypted on the device; when the network
- * is unavailable the last cached copy is returned instead. Use with `networkMode: "always"`.
+ * is unavailable the last cached copy is returned instead (and `OfflineDataBanner` shows its "as of" time).
+ * Use with `networkMode: "always"`. See ./cache.ts.
  */
-export function withOfflineCache<T>(cacheKey: string, fetcher: () => Promise<T>, fallback?: () => Promise<T | null>): () => Promise<T> {
-  return async () => {
-    try {
-      const v = await fetcher();
-      void getStore()?.cachePut(cacheKey, v).catch(() => {});
-      return v;
-    } catch (e) {
-      if (!isNetworkError(e)) throw e;
-      connectivity.reportFailure();
-      const s = getStore();
-      const hit = s ? await s.cacheGet<T>(cacheKey) : null;
-      if (hit) return hit.value;
-      const fb = fallback ? await fallback() : null;
-      if (fb != null) return fb;
-      throw e;
-    }
-  };
+export function withOfflineCache<T>(cacheKey: string, fetcher: () => Promise<T>, fallback?: () => Promise<T | null>) {
+  return offlineQueryFn<T>(cacheKey, () => fetcher(), { fallback });
 }
 
-export function isNetworkError(e: unknown): boolean {
-  const err = e as { status?: number; code?: string; kind?: string };
-  // ApiError(0, "network") from lib/api, TransportError from the sync adapter, or a 502/503/504 from a proxy with no API behind it
-  return (err?.status === 0 && err?.code === "network") || err?.kind === "network" || err?.kind === "timeout" || err?.status === 502 || err?.status === 503 || err?.status === 504;
-}
+export { isNetworkError };
 
 /** Mark an edit form as holding unsaved input: app updates wait until it is saved or closed (OFF-21). */
 export function useDirtyForm(dirty: boolean) {

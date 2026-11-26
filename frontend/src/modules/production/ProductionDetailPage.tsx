@@ -144,9 +144,9 @@ function Detail({ r }: { r: ReportDetail }) {
             <div className="flex flex-wrap items-center gap-2"><PdfButton path={`/production/pdf/report/${r.id}`} label={tt("production.pdf")} /><ExportMenu path={`/production/reports/${r.id}`} /></div>
             {r.actions.canEdit ? <Button variant="secondary" icon={<Pencil className="size-4" />} onClick={() => navigate(`/production/${r.id}/edit`)}>{tt("common.edit")}</Button> : null}
             {r.actions.canRequestCorrection ? <Button variant="secondary" icon={<GitPullRequestArrow className="size-4" />} onClick={() => navigate(`/production/${r.id}/correct`)}>{tt("production.requestCorrection")}</Button> : null}
-            {r.actions.canSubmit ? <Button icon={<Send className="size-4" />} loading={submit.isPending} onClick={() => submit.mutate(undefined)}>{tt("production.submitForApproval")}</Button> : null}
-            {r.actions.canReject ? <Button variant="secondary" icon={<ThumbsDown className="size-4" />} onClick={() => { setComment(""); setRejectOpen(true); }}>{tt("common.reject")}</Button> : null}
-            {r.actions.canApprove ? <Button variant="success" icon={<ThumbsUp className="size-4" />} onClick={() => { setComment(""); setApproveOpen(true); }}>{tt("common.approve")}</Button> : null}
+            {r.actions.canSubmit ? <Button onlineOnly icon={<Send className="size-4" />} loading={submit.isPending} onClick={() => submit.mutate(undefined)}>{tt("production.submitForApproval")}</Button> : null}
+            {r.actions.canReject ? <Button onlineOnly variant="secondary" icon={<ThumbsDown className="size-4" />} onClick={() => { setComment(""); setRejectOpen(true); }}>{tt("common.reject")}</Button> : null}
+            {r.actions.canApprove ? <Button onlineOnly variant="success" icon={<ThumbsUp className="size-4" />} onClick={() => { setComment(""); setApproveOpen(true); }}>{tt("common.approve")}</Button> : null}
           </>
         }
       />
@@ -346,7 +346,7 @@ function Detail({ r }: { r: ReportDetail }) {
         </Card>
       </div>
 
-      <ConfirmDialog
+      <ConfirmDialog onlineOnly
         open={approveOpen}
         onClose={() => setApproveOpen(false)}
         onConfirm={() => approve.mutate(undefined)}
@@ -371,7 +371,7 @@ function Detail({ r }: { r: ReportDetail }) {
         footer={
           <>
             <Button variant="secondary" onClick={() => setRejectOpen(false)}>{tt("common.cancel")}</Button>
-            <Button variant="danger" loading={reject.isPending} onClick={() => reject.mutate(undefined)}>{tt("production.rejectReport")}</Button>
+            <Button onlineOnly variant="danger" loading={reject.isPending} onClick={() => reject.mutate(undefined)}>{tt("production.rejectReport")}</Button>
           </>
         }
       >

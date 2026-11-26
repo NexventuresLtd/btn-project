@@ -108,7 +108,7 @@ function Detail({ i }: { i: Income }) {
           <>
             <PdfButton path={`/income/pdf/${i.id}`} label={t("income.detail.pdf")} />
             {a.edit ? <Button variant="secondary" icon={<Pencil className="size-4" />} disabled={!online} onClick={() => setEditing(true)}>{t("common.edit")}</Button> : null}
-            {a.void ? <Button variant="ghost" className="text-red-700" icon={<Ban className="size-4" />} disabled={!online} onClick={() => setDialog("void")}>{t("income.detail.void")}</Button> : null}
+            {a.void ? <Button onlineOnly variant="ghost" className="text-red-700" icon={<Ban className="size-4" />} onClick={() => setDialog("void")}>{t("income.detail.void")}</Button> : null}
           </>
         }
       />
@@ -129,7 +129,7 @@ function Detail({ i }: { i: Income }) {
               <p className="font-semibold text-slate-900">{a.verify ? t("income.detail.verifyTitle") : t("income.detail.awaitingVerify")}</p>
               <p className="text-sm text-slate-600">{a.verify ? t("income.detail.verifyHint", { method: tx(`income.method.${i.method}`), reference: i.reference ?? "—" }) : reason ? tx(reason) : null}</p>
             </div>
-            {a.verify ? <Button variant="success" icon={<CheckCircle2 className="size-4" />} disabled={!online} onClick={() => setDialog("verify")}>{t("income.detail.verify")}</Button> : null}
+            {a.verify ? <Button onlineOnly variant="success" icon={<CheckCircle2 className="size-4" />} onClick={() => setDialog("verify")}>{t("income.detail.verify")}</Button> : null}
           </CardBody>
         </Card>
       ) : null}
@@ -222,7 +222,7 @@ function Detail({ i }: { i: Income }) {
       <IncomeFormModal open={editing} onClose={() => setEditing(false)} income={i} />
 
       {dialog ? (
-        <ConfirmDialog
+        <ConfirmDialog onlineOnly
           open
           onClose={close}
           onConfirm={confirm}
@@ -299,7 +299,7 @@ function Receipts({ i, online, onChanged }: { i: Income; online: boolean; onChan
                 </div>
                 <div className="flex items-center gap-1">
                   <Button size="icon" variant="ghost" title={t("income.receipt.view")} aria-label={t("income.receipt.viewFile", { name: f.fileName })} onClick={() => openReceipt(i.id, f.id)}><Eye className="size-4" /></Button>
-                  <Button size="icon" variant="ghost" title={t("common.download")} aria-label={t("income.receipt.downloadFile", { name: f.fileName })} onClick={() => downloadFile(receiptDownloadPath(i.id, f.id))}><Download className="size-4" /></Button>
+                  <Button onlineOnly="download" size="icon" variant="ghost" title={t("common.download")} aria-label={t("income.receipt.downloadFile", { name: f.fileName })} onClick={() => downloadFile(receiptDownloadPath(i.id, f.id))}><Download className="size-4" /></Button>
                   {canRemove ? <Button size="icon" variant="ghost" className="text-red-700" title={t("common.remove")} aria-label={t("income.receipt.removeFile", { name: f.fileName })} disabled={!online} onClick={() => setRemoving(f.id)}><Trash2 className="size-4" /></Button> : null}
                 </div>
               </li>

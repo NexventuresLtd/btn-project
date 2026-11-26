@@ -1,6 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { get, qs } from "@/lib/api";
 import { withOfflineCache } from "@/offline/hooks";
+import { useReportCache } from "@/offline/cache";
 
 export type ReportStatus = "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
 export type Shift = "DAY" | "NIGHT";
@@ -310,7 +311,8 @@ export function useReport(id: string | undefined) {
 }
 
 export function usePeriods(params: { from: string; to: string; plantId: string; groupBy: GroupBy }) {
-  return useQuery({ queryKey: ["production", "periods", params], queryFn: ({ signal }) => get<PeriodSummary>(`/production/summary/periods${qs(params)}`, signal), placeholderData: keepPreviousData });
+  const cached = useReportCache();
+  return useQuery({ queryKey: ["production", "periods", params], networkMode: "always", queryFn: cached("production:periods", qs(params), (signal) => get<PeriodSummary>(`/production/summary/periods${qs(params)}`, signal)), placeholderData: keepPreviousData });
 }
 
 export function useDays(params: { from: string; to: string; plantId: string }) {

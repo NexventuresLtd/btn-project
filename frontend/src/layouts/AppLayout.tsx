@@ -12,6 +12,8 @@ import { PageLoader } from "@/components/ui";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ConnectionIndicator } from "@/offline/ui/ConnectionIndicator";
 import { SyncNavBadge } from "@/offline/ui/SyncNavBadge";
+import { OfflineDataBanner } from "@/offline/ui/OfflineDataBanner";
+import { OnlineOnlyZone, isOnlineOnlyPath } from "@/offline/onlineOnly";
 import { GuideProvider, useGuide, USER_MENU_EVENT } from "@/components/guide";
 import { NotificationBell } from "@/modules/notifications/NotificationBell";
 import { BellRing } from "lucide-react";
@@ -179,9 +181,12 @@ export function AppLayout() {
               </div>
             </header>
             <main id="main" className="w-full px-4 py-7 sm:px-8">
-              <Suspense fallback={<PageLoader />}>
-                <Outlet />
-              </Suspense>
+              <OfflineDataBanner />
+              <OnlineOnlyZone enabled={isOnlineOnlyPath(location.pathname)}>
+                <Suspense fallback={<PageLoader />}>
+                  <Outlet />
+                </Suspense>
+              </OnlineOnlyZone>
             </main>
           </div>
         </div>

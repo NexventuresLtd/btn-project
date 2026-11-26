@@ -26,7 +26,6 @@ export function ReconciliationsTab({ floats, floatId, onFloat, openId, onOpen }:
   onOpen: (id: string | null) => void;
 }) {
   const { t } = useT();
-  const net = useConnectivity();
   const [status, setStatus] = useState<"" | RecStatus>("");
   const [page, setPage] = useState(1);
   useEffect(() => setPage(1), [floatId, status]);
@@ -44,9 +43,9 @@ export function ReconciliationsTab({ floats, floatId, onFloat, openId, onOpen }:
       key: "actions", header: <span className="sr-only">{t("common.actions")}</span>, align: "right",
       cell: (r) => (
         <div className="flex items-center justify-end gap-1.5">
-          {r.canReview ? <Button size="sm" variant="success" icon={<ClipboardCheck className="size-3.5" />} onClick={() => onOpen(r.id)} disabled={!net.reachable} title={!net.reachable ? t("pettycash.offline.needsOnline") : undefined}>{t("pettycash.rec.review")}</Button> : null}
+          {r.canReview ? <Button onlineOnly size="sm" variant="success" icon={<ClipboardCheck className="size-3.5" />} onClick={() => onOpen(r.id)}>{t("pettycash.rec.review")}</Button> : null}
           <Button size="sm" variant="ghost" onClick={() => onOpen(r.id)}>{t("pettycash.rec.view")}</Button>
-          <Button size="icon" variant="ghost" title={t("pettycash.rec.pdf")} aria-label={t("pettycash.rec.pdfFor", { number: r.number })} onClick={() => openPdf(`/pettycash/pdf/reconciliation/${r.id}`)}><FileDown className="size-4" /></Button>
+          <Button onlineOnly="download" size="icon" variant="ghost" title={t("pettycash.rec.pdf")} aria-label={t("pettycash.rec.pdfFor", { number: r.number })} onClick={() => openPdf(`/pettycash/pdf/reconciliation/${r.id}`)}><FileDown className="size-4" /></Button>
         </div>
       ),
     },
@@ -104,9 +103,9 @@ function ReconciliationModal({ rec, onClose }: { rec: Reconciliation | null; onC
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>{t("common.close")}</Button>
-          {rec ? <Button variant="secondary" icon={<FileDown className="size-4" />} onClick={() => openPdf(`/pettycash/pdf/reconciliation/${rec.id}`)}>{t("pettycash.rec.pdf")}</Button> : null}
+          {rec ? <Button onlineOnly="download" variant="secondary" icon={<FileDown className="size-4" />} onClick={() => openPdf(`/pettycash/pdf/reconciliation/${rec.id}`)}>{t("pettycash.rec.pdf")}</Button> : null}
           {rec?.canReview ? (
-            <Button variant="success" loading={review.isPending} disabled={!net.reachable} onClick={() => {
+            <Button onlineOnly variant="success" loading={review.isPending} onClick={() => {
               setTouched(true);
               if (comment.trim().length >= 3) review.mutate({ id: rec.id, comment: comment.trim(), postAdjustment: post && rec.difference !== 0 });
             }}>{t("pettycash.rec.accept")}</Button>

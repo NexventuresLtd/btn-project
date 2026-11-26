@@ -49,8 +49,8 @@ function Actions({ subject }: { subject: SubjectDetail }) {
   const [correcting, setCorrecting] = useState(false);
   return (
     <>
-      <Button variant="secondary" icon={<Download className="size-4" />} onClick={() => downloadPdf(exportPath(subject.type, subject.id))}>{t("privacy.subject.download")}</Button>
-      <Button variant="secondary" icon={<FileText className="size-4" />} onClick={() => openPdf(pdfPath(subject.type, subject.id))}>{t("privacy.subject.pdf")}</Button>
+      <Button onlineOnly="download" variant="secondary" icon={<Download className="size-4" />} onClick={() => downloadPdf(exportPath(subject.type, subject.id))}>{t("privacy.subject.download")}</Button>
+      <Button onlineOnly="download" variant="secondary" icon={<FileText className="size-4" />} onClick={() => openPdf(pdfPath(subject.type, subject.id))}>{t("privacy.subject.pdf")}</Button>
       <Button icon={<PencilLine className="size-4" />} onClick={() => setCorrecting(true)}>{t("privacy.subject.correct")}</Button>
       <CorrectModal key={JSON.stringify(subject.profile)} subject={subject} open={correcting} onClose={() => setCorrecting(false)} />
     </>

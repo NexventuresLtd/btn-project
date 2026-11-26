@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { get, qs } from "@/lib/api";
 import type { VsDept, VsRow, Variance } from "@/modules/budgets/api";
+import { useReportCache } from "@/offline/cache";
 
 export interface Group { code: string; name: string; count: number; amount: number }
 
@@ -54,11 +55,13 @@ export interface Trace {
 export const FINANCE_KEY = ["finance"] as const;
 
 export function useFinanceDashboard(query: string) {
-  return useQuery({ queryKey: [...FINANCE_KEY, "dashboard", query], queryFn: ({ signal }) => get<FinanceDashboard>(`/finance/dashboard${query}`, signal), placeholderData: (p) => p });
+  const cached = useReportCache();
+  return useQuery<FinanceDashboard>({ queryKey: [...FINANCE_KEY, "dashboard", query], networkMode: "always", queryFn: cached("finance:dashboard", query, (signal) => get<FinanceDashboard>(`/finance/dashboard${query}`, signal)), placeholderData: (p) => p });
 }
 
 export function useTrace(query: string, enabled: boolean) {
-  return useQuery({ queryKey: [...FINANCE_KEY, "trace", query], queryFn: ({ signal }) => get<Trace>(`/expenses/trace${query}`, signal), enabled });
+  const cached = useReportCache();
+  return useQuery({ queryKey: [...FINANCE_KEY, "trace", query], networkMode: "always", queryFn: cached("finance:trace", query, (signal) => get<Trace>(`/expenses/trace${query}`, signal)), enabled });
 }
 
 /* ── cash flow (GET /finance/cash-flow) ─────────────────────────────────── */
@@ -73,7 +76,8 @@ export interface CashFlow {
 }
 
 export function useCashFlow(query: string) {
-  return useQuery({ queryKey: [...FINANCE_KEY, "cash-flow", query], queryFn: ({ signal }) => get<CashFlow>(`/finance/cash-flow${query}`, signal), placeholderData: (p) => p });
+  const cached = useReportCache();
+  return useQuery<CashFlow>({ queryKey: [...FINANCE_KEY, "cash-flow", query], networkMode: "always", queryFn: cached("finance:cash-flow", query, (signal) => get<CashFlow>(`/finance/cash-flow${query}`, signal)), placeholderData: (p) => p });
 }
 
 /* ── unbudgeted spending (GET /expenses/unbudgeted) ─────────────────────── */
@@ -87,7 +91,8 @@ export interface Unbudgeted {
 }
 
 export function useUnbudgeted(query: string) {
-  return useQuery({ queryKey: [...FINANCE_KEY, "unbudgeted", query], queryFn: ({ signal }) => get<Unbudgeted>(`/expenses/unbudgeted${query}`, signal), placeholderData: (p) => p });
+  const cached = useReportCache();
+  return useQuery<Unbudgeted>({ queryKey: [...FINANCE_KEY, "unbudgeted", query], networkMode: "always", queryFn: cached("finance:unbudgeted", query, (signal) => get<Unbudgeted>(`/expenses/unbudgeted${query}`, signal)), placeholderData: (p) => p });
 }
 
 /* ── link targets (GET /finance/link-targets) ───────────────────────────── */

@@ -83,7 +83,7 @@ export function RecipesPage() {
         </div>
       )}
       <Modal open={!!draft} onClose={() => setDraft(null)} title={t("production.recipeFor", { name: draft?.productName ?? "" })} description={t("production.recipeHelp")}
-        footer={<><Button variant="secondary" onClick={() => setDraft(null)}>{t("common.cancel")}</Button><Button loading={save.isPending} onClick={() => save.mutate(undefined)}>{t("common.save")}</Button></>}>
+        footer={<><Button variant="secondary" onClick={() => setDraft(null)}>{t("common.cancel")}</Button><Button onlineOnly loading={save.isPending} onClick={() => save.mutate(undefined)}>{t("common.save")}</Button></>}>
         {draft ? (
           <div className="space-y-4">
             <Field label={t("production.effectiveFromLabel")} required error={fieldError(save.error, "effectiveFrom")}><DateInput value={draft.effectiveFrom} onChange={(v) => setDraft({ ...draft, effectiveFrom: v })} /></Field>
