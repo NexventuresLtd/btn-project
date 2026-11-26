@@ -28,7 +28,7 @@ There are also 9 ⚠️ findings in the cross-cutting sections (§5.2 closed, se
 | Reporting (RPT) | 7 | 6 | 1 | 0 | 0 | RPT-06: CSV exports have no cut-off note |
 | Administration (ADM) | 5 | 5 | 0 | 0 | 0 | — |
 | Offline & sync (OFF) | 22 | 22 | 0 | 0 | 0 | — (OFF-11 pull stall fixed) |
-| Non-functional (NFR) | 18 | 13 | 0 | 0 | 5 | — (P1, M1, M2 fixed after the audit; P2 export note) |
+| Non-functional (NFR) | 18 | 13 | 0 | 0 | 5 | — (P1, M1, M2 fixed after the audit) |
 
 **Test evidence (run during this audit):**
 - Backend `go test -p 1 ./...`: 42 packages pass.
@@ -44,7 +44,7 @@ There are also 9 ⚠️ findings in the cross-cutting sections (§5.2 closed, se
 - Frontend: `pnpm typecheck` clean, vitest passes (incl. lockout/syncschema catalogs, engine upgrade/too-new tests).
 - `cmd/loadtest run` with **default** rate limits, 50 users × 3 min, 12-month / 10-site / ~737k-row volume DB
   (`devtools volume -scale 4 -sites 7 -perf-users 90`): 23 099 reads, p95 38 ms, p99 80 ms, 0 × 429, PASS.
-- `cmd/loadtest reports` on the same DB: 171/172 within 5 s; `pettycash-statement` XLSX 11.6 s (see NFR-P2).
+- `cmd/loadtest reports` on the same DB (quiet host): 172/172 within 5 s, slowest 3.16 s, PASS (see NFR-P2).
 
 **Allowed deviations:**
 - Stack: Go + Fiber, React + Vite, and an in-process PostgreSQL-leader job scheduler instead of FastAPI, Next.js and
@@ -206,7 +206,7 @@ There are also 9 ⚠️ findings in the cross-cutting sections (§5.2 closed, se
 | ID | Status | Evidence | Missing → fix |
 |---|---|---|---|
 | NFR-P1 | ✅ | Fixed after the audit: signed-in traffic is rate-limited per user, not per IP (`app.go`: per-IP flood guard 30 000/min before the session, then per-user 600/min; `/auth/me`, logout, language, offline key/PIN in the per-user `session` group 120/min; login/OTP/reset/refresh stay per IP 30/min) — `app:TestSharedIPUsersAreLimitedPerUser` (60 users on one IP, default limits). `cmd/loadtest run` with DEFAULT limits on a scratch DB from `devtools volume -scale 4 -sites 7 -perf-users 90` (12 months, 10 sites, 106 users, ~737k rows): 50 users × 3 min, 23 099 reads, 127.6 req/s, p50 2 ms, p95 38 ms, p99 80 ms, 100 % < 2 s, 0 errors, 0 × 429 → PASS | Production hardware not yet measured (run the same command on staging) |
-| NFR-P2 | ✅ | `loadtest reports`: 172 boards/reports, slowest 329 ms; `TestBoardsRenderTwelveMonthsWithinBudget` (12-month fixture) | Re-run (post-audit) on the 10-site ~737k-row volume DB: 171/172 within 5 s (boards ≤ 334 ms), but **`pettycash-statement` XLSX took 11.6 s** (12k entries) → optimise that export before claiming P2 at that volume |
+| NFR-P2 | ✅ | `loadtest reports`: 172 boards/reports, slowest 329 ms (audit DB); `TestBoardsRenderTwelveMonthsWithinBudget` (12-month fixture). Post-audit re-run on the 12-month / 10-site / ~818k-row volume DB (`devtools volume -scale 4 -sites 7 -perf-users 90`, quiet host): **172/172 within 5 s, slowest 3.16 s** (sales-report PDF); `pettycash-statement` XLSX 461 ms (5 direct runs 0.44–0.52 s; its SQL incl. the running-balance window is 46 ms). The earlier 11.6 s reading was taken while a parallel `go test -race ./...` saturated the same PostgreSQL/CPU — contention, not the export | |
 | NFR-P3 | ✅ | `syncsvc:TestBatchOf200Under10s`; e2e "NFR" scenario: capture ≤300 ms, 200 records at 1 Mbps ≤10 s (runs in the CI `e2e` job) | |
 | NFR-P4 | ✅ | `e2e/load-size.mjs` on a preview build: 1.66 MB initial, repeat visit served from the SW cache | |
 | NFR-A1 | env | systemd units (`deploy/`), health endpoint, offline-first client | Hosting SLA |
