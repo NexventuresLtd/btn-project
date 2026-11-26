@@ -248,9 +248,9 @@ func TestPayrollAttendanceFill(t *testing.T) {
 	a := newWorker(t, e, b1, "Aline", "Uwase", 5800)
 	bz := newWorker(t, e, b1, "Bosco", "Niyonzima", 5800)
 
-	fm := e.User(auth.RoleFinanceManager) // §8: wage sheets are prepared by finance; supervisors mark attendance
-	// a period over 1–15 Nov
-	r := e.Do("POST", "/api/payroll/periods", M{"plantId": b1, "startDate": "2026-11-01", "endDate": "2026-11-15"}, fm)
+	fm := e.User(auth.RoleFinanceManager)
+	// a period over 1–15 Nov, prepared by the site supervisor from his attendance (SRS §7.4)
+	r := e.Do("POST", "/api/payroll/periods", M{"plantId": b1, "startDate": "2026-11-01", "endDate": "2026-11-15"}, sup)
 	if r.StatusCode != 201 {
 		t.Fatalf("create period: %d %s", r.StatusCode, e.Text(r))
 	}

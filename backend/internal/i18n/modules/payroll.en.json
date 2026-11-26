@@ -209,5 +209,20 @@
  "payroll.v.paid_future": "The payment date cannot be in the future",
  "payroll.v.phone_format": "Enter a phone number like 0781234567",
  "payroll.v.rate_basis": "Choose daily, piece rate or mixed",
- "payroll.v.status": "Choose active, inactive or left"
+ "payroll.v.status": "Choose active, inactive or left",
+ "payroll.err.register_own_site": "Only a supervisor assigned to a site can register workers there",
+ "payroll.err.registration_not_pending": "This worker's registration is not waiting for approval",
+ "payroll.err.registration_own": "You registered this worker; someone else in Finance must approve it",
+ "payroll.err.registration_locked": "You can only change your own registrations while they wait for Finance approval",
+ "payroll.err.worker_pending": "{name} is waiting for Finance to approve the registration; approve it before adding a wage line",
+ "payroll.err.pending_workers": "{n} worker(s) on this sheet are still waiting for registration approval",
+ "payroll.err.nid_taken_sync": "National ID {id} is already registered to another worker",
+ "payroll.notify.worker_registered_title": "New worker registration to approve",
+ "payroll.notify.worker_registered_body": "{by} registered {name} at {plant}. Check the details and approve the worker before the next wage sheet.",
+ "payroll.notify.worker_approved_title": "Worker registration approved",
+ "payroll.notify.worker_approved_body": "{by} approved the registration of {name} ({plant}).",
+ "notify.event.payroll.worker_registered": "Worker registration to approve",
+ "notify.event.payroll.worker_registered.help": "A site supervisor registered a new casual worker that needs Finance approval",
+ "notify.event.payroll.worker_approved": "Worker registration approved",
+ "notify.event.payroll.worker_approved.help": "Finance approved a worker you registered"
 }

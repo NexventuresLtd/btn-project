@@ -16,6 +16,7 @@ import (
 	"btn-ops/internal/dates"
 	"btn-ops/internal/db"
 	"btn-ops/internal/httpx"
+	"btn-ops/internal/notify"
 	"btn-ops/internal/workforce"
 
 	"github.com/gofiber/fiber/v2"
@@ -45,19 +46,29 @@ type workerOut struct {
 	RateBasis        string   `json:"rateBasis"`
 	EmploymentStatus string   `json:"employmentStatus"`
 	LeftDate         *string  `json:"leftDate"`
+	// WRK-01 registration by a site supervisor: PENDING until Finance approves it (excluded from wage sheets).
+	RegistrationStatus     string  `json:"registrationStatus"`
+	RegisteredByID         *string `json:"registeredById"`
+	RegistrationApprovedAt *string `json:"registrationApprovedAt"`
 }
 
 const workerCols = `w.id, w."firstName", w."lastName", w."nationalId", w."momoNumber", w."momoName", w."jobTitle", w."plantId",
-	w."dailyWage", w."isActive", w."startDate", w."createdAt", w."updatedAt", p.id, p.code, p.name, w."phone", w."rateBasis", w."employmentStatus", w."leftDate"`
+	w."dailyWage", w."isActive", w."startDate", w."createdAt", w."updatedAt", p.id, p.code, p.name, w."phone", w."rateBasis", w."employmentStatus", w."leftDate",
+	w."registrationStatus", w."registeredById", w."registrationApprovedAt"`
 const workerFrom = `FROM "Worker" w JOIN "Plant" p ON p.id = w."plantId"`
 
 func scanWorker(row pgx.Row) (workerOut, error) {
 	var w workerOut
-	var sd, ld *time.Time
+	var sd, ld, ra *time.Time
 	var ca, ua time.Time
 	if err := row.Scan(&w.ID, &w.FirstName, &w.LastName, &w.NationalID, &w.MomoNumber, &w.MomoName, &w.JobTitle, &w.PlantID,
-		&w.DailyWage, &w.IsActive, &sd, &ca, &ua, &w.Plant.ID, &w.Plant.Code, &w.Plant.Name, &w.Phone, &w.RateBasis, &w.EmploymentStatus, &ld); err != nil {
+		&w.DailyWage, &w.IsActive, &sd, &ca, &ua, &w.Plant.ID, &w.Plant.Code, &w.Plant.Name, &w.Phone, &w.RateBasis, &w.EmploymentStatus, &ld,
+		&w.RegistrationStatus, &w.RegisteredByID, &ra); err != nil {
 		return w, err
+	}
+	if ra != nil {
+		s := isoTime(*ra)
+		w.RegistrationApprovedAt = &s
 	}
 	if ld != nil {
 		s := dates.ToISO(*ld)
@@ -90,12 +101,13 @@ func (h *handler) listWorkers(c *fiber.Ctx) error {
 	basis := qv.OptStr("rateBasis").Trim().Upper().OneOf(append([]string{""}, workforce.RateBases...), "payroll.v.rate_basis").Get()
 	search := qv.OptStr("q").Trim().Max(80, "payroll.v.max_80").Get()
 	plantQ := qv.OptStr("plantId").Get()
+	reg := qv.OptStr("registration").Trim().Upper().OneOf([]string{"", "PENDING", "APPROVED"}, "payroll.v.invalid_input").Get()
 	if err := qv.Err(); err != nil {
 		return err
 	}
 	pg := httpx.Paginate(c, 50)
 	plantID := auth.PlantFilter(u, plantQ)
-	key := fmt.Sprintf("payroll:workers:%s:%s:%s:%s:%s:%s:%s:%d:%d", lang(c), scopeKey(u), plantID, active, empStatus, basis, search, pg.Page, pg.PageSize)
+	key := fmt.Sprintf("payroll:workers:%s:%s:%s:%s:%s:%s:%s:%s:%d:%d", lang(c), scopeKey(u), plantID, active, empStatus, basis, search, reg, pg.Page, pg.PageSize)
 	body, err := jsonCache.GetOrLoad(ctx, key, func(ctx context.Context) ([]byte, error) {
 		where := []string{"TRUE"}
 		var args []any
@@ -111,6 +123,9 @@ func (h *handler) listWorkers(c *fiber.Ctx) error {
 		}
 		if basis != "" {
 			add(`w."rateBasis" = ?`, basis)
+		}
+		if reg != "" {
+			add(`w."registrationStatus" = ?`, reg)
 		}
 		switch active {
 		case "false":
@@ -428,13 +443,26 @@ func (h *handler) assertUniqueNationalID(c *fiber.Ctx, u *auth.User, nid, except
 	return e
 }
 
+// isRegistrar: the user registers workers at his own site for Finance approval (workers.register without workers.manage).
+func isRegistrar(u *auth.User) bool { return !u.Can("workers.manage") && u.Can("workers.register") }
+
 func (h *handler) createWorker(c *fiber.Ctx) error {
 	ctx := reqCtx(c)
 	u := auth.MustUser(c)
-	v, err := httpx.Body(c)
+	m, err := httpx.DecodeMap(c)
 	if err != nil {
 		return err
 	}
+	registrar := isRegistrar(u)
+	if registrar {
+		site := auth.ScopedPlantID(u)
+		if site == "" {
+			return keyed(403, "forbidden", "payroll.err.register_own_site")
+		}
+		m["plantId"] = site // a supervisor registers at his own site only
+		delete(m, "employmentStatus")
+	}
+	v := httpx.NewV(m, httpx.Lang(c))
 	in := parseWorker(v, false)
 	if err := v.Err(); err != nil {
 		return err
@@ -457,29 +485,100 @@ func (h *handler) createWorker(c *fiber.Ctx) error {
 		return err
 	}
 	out, err := db.TxVal(ctx, h.d.Pool, func(tx pgx.Tx) (workerOut, error) {
-		var id string
-		if !in.IsActive && in.Status == workforce.StatusActive {
-			in.Status = workforce.StatusInactive
-		}
-		if err := tx.QueryRow(ctx, `INSERT INTO "Worker" ("firstName","lastName","nationalId","momoNumber","momoName","jobTitle","plantId","dailyWage","isActive","startDate","updatedAt",
-				"phone","rateBasis","employmentStatus","leftDate")
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
-			in.FirstName, in.LastName, in.NationalID, in.MomoNumber, in.MomoName, in.JobTitle, in.PlantID, in.DailyWage, in.IsActive, in.StartDate, db.Now(),
-			in.Phone, in.RateBasis, in.Status, in.LeftDate).Scan(&id); err != nil {
-			return workerOut{}, err
-		}
-		w, err := getWorker(ctx, tx, id)
+		w, err := insertWorker(ctx, tx, u.ID, in, "", registrar)
 		if err != nil {
 			return w, err
 		}
-		return w, audit.Record(c, tx, audit.Input{Action: "payroll.worker.create", Entity: "Worker", EntityID: id,
-			Summary: fmt.Sprintf("Registered worker %s (%s)", w.FullName, plant.Code), After: w})
+		if err := audit.Record(c, tx, audit.Input{Action: "payroll.worker.create", Entity: "Worker", EntityID: w.ID,
+			Summary: fmt.Sprintf("Registered worker %s (%s)%s", w.FullName, plant.Code, map[bool]string{true: ", pending finance approval", false: ""}[registrar]), After: w}); err != nil {
+			return w, err
+		}
+		if registrar {
+			return w, notifyRegistered(ctx, tx, w, u)
+		}
+		return w, nil
 	})
 	if err != nil {
 		return err
 	}
 	invalidate()
 	return c.Status(201).JSON(out)
+}
+
+// insertWorker writes a worker (id "" = generated). pending: a supervisor's registration awaiting Finance.
+func insertWorker(ctx context.Context, tx pgx.Tx, by string, in workerInput, id string, pending bool) (workerOut, error) {
+	if !in.IsActive && in.Status == workforce.StatusActive {
+		in.Status = workforce.StatusInactive
+	}
+	reg, approvedBy, approvedAt := "APPROVED", any(by), any(db.Now())
+	if pending {
+		reg, approvedBy, approvedAt = "PENDING", nil, nil
+	}
+	cols := `"firstName","lastName","nationalId","momoNumber","momoName","jobTitle","plantId","dailyWage","isActive","startDate","updatedAt",
+		"phone","rateBasis","employmentStatus","leftDate","registrationStatus","registeredById","registrationApprovedById","registrationApprovedAt"`
+	vals := `$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19`
+	args := []any{in.FirstName, in.LastName, in.NationalID, in.MomoNumber, in.MomoName, in.JobTitle, in.PlantID, in.DailyWage, in.IsActive, in.StartDate, db.Now(),
+		in.Phone, in.RateBasis, in.Status, in.LeftDate, reg, by, approvedBy, approvedAt}
+	if id != "" {
+		cols, vals, args = "id,"+cols, "$20,"+vals, append(args, id)
+	}
+	var newID string
+	if err := tx.QueryRow(ctx, `INSERT INTO "Worker" (`+cols+`) VALUES (`+vals+`) RETURNING id`, args...).Scan(&newID); err != nil {
+		return workerOut{}, err
+	}
+	return getWorker(ctx, tx, newID)
+}
+
+// POST /workers/:id/approve — Finance approves a supervisor's registration (workers.manage); the worker can then
+// be put on wage sheets.
+func (h *handler) approveWorker(c *fiber.Ctx) error {
+	ctx := reqCtx(c)
+	u := auth.MustUser(c)
+	id := c.Params("id")
+	out, err := db.TxVal(ctx, h.d.Pool, func(tx pgx.Tx) (workerOut, error) {
+		before, err := getWorker(ctx, tx, id)
+		if db.IsNoRows(err) {
+			return before, httpx.NotFound("entity.worker")
+		}
+		if err != nil {
+			return before, err
+		}
+		if err := auth.AssertPlantAccess(u, before.PlantID); err != nil {
+			return before, err
+		}
+		if before.RegistrationStatus != "PENDING" {
+			return before, keyed(409, "conflict", "payroll.err.registration_not_pending")
+		}
+		if before.RegisteredByID != nil && *before.RegisteredByID == u.ID && !u.IsSuperAdmin() {
+			return before, keyed(403, "forbidden", "payroll.err.registration_own")
+		}
+		if _, err := tx.Exec(ctx, `UPDATE "Worker" SET "registrationStatus" = 'APPROVED', "registrationApprovedById" = $2, "registrationApprovedAt" = $3, "updatedAt" = $3
+			WHERE id = $1 AND "registrationStatus" = 'PENDING'`, id, u.ID, db.Now()); err != nil {
+			return before, err
+		}
+		w, err := getWorker(ctx, tx, id)
+		if err != nil {
+			return w, err
+		}
+		if err := audit.Record(c, tx, audit.Input{Action: "payroll.worker.approve", Entity: "Worker", EntityID: id,
+			Summary: "Approved the registration of worker " + w.FullName, Before: before, After: w}); err != nil {
+			return w, err
+		}
+		if before.RegisteredByID != nil {
+			if err := notify.Send(ctx, tx, notify.Notification{Event: EventWorkerApproved, Severity: notify.Info,
+				TitleKey: "payroll.notify.worker_approved_title", BodyKey: "payroll.notify.worker_approved_body",
+				Params: map[string]any{"name": w.FullName, "plant": w.Plant.Code, "by": u.Name}, Link: "/workforce?tab=workers",
+				To: notify.ToUsers(*before.RegisteredByID).Without(u.ID)}); err != nil {
+				return w, err
+			}
+		}
+		return w, nil
+	})
+	if err != nil {
+		return err
+	}
+	invalidate()
+	return c.JSON(out)
 }
 
 func (h *handler) updateWorker(c *fiber.Ctx) error {
@@ -510,6 +609,15 @@ func (h *handler) updateWorker(c *fiber.Ctx) error {
 	}
 	if err := auth.AssertPlantAccess(u, before.PlantID); err != nil {
 		return err
+	}
+	if isRegistrar(u) {
+		// a supervisor corrects only his own registrations while they wait for Finance; site and status stay
+		if before.RegistrationStatus != "PENDING" || before.RegisteredByID == nil || *before.RegisteredByID != u.ID {
+			return keyed(403, "forbidden", "payroll.err.registration_locked")
+		}
+		for _, k := range []string{"plantId", "employmentStatus", "isActive", "leftDate"} {
+			delete(in.has, k)
+		}
 	}
 	if in.has["plantId"] && in.PlantID != before.PlantID {
 		if err := auth.AssertPlantAccess(u, in.PlantID); err != nil {

@@ -644,6 +644,16 @@ func (h *handler) guardStep(c *fiber.Ctx, u *auth.User, id string, step Step) (*
 			return p, tot, keyed(400, "bad_request", "payroll.err.negative_lines", "n", neg)
 		}
 	}
+	if step == StepPrepare || step == StepVerify || step == StepAuthorize {
+		var pending int // WRK-01: unapproved registrations are never paid
+		if err := h.d.Pool.QueryRow(ctx, `SELECT count(*) FROM "PayrollLine" l JOIN "Worker" w ON w.id = l."workerId"
+			WHERE l."periodId" = $1 AND w."registrationStatus" <> 'APPROVED'`, p.ID).Scan(&pending); err != nil {
+			return p, tot, err
+		}
+		if pending > 0 {
+			return p, tot, keyed(400, "bad_request", "payroll.err.pending_workers", "n", pending)
+		}
+	}
 	return p, tot, nil
 }
 

@@ -45,6 +45,10 @@ export interface Worker {
   rateBasis: RateBasis;
   employmentStatus: EmploymentStatus;
   leftDate: string | null;
+  /** WRK-01: a supervisor's registration waits for Finance approval (PENDING) and stays off wage sheets until then */
+  registrationStatus?: "PENDING" | "APPROVED";
+  registeredById?: string | null;
+  registrationApprovedAt?: string | null;
 }
 
 export type RateBasis = "DAILY" | "PIECE" | "MIXED";
@@ -87,6 +91,7 @@ export interface WorkerQuery {
   rateBasis?: RateBasis;
   page?: number;
   pageSize?: number;
+  registration?: "PENDING" | "APPROVED";
 }
 
 export function useWorkers(query: WorkerQuery, enabled = true) {
@@ -99,6 +104,7 @@ export function useWorkers(query: WorkerQuery, enabled = true) {
 }
 
 export const createWorker = (body: WorkerPayload) => post<Worker>("/payroll/workers", body as unknown as Record<string, unknown>);
+export const approveWorker = (id: string) => post<Worker>(`/payroll/workers/${id}/approve`, {});
 export const updateWorker = ({ id, body }: { id: string; body: Partial<WorkerPayload> }) => patch<Worker>(`/payroll/workers/${id}`, body as Record<string, unknown>);
 
 // ───────────────────────────── Periods ─────────────────────────────

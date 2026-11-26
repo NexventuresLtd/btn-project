@@ -209,5 +209,20 @@
  "payroll.v.paid_future": "የክፍያው ቀን ወደፊት ሊሆን አይችልም",
  "payroll.v.phone_format": "እንደ 0781234567 ያለ ስልክ ቁጥር ያስገቡ",
  "payroll.v.rate_basis": "በቀን፣ በቁራጭ ወይም የተቀላቀለ ይምረጡ",
- "payroll.v.status": "ንቁ፣ ንቁ ያልሆነ ወይም የለቀቀ ይምረጡ"
+ "payroll.v.status": "ንቁ፣ ንቁ ያልሆነ ወይም የለቀቀ ይምረጡ",
+ "payroll.err.register_own_site": "ሠራተኞችን ማስመዝገብ የሚችለው ለሳይቱ የተመደበ ሱፐርቫይዘር ብቻ ነው",
+ "payroll.err.registration_not_pending": "የዚህ ሠራተኛ ምዝገባ ማጽደቅ እየጠበቀ አይደለም",
+ "payroll.err.registration_own": "ይህን ሠራተኛ ያስመዘገቡት እርስዎ ነዎት፤ ሌላ የፋይናንስ ሰው ማጽደቅ አለበት",
+ "payroll.err.registration_locked": "መለወጥ የሚችሉት የፋይናንስ ማጽደቅ እየጠበቁ ያሉ የራስዎን ምዝገባዎች ብቻ ነው",
+ "payroll.err.worker_pending": "{name} ምዝገባው በፋይናንስ እስኪጸድቅ እየጠበቀ ነው፤ የደሞዝ መስመር ከመጨመርዎ በፊት ያጽድቁት",
+ "payroll.err.pending_workers": "በዚህ ሉህ ላይ ያሉ {n} ሠራተኞች ምዝገባቸው እስኪጸድቅ እየጠበቁ ነው",
+ "payroll.err.nid_taken_sync": "መታወቂያ ቁጥር {id} ለሌላ ሠራተኛ ተመዝግቧል",
+ "payroll.notify.worker_registered_title": "የሚጸድቅ አዲስ የሠራተኛ ምዝገባ",
+ "payroll.notify.worker_registered_body": "{by} {name}ን በ{plant} አስመዝግቧል። ከሚቀጥለው የደሞዝ ሉህ በፊት ዝርዝሩን አረጋግጠው ሠራተኛውን ያጽድቁ።",
+ "payroll.notify.worker_approved_title": "የሠራተኛ ምዝገባ ጸድቋል",
+ "payroll.notify.worker_approved_body": "{by} የ{name} ({plant}) ምዝገባን አጽድቋል።",
+ "notify.event.payroll.worker_registered": "የሚጸድቅ የሠራተኛ ምዝገባ",
+ "notify.event.payroll.worker_registered.help": "የሳይት ሱፐርቫይዘር በፋይናንስ መጽደቅ ያለበትን አዲስ ጊዜያዊ ሠራተኛ አስመዝግቧል",
+ "notify.event.payroll.worker_approved": "የሠራተኛ ምዝገባ ጸድቋል",
+ "notify.event.payroll.worker_approved.help": "ፋይናንስ ያስመዘገቡትን ሠራተኛ አጽድቋል"
 }

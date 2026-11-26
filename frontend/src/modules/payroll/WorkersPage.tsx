@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { History, Pencil, Search, TriangleAlert, UserPlus } from "lucide-react";
+import { BadgeCheck, Clock, History, Pencil, Search, TriangleAlert, UserPlus } from "lucide-react";
 import { Alert, Badge, Button, Card, DataTable, ErrorState, FilterBar, Input, PageHeader, Pagination, Select, Tabs, useFilters, type Column, ExportMenu } from "@/components/ui";
 import { useT } from "@/i18n";
 import { useAuth } from "@/auth/AuthProvider";
 import { formatInt } from "@/lib/format";
 import { formatDate } from "@/lib/dates";
-import { EMPLOYMENT_STATUSES, RATE_BASES, useWorkers, type EmploymentStatus, type Worker } from "./api";
+import { useMutate } from "@/hooks/useMutate";
+import { approveWorker, EMPLOYMENT_STATUSES, PAYROLL_KEY, RATE_BASES, useWorkers, type EmploymentStatus, type Worker } from "./api";
 import { WorkerModal } from "./WorkerModal";
 
 type ActiveFilter = "true" | "false" | "all";
@@ -33,10 +34,27 @@ export function EmploymentBadge({ status, leftDate }: { status: EmploymentStatus
   );
 }
 
+/** WRK-01: a supervisor's registration waiting for Finance approval. */
+export function PendingRegistrationBadge() {
+  const { t } = useT();
+  return (
+    <Badge tone="amber" className="gap-1">
+      <Clock className="size-3" /> {t("payroll.reg.pending")}
+    </Badge>
+  );
+}
+
 export function WorkersPage() {
   const { t, tx } = useT();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const canManage = can("workers.manage");
+  // a site supervisor registers new casual workers at his site (pending Finance approval) and corrects them until approved
+  const canRegister = canManage || can("workers.register");
+  const editable = (w: Worker) => canManage || (w.registrationStatus === "PENDING" && w.registeredById === user?.id);
+  const approve = useMutate((w: Worker) => approveWorker(w.id), {
+    success: (w) => t("payroll.reg.approved", { name: w.fullName }),
+    invalidate: [[...PAYROLL_KEY, "workers"]],
+  });
   const canWages = can("wages.view");
   const { filters, set, pinnedPlant } = useFilters();
   const [params, setParams] = useSearchParams();
@@ -44,6 +62,7 @@ export function WorkersPage() {
   const page = Math.max(1, Number(params.get("page")) || 1);
   const status = EMPLOYMENT_STATUSES.find((s) => s === params.get("status"));
   const rateBasis = RATE_BASES.find((b) => b === params.get("rateBasis"));
+  const registration = params.get("registration") === "PENDING" ? ("PENDING" as const) : undefined;
   const [search, setSearch] = useState(params.get("q") ?? "");
   const q = params.get("q") ?? "";
   const [editing, setEditing] = useState<Worker | null>(null);
@@ -67,7 +86,7 @@ export function WorkersPage() {
   }, [search]);
 
   // an explicit employment status filter replaces the active/inactive tabs
-  const workers = useWorkers({ plantId: filters.plantId || undefined, q: q || undefined, active: status ? "all" : active, status, rateBasis, page, pageSize: 50 });
+  const workers = useWorkers({ plantId: filters.plantId || undefined, q: q || undefined, active: status ? "all" : active, status, rateBasis, registration, page, pageSize: 50 });
   const data = workers.data;
 
   const openNew = () => {
@@ -107,7 +126,16 @@ export function WorkersPage() {
         </div>
       ),
     },
-    { key: "status", header: t("common.status"), cell: (w) => <EmploymentBadge status={w.employmentStatus ?? (w.isActive ? "ACTIVE" : "INACTIVE")} leftDate={w.leftDate} /> },
+    {
+      key: "status",
+      header: t("common.status"),
+      cell: (w) => (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <EmploymentBadge status={w.employmentStatus ?? (w.isActive ? "ACTIVE" : "INACTIVE")} leftDate={w.leftDate} />
+          {w.registrationStatus === "PENDING" ? <PendingRegistrationBadge /> : null}
+        </div>
+      ),
+    },
     ...(canWages
       ? [
           {
@@ -122,16 +150,26 @@ export function WorkersPage() {
           },
         ]
       : []),
-    ...(canManage
+    ...(canRegister
       ? [
           {
             key: "edit",
             header: <span className="sr-only">{t("common.edit")}</span>,
             align: "right" as const,
             cell: (w: Worker) => (
-              <Button variant="ghost" size="sm" icon={<Pencil className="size-3.5" />} onClick={(e) => { e.stopPropagation(); openEdit(w); }} aria-label={t("payroll.col.editAria", { name: w.fullName })}>
-                {t("common.edit")}
-              </Button>
+              <div className="flex justify-end gap-1">
+                {canManage && w.registrationStatus === "PENDING" && w.registeredById !== user?.id ? (
+                  <Button onlineOnly variant="success" size="sm" icon={<BadgeCheck className="size-3.5" />} loading={approve.isPending && approve.variables?.id === w.id}
+                    onClick={(e) => { e.stopPropagation(); approve.mutate(w); }} aria-label={t("payroll.reg.approveAria", { name: w.fullName })}>
+                    {t("payroll.reg.approve")}
+                  </Button>
+                ) : null}
+                {editable(w) ? (
+                  <Button variant="ghost" size="sm" icon={<Pencil className="size-3.5" />} onClick={(e) => { e.stopPropagation(); openEdit(w); }} aria-label={t("payroll.col.editAria", { name: w.fullName })}>
+                    {t("common.edit")}
+                  </Button>
+                ) : null}
+              </div>
             ),
           },
         ]
@@ -144,7 +182,7 @@ export function WorkersPage() {
         title={t("payroll.workersPage.title")}
         breadcrumbs={[{ label: t("payroll.title"), to: "/payroll" }, { label: t("payroll.workersPage.title") }]}
         description={t("payroll.workersPage.description")}
-        actions={<div className="flex flex-wrap items-center gap-2"><ExportMenu path="/payroll/workers" params={{ plantId: filters.plantId || undefined, q: q || undefined, active: status ? "all" : active, status, rateBasis }} />{canManage ? <Button icon={<UserPlus className="size-4" />} onClick={openNew}>{t("payroll.workersPage.register")}</Button> : null}</div>}
+        actions={<div className="flex flex-wrap items-center gap-2"><ExportMenu path="/payroll/workers" params={{ plantId: filters.plantId || undefined, q: q || undefined, active: status ? "all" : active, status, rateBasis }} />{canRegister ? <Button icon={<UserPlus className="size-4" />} onClick={openNew}>{t("payroll.workersPage.register")}</Button> : null}</div>}
       />
 
       <FilterBar filters={filters} onChange={set} pinnedPlant={pinnedPlant} showRange={false} className="mb-5">
@@ -155,6 +193,10 @@ export function WorkersPage() {
         <Select value={status ?? ""} onChange={(e) => setParam("status", e.target.value || null)} className="h-10 w-full sm:w-44" aria-label={t("payroll.wrk.filterStatus")}>
           <option value="">{t("payroll.wrk.anyStatus")}</option>
           {EMPLOYMENT_STATUSES.map((s) => <option key={s} value={s}>{tx(`payroll.wrk.status.${s}`)}</option>)}
+        </Select>
+        <Select value={registration ?? ""} onChange={(e) => setParam("registration", e.target.value || null)} className="h-10 w-full sm:w-52" aria-label={t("payroll.reg.filter")}>
+          <option value="">{t("payroll.reg.any")}</option>
+          <option value="PENDING">{t("payroll.reg.pendingOnly")}</option>
         </Select>
         <Select value={rateBasis ?? ""} onChange={(e) => setParam("rateBasis", e.target.value || null)} className="h-10 w-full sm:w-44" aria-label={t("payroll.wrk.filterBasis")}>
           <option value="">{t("payroll.wrk.anyBasis")}</option>
@@ -184,11 +226,11 @@ export function WorkersPage() {
               rows={data?.items}
               rowKey={(w) => w.id}
               loading={workers.isLoading}
-              onRowClick={canManage ? openEdit : undefined}
+              onRowClick={canRegister ? (w) => editable(w) && openEdit(w) : undefined}
               empty={
                 <div className="space-y-1">
                   <p className="font-medium text-slate-700">{q ? t("payroll.workersPage.noMatch", { q }) : t("payroll.workersPage.none")}</p>
-                  <p>{canManage ? t("payroll.workersPage.registerHint") : t("payroll.workersPage.tryOther")}</p>
+                  <p>{canRegister ? t("payroll.workersPage.registerHint") : t("payroll.workersPage.tryOther")}</p>
                 </div>
               }
             />

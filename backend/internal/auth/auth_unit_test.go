@@ -146,9 +146,9 @@ var permGrants = map[Permission][]grant{
 	"procurement.approve": {{"procurement", "A"}}, "procurement.manage": {{"procurement", "CU"}},
 	"procurement.receive": {{"stock", "C"}, {"procurement", "U"}}, // a goods receipt is a stock receipt
 	"attendance.view":     {{"attendance", "R"}}, "attendance.record": {{"attendance", "C"}}, "attendance.approve": {{"attendance", "A"}},
-	"payroll.view": {{"wages", "R"}}, "payroll.prepare": {{"wages", "U"}}, "payroll.check": {{"wages", "A"}},
+	"payroll.view": {{"wages", "R"}}, "payroll.prepare": {{"attendance", "C"}}, "payroll.check": {{"wages", "A"}}, // payroll.prepare: the sheet is compiled from attendance (§7.4)
 	"payroll.verify": {{"wages", "U"}}, "payroll.authorize": {{"wages", "A"}, {"finance", "A"}}, // wages are PAYROLL expenses
-	"payroll.pay": {{"wages", "U"}}, "workers.manage": {{"wages", "U"}}, "wages.view": {{"wages", "R"}},
+	"payroll.pay": {{"wages", "U"}}, "workers.manage": {{"wages", "U"}}, "workers.register": {{"attendance", "C"}}, "wages.view": {{"wages", "R"}},
 	"reports.view": {{"reports", "R"}}, "reports.schedule": {{"admin", "CU"}},
 	"sync.resolve": {{"production", "U"}, {"attendance", "U"}, {"stock", "A"}},
 	"users.view":   {{"admin", "R"}}, "users.manage": {{"admin", "CU"}}, "masterdata.manage": {{"admin", "CU"}},
@@ -226,7 +226,7 @@ func TestSRSRoleMatrix(t *testing.T) {
 		{SYS, "production.view", true}, {SM, "production.view", false}, {PRO, "stock.view", true}, {SYS, "stock.view", true},
 		{PM, "sales.approve", true}, {GM, "sales.approve", false}, {SYS, "sales.view", true}, {SYS, "customers.manage", false},
 		{STO, "deliveries.create", true}, {SUP, "deliveries.create", false}, {PM, "deliveries.create", false},
-		{SUP, "payroll.prepare", false}, {SUP, "payroll.check", false}, {PM, "payroll.check", true}, {SUP, "workers.manage", false},
+		{SUP, "payroll.prepare", true}, {FM, "payroll.prepare", false}, {SUP, "payroll.check", false}, {PM, "payroll.check", true}, {SUP, "workers.manage", false},
 		{SYS, "attendance.view", true}, {PM, "expenses.view", true}, {SM, "expenses.view", true}, {SM, "income.view", true},
 		{PRO, "income.view", true}, {SUP, "expenses.record", false}, {STO, "expenses.record", false}, {SUP, "pettycash.custodian", false},
 		{SYS, "expenses.view", true}, {SYS, "procurement.view", true}, {SYS, "reports.view", true},

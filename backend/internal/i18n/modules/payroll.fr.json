@@ -209,5 +209,20 @@
  "payroll.v.paid_future": "La date de paiement ne peut pas être dans le futur",
  "payroll.v.phone_format": "Saisissez un numéro comme 0781234567",
  "payroll.v.rate_basis": "Choisissez journalier, à la pièce ou mixte",
- "payroll.v.status": "Choisissez actif, inactif ou parti"
+ "payroll.v.status": "Choisissez actif, inactif ou parti",
+ "payroll.err.register_own_site": "Seul un superviseur affecté à un site peut y enregistrer des travailleurs",
+ "payroll.err.registration_not_pending": "L'enregistrement de ce travailleur n'attend pas d'approbation",
+ "payroll.err.registration_own": "Vous avez enregistré ce travailleur ; une autre personne des Finances doit l'approuver",
+ "payroll.err.registration_locked": "Vous ne pouvez modifier que vos propres enregistrements tant qu'ils attendent l'approbation des Finances",
+ "payroll.err.worker_pending": "{name} attend l'approbation de son enregistrement par les Finances ; approuvez-le avant d'ajouter une ligne de salaire",
+ "payroll.err.pending_workers": "{n} travailleur(s) de cette feuille attendent encore l'approbation de leur enregistrement",
+ "payroll.err.nid_taken_sync": "Le numéro d'identité {id} est déjà enregistré pour un autre travailleur",
+ "payroll.notify.worker_registered_title": "Nouvel enregistrement de travailleur à approuver",
+ "payroll.notify.worker_registered_body": "{by} a enregistré {name} à {plant}. Vérifiez les informations et approuvez le travailleur avant la prochaine feuille de salaires.",
+ "payroll.notify.worker_approved_title": "Enregistrement du travailleur approuvé",
+ "payroll.notify.worker_approved_body": "{by} a approuvé l'enregistrement de {name} ({plant}).",
+ "notify.event.payroll.worker_registered": "Enregistrement de travailleur à approuver",
+ "notify.event.payroll.worker_registered.help": "Un superviseur de site a enregistré un nouveau travailleur occasionnel qui doit être approuvé par les Finances",
+ "notify.event.payroll.worker_approved": "Enregistrement du travailleur approuvé",
+ "notify.event.payroll.worker_approved.help": "Les Finances ont approuvé un travailleur que vous avez enregistré"
 }

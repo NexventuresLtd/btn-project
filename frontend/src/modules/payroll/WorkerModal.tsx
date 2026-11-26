@@ -4,6 +4,11 @@ import { useT, type T } from "@/i18n";
 import { useLookups } from "@/hooks/useLookups";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { ApiError } from "@/lib/api";
+import { useAuth } from "@/auth/AuthProvider";
+import { toast } from "sonner";
+import { OfflineLockedError, useConnectivity, useOfflineMutation } from "@/offline/hooks";
+import { useQueryClient } from "@tanstack/react-query";
+import { addToOfflineRoster, WORKER_REGISTRATION_TYPE } from "./offline";
 import { createWorker, DEFAULT_WAGE, EMPLOYMENT_STATUSES, PAYROLL_KEY, RATE_BASES, updateWorker, type EmploymentStatus, type RateBasis, type Worker, type WorkerPayload } from "./api";
 import { momoNameMismatch, normaliseMomo } from "./identity";
 
@@ -63,6 +68,12 @@ function validate(f: FormState, t: T): Record<string, string> {
 export function WorkerModal({ open, onClose, worker, pinnedPlant, defaultPlant }: { open: boolean; onClose: () => void; worker: Worker | null; pinnedPlant: string | null; defaultPlant?: string }) {
   const { t, tx } = useT();
   const { data: lookups } = useLookups();
+  const { can } = useAuth();
+  // WRK-01: a site supervisor registers at his own site; Finance approves it (the record stays PENDING until then)
+  const registrar = !can("workers.manage") && can("workers.register");
+  const offline = useOfflineMutation<WorkerPayload>(WORKER_REGISTRATION_TYPE);
+  const net = useConnectivity();
+  const qc = useQueryClient();
   const [form, setForm] = useState<FormState>(() => empty());
   const [touched, setTouched] = useState(false);
 
@@ -101,7 +112,7 @@ export function WorkerModal({ open, onClose, worker, pinnedPlant, defaultPlant }
     e.preventDefault();
     setTouched(true);
     if (Object.keys(errors).length) return;
-    save.mutate({
+    const body: WorkerPayload = {
       firstName: form.firstName,
       lastName: form.lastName,
       nationalId: form.nationalId.replace(/\s+/g, ""),
@@ -115,7 +126,24 @@ export function WorkerModal({ open, onClose, worker, pinnedPlant, defaultPlant }
       rateBasis: form.rateBasis,
       employmentStatus: form.employmentStatus,
       leftDate: form.employmentStatus === "LEFT" ? form.leftDate || null : null,
-    });
+    };
+    if (registrar && !worker) void registerLocalFirst(body);
+    else save.mutate(body);
+  };
+
+  // local-first: the registration is saved on the device (so the worker can be marked present offline) and syncs
+  const registerLocalFirst = async (body: WorkerPayload) => {
+    try {
+      const r = await offline.submit(body, { quiet: true });
+      await addToOfflineRoster(r.uuid, body);
+      toast.success(t("payroll.reg.saved", { name: `${body.firstName} ${body.lastName}`.toUpperCase() }));
+      onClose();
+    } catch (e) {
+      if (e instanceof OfflineLockedError && net.reachable) save.mutate(body);
+      else if (!(e instanceof OfflineLockedError)) toast.error((e as Error).message);
+    } finally {
+      void qc.invalidateQueries({ queryKey: [...PAYROLL_KEY, "workers"] });
+    }
   };
 
   const mismatch = momoNameMismatch({ firstName: form.firstName, lastName: form.lastName, momoName: form.momoName });
@@ -128,11 +156,11 @@ export function WorkerModal({ open, onClose, worker, pinnedPlant, defaultPlant }
       onClose={onClose}
       size="lg"
       title={worker ? t("payroll.worker.title.edit", { name: worker.fullName }) : t("payroll.worker.title.new")}
-      description={t("payroll.worker.description")}
+      description={registrar && !worker ? t("payroll.reg.description") : t("payroll.worker.description")}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button>
-          <Button type="submit" form="worker-form" loading={save.isPending}>{worker ? t("common.saveChanges") : t("payroll.worker.register")}</Button>
+          <Button type="submit" form="worker-form" loading={save.isPending || offline.isSaving}>{worker ? t("common.saveChanges") : t("payroll.worker.register")}</Button>
         </>
       }
     >
@@ -172,7 +200,7 @@ export function WorkerModal({ open, onClose, worker, pinnedPlant, defaultPlant }
         ) : null}
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label={t("common.plant")} required error={err("plantId")} htmlFor="wk-plant">
-            <Select id="wk-plant" value={form.plantId} onChange={(e) => onPlant(e.target.value)} disabled={!!pinnedPlant} invalid={!!err("plantId")}>
+            <Select id="wk-plant" value={form.plantId} onChange={(e) => onPlant(e.target.value)} disabled={!!pinnedPlant || (registrar && !!worker)} invalid={!!err("plantId")}>
               {!pinnedPlant ? <option value="">{t("payroll.newPeriod.choosePlantOption")}</option> : null}
               {lookups?.plants.map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}
             </Select>
@@ -194,7 +222,7 @@ export function WorkerModal({ open, onClose, worker, pinnedPlant, defaultPlant }
             </Select>
           </Field>
           <Field label={t("payroll.wrk.status")} required error={err("employmentStatus")} htmlFor="wk-status">
-            <Select id="wk-status" value={form.employmentStatus} onChange={(e) => set("employmentStatus", e.target.value as EmploymentStatus)}>
+            <Select id="wk-status" value={form.employmentStatus} disabled={registrar} onChange={(e) => set("employmentStatus", e.target.value as EmploymentStatus)}>
               {EMPLOYMENT_STATUSES.map((s) => <option key={s} value={s}>{tx(`payroll.wrk.status.${s}`)}</option>)}
             </Select>
           </Field>

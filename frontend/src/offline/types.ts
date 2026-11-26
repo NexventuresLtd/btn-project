@@ -13,3 +13,4 @@ import "@/modules/transfers/offline";
 import "@/modules/pettycash/offline";
 import "@/modules/expenses/offline";
 import "@/modules/income/offline";
+import "@/modules/payroll/offline";

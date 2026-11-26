@@ -164,7 +164,8 @@ func recalc(ctx context.Context, tx pgx.Tx, p *periodHead) ([]calcLine, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.Query(ctx, `SELECT w.id FROM "Worker" w WHERE w."plantId" = $1 AND (w."isActive"
+	// a supervisor's registration that Finance has not approved yet stays off the sheet (WRK-01)
+	rows, err := tx.Query(ctx, `SELECT w.id FROM "Worker" w WHERE w."plantId" = $1 AND w."registrationStatus" = 'APPROVED' AND (w."isActive"
 			OR EXISTS (SELECT 1 FROM "Attendance" a WHERE a."workerId" = w.id AND a.date >= $2 AND a.date <= $3)
 			OR EXISTS (SELECT 1 FROM piece_work_entry e WHERE e.worker_id = w.id AND e.date >= $2 AND e.date <= $3 AND e.removed_at IS NULL))
 		ORDER BY w.id`, p.PlantID, p.Start, p.End)
@@ -188,7 +189,13 @@ func recalc(ctx context.Context, tx pgx.Tx, p *periodHead) ([]calcLine, error) {
 	}
 	for _, id := range existing {
 		if !seen[id] {
-			ids = append(ids, id)
+			var approved bool
+			if err := tx.QueryRow(ctx, `SELECT "registrationStatus" = 'APPROVED' FROM "Worker" WHERE id = $1`, id).Scan(&approved); err != nil {
+				return nil, err
+			}
+			if approved {
+				ids = append(ids, id)
+			}
 		}
 	}
 	res, err := workforce.CalculateWorkers(ctx, tx, ids, p.Start, p.End, p.ID)
@@ -348,18 +355,18 @@ func (h *handler) saveLines(c *fiber.Ctx) error {
 	}
 	type wrow struct {
 		first, last, plantID string
-		active               bool
+		active, approved     bool
 	}
 	workers := map[string]wrow{}
 	if len(ids) > 0 {
-		rows, err := h.d.Pool.Query(ctx, `SELECT id, "firstName", "lastName", "plantId", "isActive" FROM "Worker" WHERE id = ANY($1)`, ids)
+		rows, err := h.d.Pool.Query(ctx, `SELECT id, "firstName", "lastName", "plantId", "isActive", "registrationStatus" = 'APPROVED' FROM "Worker" WHERE id = ANY($1)`, ids)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var id string
 			var w wrow
-			if err := rows.Scan(&id, &w.first, &w.last, &w.plantID, &w.active); err != nil {
+			if err := rows.Scan(&id, &w.first, &w.last, &w.plantID, &w.active, &w.approved); err != nil {
 				rows.Close()
 				return err
 			}
@@ -394,6 +401,10 @@ func (h *handler) saveLines(c *fiber.Ctx) error {
 		}
 		if !onSheet && !w.active {
 			setField(fmt.Sprintf("lines.%d.workerId", i), t(c, "payroll.err.worker_inactive", "name", name))
+			continue
+		}
+		if !w.approved {
+			setField(fmt.Sprintf("lines.%d.workerId", i), t(c, "payroll.err.worker_pending", "name", name))
 			continue
 		}
 		r := res[l.WorkerID]

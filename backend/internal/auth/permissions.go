@@ -130,12 +130,13 @@ var Matrix = []permRule{
 	{"attendance.record", rr(SUP, LEAD)},
 	{"attendance.approve", rr(PM)}, // lock attendance, approve corrections
 	{"payroll.view", rr(MD, GM, OA, PM, FM, SYS)},
-	{"payroll.prepare", rr(FM)},
-	{"payroll.check", rr(PM)}, // §7.4: the calculation is reviewed by the Production Manager (only)
+	{"payroll.prepare", rr(SUP)}, // §7.4/WRK-03: the site supervisor compiles the sheet from the attendance he recorded
+	{"payroll.check", rr(PM)},    // §7.4: the calculation is reviewed by the Production Manager (only)
 	{"payroll.verify", rr(FM)},
 	{"payroll.authorize", rr(GM, MD)}, // wages are PAYROLL expenses: Finance "Top Mgt R A" (documented in docs/ROLES.md)
 	{"payroll.pay", rr(FM)},
-	{"workers.manage", rr(FM)},
+	{"workers.manage", rr(FM)},                  // worker records (WRK-01, personal data): edit, approve registrations
+	{"workers.register", rr(SUP)},               // register a new casual worker at the own site, pending Finance approval
 	{"wages.view", rr(FM, PM, GM, MD, OA, SYS)}, // per-worker payment history
 
 	// SRS §8 "Reports": everyone R (supervisors their own site).

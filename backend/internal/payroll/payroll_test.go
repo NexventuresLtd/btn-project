@@ -140,10 +140,8 @@ func TestWorkers(t *testing.T) {
 		t.Fatalf("dup %d %s %v", r.StatusCode, msg, f)
 	}
 	w2 := newWorker(t, e, fm, b2, "ALINE", "UWASE", 5500)
-	// SRS §8 Attendance & wages: supervisors record attendance only; worker records are Finance's (R U)
-	if r := e.Do("POST", "/api/payroll/workers", workerBody(b1, "A", "B", 5000), sup); r.StatusCode != 403 {
-		t.Fatalf("supervisor create %d", r.StatusCode)
-	}
+	// SRS §8 Attendance & wages: worker records are Finance's (R U); a supervisor may only register a new worker
+	// at his own site, pending Finance approval (TestSupervisorRegistersWorker), and never edit approved records
 	if r := e.Do("PATCH", "/api/payroll/workers/"+w2, M{"dailyWage": 6000}, sup); r.StatusCode != 403 {
 		t.Fatalf("supervisor patch %d", r.StatusCode)
 	}
@@ -160,7 +158,8 @@ func TestWorkers(t *testing.T) {
 	if list.Total != 2 || len(list.Items) != 2 || list.Page != 1 || list.PageSize != 50 || list.MismatchCount != 1 {
 		t.Fatalf("list %+v", list)
 	}
-	if r := e.Do("GET", "/api/payroll/workers", nil, sup); r.StatusCode != 403 { // wages: no supervisor access (§8)
+	// the site supervisor (wage-sheet preparer, worker registrar) sees his own site's workers only
+	if r := e.Do("GET", "/api/payroll/workers", nil, sup); r.StatusCode != 200 || e.Map(r)["total"].(float64) != 1 {
 		t.Fatalf("supervisor list %d", r.StatusCode)
 	}
 	e.Decode(e.Do("GET", "/api/payroll/workers?q=uwase", nil, fm), &list)
@@ -213,6 +212,7 @@ type fx struct {
 	e                     *apptest.Env
 	b1                    string
 	fm1, fm2, fm3, pm, gm *testutil.TestUser
+	sup                   *testutil.TestUser // SRS §7.4: the site supervisor prepares the wage sheet
 	w                     [3]string
 }
 
@@ -224,6 +224,7 @@ func setup(t *testing.T) *fx {
 	f.fm3 = e.User(auth.RoleFinanceManager)
 	f.pm = e.User(auth.RoleProductionManager)
 	f.gm = e.User(auth.RoleGeneralManager)
+	f.sup = e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-1"})
 	f.w[0] = newWorker(t, e, f.fm1, f.b1, "ALINE", "UWASE", 5800)
 	f.w[1] = newWorker(t, e, f.fm1, f.b1, "BOSCO", "NKUSI", 5555)
 	f.w[2] = newWorker(t, e, f.fm1, f.b1, "CLAUDE", "MUGISHA", 5000)
@@ -232,7 +233,7 @@ func setup(t *testing.T) *fx {
 
 func (f *fx) createPeriod(t *testing.T, start, end string) M {
 	t.Helper()
-	r := f.e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": start, "endDate": end}, f.fm1)
+	r := f.e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": start, "endDate": end}, f.sup)
 	if r.StatusCode != 201 {
 		t.Fatalf("create period %d %s", r.StatusCode, f.e.Text(r))
 	}
@@ -271,15 +272,15 @@ func TestPeriodCreateAndLines(t *testing.T) {
 	if r := e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": "2026-11-01", "endDate": "2026-11-15"}, supB2); r.StatusCode != 403 {
 		t.Fatalf("scope %d", r.StatusCode)
 	}
-	_, _, fields := e.ErrorOf(e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": "2026-11-15", "endDate": "2026-11-01"}, f.fm1))
+	_, _, fields := e.ErrorOf(e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": "2026-11-15", "endDate": "2026-11-01"}, f.sup))
 	if fields["endDate"] != "End date must be on or after the start date" {
 		t.Fatalf("%v", fields)
 	}
-	_, _, fields = e.ErrorOf(e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": "2026-11-01", "endDate": "2026-12-02"}, f.fm1))
+	_, _, fields = e.ErrorOf(e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": "2026-11-01", "endDate": "2026-12-02"}, f.sup))
 	if fields["endDate"] != "A wage sheet can cover at most 31 days" {
 		t.Fatalf("%v", fields)
 	}
-	_, _, fields = e.ErrorOf(e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": "2026-13-01"}, f.fm1))
+	_, _, fields = e.ErrorOf(e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": "2026-13-01"}, f.sup))
 	if fields["startDate"] != "Enter a valid date (YYYY-MM-DD)" || fields["endDate"] != "Required" {
 		t.Fatalf("%v", fields)
 	}
@@ -298,11 +299,11 @@ func TestPeriodCreateAndLines(t *testing.T) {
 	id := p["id"].(string)
 
 	// overlap / duplicate
-	r := e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": "2026-11-01", "endDate": "2026-11-15"}, f.fm1)
+	r := e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": "2026-11-01", "endDate": "2026-11-15"}, f.sup)
 	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || !strings.Contains(msg, "already exists (WG-BTN1-20261101)") {
 		t.Fatalf("dup %d %s", r.StatusCode, msg)
 	}
-	r = e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": "2026-11-10", "endDate": "2026-11-20"}, f.fm1)
+	r = e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": "2026-11-10", "endDate": "2026-11-20"}, f.sup)
 	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || !strings.Contains(msg, "overlap WG-BTN1-20261101 (01/11/2026 – 15/11/2026) for BTN-1") {
 		t.Fatalf("overlap %d %s", r.StatusCode, msg)
 	}
@@ -317,7 +318,7 @@ func TestPeriodCreateAndLines(t *testing.T) {
 
 	// line validation (messages name the worker; several errors -> "(and N more)")
 	put := func(lines []M) (int, string, map[string]string) {
-		r := e.Do("PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": withReason(lines)}, f.fm1)
+		r := e.Do("PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": withReason(lines)}, f.sup)
 		_, msg, fl := e.ErrorOf(r)
 		return r.StatusCode, msg, fl
 	}
@@ -358,7 +359,7 @@ func TestPeriodCreateAndLines(t *testing.T) {
 		{"workerId": f.w[0], "daysWorked": 9.5, "foodDeduction": 7500, "otherDeduction": 500, "note": " late start "},
 		{"workerId": f.w[1], "daysWorked": 0.5}, // 5,555 x 0.5 = 2,777.5 -> 2,778
 		{"workerId": f.w[2], "daysWorked": 0},
-	}, f.fm1)
+	}, f.sup)
 	l0, l1 := lineFor(t, d, f.w[0]), lineFor(t, d, f.w[1])
 	if num(l0["grossAmount"]) != 55_100 || num(l0["netAmount"]) != 47_100 || l0["note"] != "late start" || num(l1["grossAmount"]) != 2778 || num(l1["netAmount"]) != 2778 || num(l1["daysWorked"]) != 0.5 {
 		t.Fatalf("lines %v %v", l0, l1)
@@ -375,7 +376,7 @@ func TestPeriodCreateAndLines(t *testing.T) {
 	// a DRAFT sheet follows the rates in force (WRK-03): a wage change on the worker re-prices the draft;
 	// sheets beyond DRAFT keep their calculation (covered in the workflow test)
 	e.Do("PATCH", "/api/payroll/workers/"+f.w[0], M{"dailyWage": 9999}, f.fm1)
-	d = f.saveLines(t, id, []M{{"workerId": f.w[0], "daysWorked": 10}, {"workerId": f.w[1], "daysWorked": 1}}, f.fm1)
+	d = f.saveLines(t, id, []M{{"workerId": f.w[0], "daysWorked": 10}, {"workerId": f.w[1], "daysWorked": 1}}, f.sup)
 	if l := lineFor(t, d, f.w[0]); num(l["dailyWage"]) != 9999 || num(l["grossAmount"]) != 99_990 || l["isOverride"] != true || len(d["lines"].([]any)) != 2 {
 		t.Fatalf("rates %v", d["lines"])
 	}
@@ -397,14 +398,14 @@ func TestWorkflowSeparationOfDutiesAndPay(t *testing.T) {
 	id := p["id"].(string)
 
 	// cannot prepare an empty sheet
-	if r := e.Do("POST", "/api/payroll/periods/"+id+"/prepare", M{}, f.fm1); r.StatusCode != 400 {
+	if r := e.Do("POST", "/api/payroll/periods/"+id+"/prepare", M{}, f.sup); r.StatusCode != 400 {
 		t.Fatalf("empty prepare %d", r.StatusCode)
 	}
 	f.saveLines(t, id, []M{
 		{"workerId": f.w[0], "daysWorked": 15, "foodDeduction": 7500},
 		{"workerId": f.w[1], "daysWorked": 0.5},
 		{"workerId": f.w[2], "daysWorked": 0},
-	}, f.fm1)
+	}, f.sup)
 
 	// order: cannot check a draft; wrong role cannot prepare
 	if r := e.Do("POST", "/api/payroll/periods/"+id+"/check", M{}, f.pm); r.StatusCode != 409 {
@@ -413,16 +414,16 @@ func TestWorkflowSeparationOfDutiesAndPay(t *testing.T) {
 	if r := e.Do("POST", "/api/payroll/periods/"+id+"/prepare", M{}, f.gm); r.StatusCode != 403 {
 		t.Fatalf("gm prepare %d", r.StatusCode)
 	}
-	d := f.step(t, id, "prepare", f.fm1, 200)
-	if d["status"] != "PREPARED" || d["trail"].(M)["prepared"].(M)["userId"] != f.fm1.ID {
+	d := f.step(t, id, "prepare", f.sup, 200)
+	if d["status"] != "PREPARED" || d["trail"].(M)["prepared"].(M)["userId"] != f.sup.ID {
 		t.Fatalf("prepared %v", d["trail"])
 	}
 	// editing is locked once prepared
-	if r := e.Do("PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": []M{}}, f.fm1); r.StatusCode != 409 {
+	if r := e.Do("PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": []M{}}, f.sup); r.StatusCode != 409 {
 		t.Fatalf("edit prepared %d", r.StatusCode)
 	}
 	// the preparer sees why they cannot check/verify
-	preparerView := e.Map(e.Do("GET", "/api/payroll/periods/"+id, nil, f.fm1))
+	preparerView := e.Map(e.Do("GET", "/api/payroll/periods/"+id, nil, f.sup))
 	// SRS §7.4: the calculation is reviewed by the Production Manager only — not a supervisor, not top management,
 	// not the finance manager who prepared it
 	for _, u := range []*testutil.TestUser{e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-1"}), f.gm, f.fm2} {
@@ -440,13 +441,12 @@ func TestWorkflowSeparationOfDutiesAndPay(t *testing.T) {
 	if d["status"] != "CHECKED" {
 		t.Fatal(d["status"])
 	}
-	r := e.Do("POST", "/api/payroll/periods/"+id+"/verify", M{}, f.fm1)
-	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 403 || !strings.Contains(msg, "you prepared this wage sheet") {
-		t.Fatalf("sod verify %d %s", r.StatusCode, msg)
+	// the preparer (site supervisor) cannot verify: verification is Finance's step
+	if r := e.Do("POST", "/api/payroll/periods/"+id+"/verify", M{}, f.sup); r.StatusCode != 403 {
+		t.Fatalf("supervisor verify %d", r.StatusCode)
 	}
-	va := e.Map(e.Do("GET", "/api/payroll/periods/"+id, nil, f.fm1))["actions"].(M)["verify"].(M)
-	if !va["visible"].(bool) || va["allowed"].(bool) || !strings.Contains(va["reason"].(string), "you prepared") {
-		t.Fatalf("verify action %v (prepared view %v)", va, preparerView["status"])
+	if va, ok := e.Map(e.Do("GET", "/api/payroll/periods/"+id, nil, f.sup))["actions"].(M)["verify"].(M); ok && va["allowed"] == true {
+		t.Fatalf("verify offered to the preparer %v (prepared view %v)", va, preparerView["status"])
 	}
 	d = f.step(t, id, "verify", f.fm2, 200)
 	// the verifier cannot authorize their own work (GM user is distinct anyway; test with a second GM-like role)
@@ -466,7 +466,7 @@ func TestWorkflowSeparationOfDutiesAndPay(t *testing.T) {
 		t.Fatalf("gm pay %d", r.StatusCode)
 	}
 	// bad payment ref line
-	r = e.Do("POST", "/api/payroll/periods/"+id+"/pay", M{"paymentRefs": []M{{"lineId": "ghost", "ref": "X"}}}, f.fm3)
+	r := e.Do("POST", "/api/payroll/periods/"+id+"/pay", M{"paymentRefs": []M{{"lineId": "ghost", "ref": "X"}}}, f.fm3)
 	if _, msg, fl := e.ErrorOf(r); r.StatusCode != 400 || msg != "Payment references do not match this wage sheet" || fl["paymentRefs.0.lineId"] == "" {
 		t.Fatalf("bad ref %d %s %v", r.StatusCode, msg, fl)
 	}
@@ -551,8 +551,8 @@ func TestPayWithoutPettyCashAndPermission(t *testing.T) {
 	}
 	p := f.createPeriod(t, "2026-11-16", "2026-11-30")
 	id := p["id"].(string)
-	f.saveLines(t, id, []M{{"workerId": f.w[0], "daysWorked": 3}}, f.fm1)
-	f.step(t, id, "prepare", f.fm1, 200)
+	f.saveLines(t, id, []M{{"workerId": f.w[0], "daysWorked": 3}}, f.sup)
+	f.step(t, id, "prepare", f.sup, 200)
 	f.step(t, id, "check", f.pm, 200)
 	f.step(t, id, "verify", f.fm2, 200)
 	f.step(t, id, "authorize", f.gm, 200)
@@ -571,8 +571,8 @@ func TestPayWithoutPettyCashAndPermission(t *testing.T) {
 	// second sheet: pay without petty cash
 	p2 := f.createPeriod(t, "2026-12-01", "2026-12-15")
 	id2 := p2["id"].(string)
-	f.saveLines(t, id2, []M{{"workerId": f.w[1], "daysWorked": 2}}, f.fm1)
-	f.step(t, id2, "prepare", f.fm1, 200)
+	f.saveLines(t, id2, []M{{"workerId": f.w[1], "daysWorked": 2}}, f.sup)
+	f.step(t, id2, "prepare", f.sup, 200)
 	f.step(t, id2, "check", f.pm, 200)
 	f.step(t, id2, "verify", f.fm2, 200)
 	f.step(t, id2, "authorize", f.gm, 200)
@@ -604,7 +604,7 @@ func TestReturnToDraftAndSoDOnAuthorize(t *testing.T) {
 	e := f.e
 	p := f.createPeriod(t, "2026-11-01", "2026-11-15")
 	id := p["id"].(string)
-	f.saveLines(t, id, []M{{"workerId": f.w[0], "daysWorked": 4}}, f.fm1)
+	f.saveLines(t, id, []M{{"workerId": f.w[0], "daysWorked": 4}}, f.sup)
 	// returning a draft is refused
 	if r := e.Do("POST", "/api/payroll/periods/"+id+"/return", M{"comment": "no"}, f.pm); r.StatusCode != 400 {
 		t.Fatalf("short comment %d", r.StatusCode)
@@ -616,7 +616,7 @@ func TestReturnToDraftAndSoDOnAuthorize(t *testing.T) {
 	if r := e.Do("POST", "/api/payroll/periods/"+id+"/return", M{"comment": "Fix the days"}, f.pm); r.StatusCode != 409 {
 		t.Fatalf("return draft %d", r.StatusCode)
 	}
-	f.step(t, id, "prepare", f.fm1, 200)
+	f.step(t, id, "prepare", f.sup, 200)
 	// permission: prepare-only roles (e.g. the preparer's colleague without check/verify/authorize) cannot return
 	if r := e.Do("POST", "/api/payroll/periods/"+id+"/return", M{"comment": "Fix the days"}, e.User(auth.RoleOperator)); r.StatusCode != 403 {
 		t.Fatalf("op return %d", r.StatusCode)
@@ -626,7 +626,7 @@ func TestReturnToDraftAndSoDOnAuthorize(t *testing.T) {
 		t.Fatalf("returned %v", d)
 	}
 	// preparing again clears the comment
-	d = f.step(t, id, "prepare", f.fm1, 200)
+	d = f.step(t, id, "prepare", f.sup, 200)
 	if d["rejectComment"] != nil {
 		t.Fatalf("comment not cleared %v", d["rejectComment"])
 	}
@@ -645,7 +645,7 @@ func TestPeriodListTotalsAndCache(t *testing.T) {
 	f := setup(t)
 	e := f.e
 	p1 := f.createPeriod(t, "2026-11-01", "2026-11-15")
-	f.saveLines(t, p1["id"].(string), []M{{"workerId": f.w[0], "daysWorked": 10}, {"workerId": f.w[1], "daysWorked": 4}}, f.fm1)
+	f.saveLines(t, p1["id"].(string), []M{{"workerId": f.w[0], "daysWorked": 10}, {"workerId": f.w[1], "daysWorked": 4}}, f.sup)
 	type list struct {
 		Items        []M            `json:"items"`
 		Total        int            `json:"total"`
@@ -672,7 +672,7 @@ func TestPeriodListTotalsAndCache(t *testing.T) {
 		t.Fatalf("304 expected, got %d", r.StatusCode)
 	}
 	// cached read is invalidated by writes
-	f.step(t, p1["id"].(string), "prepare", f.fm1, 200)
+	f.step(t, p1["id"].(string), "prepare", f.sup, 200)
 	l = list{}
 	e.Decode(e.Do("GET", "/api/payroll/periods", nil, f.gm), &l)
 	if l.StatusCounts["PREPARED"] != 1 || l.StatusCounts["DRAFT"] != 0 || l.Items[0]["status"] != "PREPARED" {
@@ -702,7 +702,8 @@ func TestPeriodListTotalsAndCache(t *testing.T) {
 	}
 	// scope + permission
 	supB2 := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-2"})
-	if r := e.Do("GET", "/api/payroll/periods", nil, supB2); r.StatusCode != 403 { // §8: supervisors have attendance only
+	// §7.4: a supervisor prepares his own site's sheets and sees only those
+	if r := e.Do("GET", "/api/payroll/periods", nil, supB2); r.StatusCode != 200 || len(e.Map(r)["items"].([]any)) != 0 {
 		t.Fatalf("supervisor periods %d", r.StatusCode)
 	}
 	if r := e.Do("GET", "/api/payroll/periods", nil, e.User(auth.RoleOperator)); r.StatusCode != 403 {
@@ -715,7 +716,7 @@ func TestPDFs(t *testing.T) {
 	e := f.e
 	p := f.createPeriod(t, "2026-11-01", "2026-11-15")
 	id := p["id"].(string)
-	f.saveLines(t, id, []M{{"workerId": f.w[0], "daysWorked": 12.5, "foodDeduction": 3000, "note": "Night work"}, {"workerId": f.w[1], "daysWorked": 3}}, f.fm1)
+	f.saveLines(t, id, []M{{"workerId": f.w[0], "daysWorked": 12.5, "foodDeduction": 3000, "note": "Night work"}, {"workerId": f.w[1], "daysWorked": 3}}, f.sup)
 	e.Do("PATCH", "/api/payroll/workers/"+f.w[1], M{"momoName": "SOMEONE ELSE"}, f.fm1)
 	supB2 := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-2"})
 	op := e.User(auth.RoleOperator)
@@ -768,12 +769,13 @@ func TestLocalizedErrors(t *testing.T) {
 	e := f.e
 	am := e.User(auth.RoleFinanceManager, testutil.UserOpts{Language: "am"})
 	p := f.createPeriod(t, "2026-11-01", "2026-11-15")
-	r := e.Do("PUT", "/api/payroll/periods/"+p["id"].(string)+"/lines", M{"lines": withReason([]M{{"workerId": f.w[0], "daysWorked": 99}})}, am)
+	amSup := e.User(auth.RoleSupervisor, testutil.UserOpts{Language: "am", Plant: "BTN-1"})
+	r := e.Do("PUT", "/api/payroll/periods/"+p["id"].(string)+"/lines", M{"lines": withReason([]M{{"workerId": f.w[0], "daysWorked": 99}})}, amSup)
 	_, msg, _ := e.ErrorOf(r)
 	if r.StatusCode != 400 || !strings.Contains(msg, "ALINE UWASE") || !strings.Contains(msg, "ቀናት") {
 		t.Fatalf("am error %q", msg)
 	}
-	r = e.Do("POST", "/api/payroll/periods?lang=rw", M{"plantId": f.b1, "startDate": "2026-11-01", "endDate": "2026-11-15"}, f.fm1)
+	r = e.Do("POST", "/api/payroll/periods?lang=rw", M{"plantId": f.b1, "startDate": "2026-11-01", "endDate": "2026-11-15"}, f.sup)
 	_, msg, _ = e.ErrorOf(r)
 	if r.StatusCode != 409 || !strings.Contains(msg, "rusanzwe ruriho") || !strings.Contains(msg, "01/11/2026") {
 		t.Fatalf("rw conflict %q", msg)

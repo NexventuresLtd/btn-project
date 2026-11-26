@@ -9,7 +9,7 @@ export const payrollRoutes: RouteObject[] = [
   {
     path: "/payroll",
     element: (
-      <RequirePermission permission="payroll.view">
+      <RequirePermission permission={["payroll.view", "payroll.prepare"]}>
         <PeriodsPage />
       </RequirePermission>
     ),
@@ -17,7 +17,7 @@ export const payrollRoutes: RouteObject[] = [
   {
     path: "/payroll/workers",
     element: (
-      <RequirePermission permission={["workers.manage", "payroll.view"]}>
+      <RequirePermission permission={["workers.manage", "payroll.view", "workers.register", "payroll.prepare"]}>
         <WorkersPage />
       </RequirePermission>
     ),
@@ -25,7 +25,7 @@ export const payrollRoutes: RouteObject[] = [
   {
     path: "/payroll/:id",
     element: (
-      <RequirePermission permission="payroll.view">
+      <RequirePermission permission={["payroll.view", "payroll.prepare"]}>
         <PeriodDetailPage />
       </RequirePermission>
     ),

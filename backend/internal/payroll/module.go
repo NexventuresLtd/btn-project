@@ -2,7 +2,7 @@
 // Prepared -> Checked -> Verified -> Authorized -> Paid (each step by a different person), the pay step that
 // posts petty cash entries in the same transaction, and the wage sheet / labour summary PDFs.
 //
-//	GET   /workers  POST /workers  PATCH /workers/:id
+//	GET   /workers  POST /workers  PATCH /workers/:id  POST /workers/:id/approve
 //	GET   /periods  POST /periods  GET /periods/:id  PUT /periods/:id/lines
 //	POST  /periods/:id/{prepare,check,verify,authorize,pay,return}
 //	GET   /pdf/period/:id   GET /pdf/summary
@@ -27,15 +27,20 @@ import (
 // Register mounts the module on a router that is already behind LoadSession + RequireAuth.
 func Register(r fiber.Router, d *deps.Deps) {
 	h := &handler{d}
-	r.Get("/workers", auth.RequirePermission("payroll.view", "workers.manage"), h.listWorkers)
-	r.Post("/workers", auth.RequirePermission("workers.manage"), h.createWorker)
-	r.Patch("/workers/:id", auth.RequirePermission("workers.manage"), h.updateWorker)
+	registerSync() // offline record type "worker_registration" (sync.go)
+	// Worker register (WRK-01). A site supervisor registers new casual workers at his site (workers.register),
+	// pending approval by Finance (workers.manage); he sees his site's workers to prepare the wage sheet.
+	r.Get("/workers", auth.RequirePermission("payroll.view", "workers.manage", "workers.register", "payroll.prepare"), h.listWorkers)
+	r.Post("/workers", auth.RequirePermission("workers.manage", "workers.register"), h.createWorker)
+	r.Patch("/workers/:id", auth.RequirePermission("workers.manage", "workers.register"), h.updateWorker)
+	r.Post("/workers/:id/approve", auth.RequirePermission("workers.manage"), h.approveWorker)
 
-	r.Get("/periods", auth.RequirePermission("payroll.view"), h.listPeriods)
+	// SRS §7.4: the site supervisor prepares the wage sheet (payroll.prepare) and reads his own site's sheets.
+	r.Get("/periods", auth.RequirePermission("payroll.view", "payroll.prepare"), h.listPeriods)
 	r.Get("/summary", auth.RequirePermission("payroll.view"), h.summaryJSON) // F2: labour summary JSON (exportable)
 	r.Post("/periods", auth.RequirePermission("payroll.prepare"), h.createPeriod)
-	r.Get("/periods/:id", auth.RequirePermission("payroll.view"), h.getPeriod)
-	r.Get("/periods/:id/attendance", auth.RequirePermission("payroll.view"), h.periodAttendance)
+	r.Get("/periods/:id", auth.RequirePermission("payroll.view", "payroll.prepare"), h.getPeriod)
+	r.Get("/periods/:id/attendance", auth.RequirePermission("payroll.view", "payroll.prepare"), h.periodAttendance)
 	r.Put("/periods/:id/lines", auth.RequirePermission("payroll.prepare"), h.saveLines)
 	r.Post("/periods/:id/calculate", auth.RequirePermission("payroll.prepare"), h.calculate)
 	for _, st := range []Step{StepPrepare, StepCheck, StepVerify, StepAuthorize} {
@@ -50,7 +55,7 @@ func Register(r fiber.Router, d *deps.Deps) {
 		Description: "Kept for one release for older clients. Use /record-payment."})
 	r.Post("/periods/:id/return", auth.RequirePermission("payroll.check", "payroll.verify", "payroll.authorize"), h.returnToDraft)
 
-	r.Get("/pdf/period/:id", auth.RequirePermission("payroll.view"), ratelimit.Group("pdf"), h.pdfPeriod)
+	r.Get("/pdf/period/:id", auth.RequirePermission("payroll.view", "payroll.prepare"), ratelimit.Group("pdf"), h.pdfPeriod)
 	r.Get("/pdf/summary", auth.RequirePermission("payroll.view"), ratelimit.Group("pdf"), h.pdfSummary)
 }
 

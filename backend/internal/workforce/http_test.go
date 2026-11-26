@@ -148,7 +148,7 @@ func TestRateRulesAndWageCalculation(t *testing.T) {
 	}
 
 	// the sheet is calculated on creation
-	p := must(t, e, "POST", "/api/payroll/periods", M{"plantId": tm.b1, "startDate": "2026-11-02", "endDate": "2026-11-08"}, tm.fm1, 201)
+	p := must(t, e, "POST", "/api/payroll/periods", M{"plantId": tm.b1, "startDate": "2026-11-02", "endDate": "2026-11-08"}, tm.sup, 201)
 	l := lineOf(t, p, w)
 	// 03/11: 5000 + 2h×900 ; 04/11: half 2600 ; 05/11 (worker rule, standard half/OT): 6000 + 1h×(6000×1.5/8 = 1125)
 	want := 5000 + 1800 + 2600 + 6000 + 1125
@@ -165,22 +165,22 @@ func TestRateRulesAndWageCalculation(t *testing.T) {
 	tm.record(t, tm.b1, "2026-11-06", tm.sup, M{"workerId": w, "status": "PRESENT"})
 	must(t, e, "POST", "/api/payroll/periods/"+id+"/calculate", nil, e.User(auth.RoleOperator), 403)
 	must(t, e, "POST", "/api/payroll/periods/"+id+"/calculate", nil, tm.sup2, 403) // other site
-	p = must(t, e, "POST", "/api/payroll/periods/"+id+"/calculate", nil, tm.fm1, 200)
+	p = must(t, e, "POST", "/api/payroll/periods/"+id+"/calculate", nil, tm.sup, 200)
 	if l = lineOf(t, p, w); num(l["grossAmount"]) != float64(want+6000) || p["calculatedAt"] == nil {
 		t.Fatalf("recalculated %v", l)
 	}
 	// override without a reason is refused; with a reason it is kept, audited and survives a recalculation
-	r := e.Do("PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": []M{{"workerId": w, "daysWorked": 4}}}, tm.fm1)
+	r := e.Do("PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": []M{{"workerId": w, "daysWorked": 4}}}, tm.sup)
 	if _, _, fl := e.ErrorOf(r); r.StatusCode != 400 || fl["lines.0.overrideReason"] == "" {
 		t.Fatalf("override without reason %d %v", r.StatusCode, fl)
 	}
-	p = must(t, e, "PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": []M{{"workerId": w, "daysWorked": 4, "overrideReason": "Worked Sunday, paper sheet", "foodDeduction": 1000}}}, tm.fm1, 200)
+	p = must(t, e, "PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": []M{{"workerId": w, "daysWorked": 4, "overrideReason": "Worked Sunday, paper sheet", "foodDeduction": 1000}}}, tm.sup, 200)
 	l = lineOf(t, p, w)
 	// 4 days at the last rates (6000) + overtime 3h... overtime stays as calculated (3 h × 1125) + food
 	if l["isOverride"] != true || num(l["grossAmount"]) != 4*6000+3*1125 || num(l["calculatedGross"]) != float64(want+6000) || num(l["netAmount"]) != 4*6000+3*1125-1000 {
 		t.Fatalf("override %v", l)
 	}
-	p = must(t, e, "POST", "/api/payroll/periods/"+id+"/calculate", nil, tm.fm1, 200)
+	p = must(t, e, "POST", "/api/payroll/periods/"+id+"/calculate", nil, tm.sup, 200)
 	if l = lineOf(t, p, w); l["isOverride"] != true || num(l["foodDeduction"]) != 1000 || l["overrideReason"] != "Worked Sunday, paper sheet" {
 		t.Fatalf("override kept %v", l)
 	}
@@ -223,7 +223,7 @@ func TestPieceWork(t *testing.T) {
 		t.Fatalf("entries %v", es)
 	}
 	tm.record(t, tm.b1, "2026-11-03", tm.sup, M{"workerId": piece, "status": "PRESENT"}, M{"workerId": mixed, "status": "PRESENT", "overtimeHours": 2})
-	p := must(t, e, "POST", "/api/payroll/periods", M{"plantId": tm.b1, "startDate": "2026-11-02", "endDate": "2026-11-08"}, tm.fm1, 201)
+	p := must(t, e, "POST", "/api/payroll/periods", M{"plantId": tm.b1, "startDate": "2026-11-02", "endDate": "2026-11-08"}, tm.sup, 201)
 	if l := lineOf(t, p, piece); num(l["grossAmount"]) != 400*25 || num(l["pieceUnits"]) != 400 || num(l["basicAmount"]) != 0 {
 		t.Fatalf("piece line %v", l)
 	}
@@ -326,13 +326,13 @@ func TestLockCorrectionPaymentAndAdjustment(t *testing.T) {
 	}
 
 	// wage sheet: 2.5 days × 5000 for w → run the workflow and pay (MoMo by default, cash for w2)
-	p := must(t, e, "POST", "/api/payroll/periods", M{"plantId": tm.b1, "startDate": "2026-11-02", "endDate": "2026-11-04"}, tm.fm1, 201)
+	p := must(t, e, "POST", "/api/payroll/periods", M{"plantId": tm.b1, "startDate": "2026-11-02", "endDate": "2026-11-04"}, tm.sup, 201)
 	id := p["id"].(string)
 	lw, lw2 := lineOf(t, p, w), lineOf(t, p, w2)
 	if num(lw["grossAmount"]) != 12500 || num(lw2["grossAmount"]) != 12000 {
 		t.Fatalf("sheet %v %v", lw, lw2)
 	}
-	must(t, e, "POST", "/api/payroll/periods/"+id+"/prepare", M{}, tm.fm1, 200)
+	must(t, e, "POST", "/api/payroll/periods/"+id+"/prepare", M{}, tm.sup, 200)
 	_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM notification WHERE event = 'payroll.step_pending' AND user_id = $1`, tm.pm.ID).Scan(&notes)
 	if notes != 1 {
 		t.Fatalf("step notification to checker %d", notes)
@@ -383,14 +383,14 @@ func TestLockCorrectionPaymentAndAdjustment(t *testing.T) {
 	}
 
 	// paid period: sheet locked, days locked; a correction becomes an adjustment for the next period
-	must(t, e, "PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": []M{}}, tm.fm1, 409)
+	must(t, e, "PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": []M{}}, tm.sup, 409)
 	cr = must(t, e, "POST", "/api/attendance/corrections", M{"plantId": tm.b1, "date": "2026-11-03", "workerId": w, "status": "PRESENT", "overtimeHours": 2, "reason": "stayed after all"}, tm.sup, 201)
 	ok = must(t, e, "POST", "/api/attendance/corrections/"+cr["id"].(string)+"/approve", M{}, tm.pm, 200)
 	// HALF_DAY → PRESENT + 2 h: +2500 + 2 × 938 (5000 × 1.5 / 8 = 937.5 → 938)
 	if ok["adjustmentId"] == nil || num(ok["adjustmentAmount"]) != 2500+1876 {
 		t.Fatalf("adjustment %v", ok)
 	}
-	next := must(t, e, "POST", "/api/payroll/periods", M{"plantId": tm.b1, "startDate": "2026-11-05", "endDate": "2026-11-11"}, tm.fm1, 201)
+	next := must(t, e, "POST", "/api/payroll/periods", M{"plantId": tm.b1, "startDate": "2026-11-05", "endDate": "2026-11-11"}, tm.sup, 201)
 	if l := lineOf(t, next, w); num(l["adjustmentAmount"]) != 4376 || num(l["grossAmount"]) != 4376 {
 		t.Fatalf("next period adjustment %v", l)
 	}
@@ -443,7 +443,7 @@ func TestCrossSiteException(t *testing.T) {
 		t.Fatalf("home second mark %d", r.StatusCode)
 	}
 	// both halves are paid by the home site's sheet, the exception is counted
-	p := must(t, e, "POST", "/api/payroll/periods", M{"plantId": tm.b1, "startDate": "2026-11-09", "endDate": "2026-11-15"}, tm.fm1, 201)
+	p := must(t, e, "POST", "/api/payroll/periods", M{"plantId": tm.b1, "startDate": "2026-11-09", "endDate": "2026-11-15"}, tm.sup, 201)
 	l := lineOf(t, p, w)
 	if num(l["grossAmount"]) != 5000 || num(l["calculation"].(M)["exceptions"]) != 1 {
 		t.Fatalf("lent pay %v", l)
@@ -487,7 +487,7 @@ func TestWorkerRecordAndReports(t *testing.T) {
 	w2 := worker(t, e, tm.b2, "GRACE", "DAILY", 5000)
 	tm.record(t, tm.b1, "2026-11-10", tm.sup, M{"workerId": w, "status": "PRESENT", "overtimeHours": 1.5})
 	tm.record(t, tm.b2, "2026-11-10", tm.sup2, M{"workerId": w2, "status": "HALF_DAY"})
-	must(t, e, "POST", "/api/payroll/periods", M{"plantId": tm.b1, "startDate": "2026-11-09", "endDate": "2026-11-15"}, tm.fm1, 201)
+	must(t, e, "POST", "/api/payroll/periods", M{"plantId": tm.b1, "startDate": "2026-11-09", "endDate": "2026-11-15"}, tm.sup, 201)
 
 	hc := must(t, e, "GET", "/api/workforce/reports/headcount?from=2026-11-10&to=2026-11-10", nil, tm.sup, 200)
 	for _, r := range hc["rows"].([]any) {

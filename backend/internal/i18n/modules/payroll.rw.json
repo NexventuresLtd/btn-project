@@ -209,5 +209,20 @@
  "payroll.v.paid_future": "Itariki y'ubwishyu ntishobora kuba iri imbere",
  "payroll.v.phone_format": "Andika nimero ya telefoni nka 0781234567",
  "payroll.v.rate_basis": "Hitamo ku munsi, ku gice cyangwa bivanze",
- "payroll.v.status": "Hitamo arakora, ntakora cyangwa yagiye"
+ "payroll.v.status": "Hitamo arakora, ntakora cyangwa yagiye",
+ "payroll.err.register_own_site": "Umugenzuzi ufite site ni we wenyine ushobora kwandikishaho abakozi",
+ "payroll.err.registration_not_pending": "Iyandikwa ry'uyu mukozi ntiritegereje kwemezwa",
+ "payroll.err.registration_own": "Ni wowe wanditse uyu mukozi; undi muntu wo mu Imari agomba kubyemeza",
+ "payroll.err.registration_locked": "Ushobora guhindura gusa abo wanditse bagitegereje kwemezwa n'Imari",
+ "payroll.err.worker_pending": "{name} aracyategereje ko Imari yemeza iyandikwa rye; banza ubyemeze mbere yo kongeraho umurongo w'umushahara",
+ "payroll.err.pending_workers": "Abakozi {n} bo kuri uru rupapuro baracyategereje kwemezwa kw'iyandikwa ryabo",
+ "payroll.err.nid_taken_sync": "Indangamuntu {id} isanzwe yanditse ku wundi mukozi",
+ "payroll.notify.worker_registered_title": "Iyandikwa rishya ry'umukozi rigomba kwemezwa",
+ "payroll.notify.worker_registered_body": "{by} yanditse {name} kuri {plant}. Genzura amakuru maze wemeze umukozi mbere y'urupapuro rw'imishahara rukurikira.",
+ "payroll.notify.worker_approved_title": "Iyandikwa ry'umukozi ryemejwe",
+ "payroll.notify.worker_approved_body": "{by} yemeje iyandikwa rya {name} ({plant}).",
+ "notify.event.payroll.worker_registered": "Iyandikwa ry'umukozi rigomba kwemezwa",
+ "notify.event.payroll.worker_registered.help": "Umugenzuzi wa site yanditse umukozi mushya w'igihe gito ugomba kwemezwa n'Imari",
+ "notify.event.payroll.worker_approved": "Iyandikwa ry'umukozi ryemejwe",
+ "notify.event.payroll.worker_approved.help": "Imari yemeje umukozi wanditse"
 }
