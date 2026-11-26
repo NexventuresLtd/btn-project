@@ -1,356 +1,375 @@
 # SRS gap analysis — NXV-BTN-SRS-001 v1.0 vs. the built system
 
-Independent compliance audit of branch `feat/btn-operations-system` at commit `4801060` (26/11/2026), against
-`docs/SRS_REQUIREMENTS.md`. Each requirement was checked in the code: routes and handlers, migrations, frontend pages
-and automated tests. Where the code was unclear, the API was built and run on :4900 against a scratch database
-(`btn_ops_audit`, `JOBS_ENABLED=false`, SMTP pointed at a dead port) and exercised with curl.
+Independent re-audit of branch `feat/btn-operations-system` at commit `55f026f` (27/11/2026) against
+`docs/SRS_REQUIREMENTS.md`. It supersedes the audit of `4801060` (commit 9941a63) and the rows edited after it.
+
+Method:
+- Every item that was not ✅ before was re-checked in the code and, where possible, by running it.
+- The rest was spot-checked for regressions, in particular workflows that may have lost a role in the §8 re-alignment.
+- The runs used an API on :4900 against fresh scratch databases `btn_ops_audit` / `btn_ops_audit_test`, with
+  `JOBS_ENABLED=false` and SMTP pointed at a dead port.
 
 Legend: ✅ met · ⚠️ partial (the missing clause is stated) · ❌ missing · env = depends on the production environment
 (what the code and config provide is stated).
 
 ## Summary
 
-**122 numbered requirements: 117 ✅ · 0 ⚠️ · 0 ❌ · 5 env** (after the post-audit fixes of AUTH-05, OFF-11, NFR-P1, NFR-M1, NFR-M2, ORD-04, RPT-06; audit: 110 ✅ · 7 ⚠️).
-
-The cross-cutting findings are all closed after the audit: §5.2, §5.5 (2), §6.3, §7.2, §7.4, §8 (every cell, encoded in
-`auth.TestSRSRoleMatrix`), §9.2 sync and §10 scheduled reports (2). Stated deviation kept: `payroll.authorize` stays with
-GM/MD (wages are PAYROLL expenses, Finance "Top Mgt A").
+**122 numbered requirements: 116 ✅ · 1 ⚠️ · 0 ❌ · 5 env.** In the cross-cutting sections (§5–§12), one finding is ⚠️:
+§7.4 (payroll needs two Finance Managers).
 
 | Module | Reqs | ✅ | ⚠️ | ❌ | env | Open points |
 |---|---|---|---|---|---|---|
-| Access control (AUTH) | 10 | 10 | 0 | 0 | 0 | — (AUTH-05 lockout policy now set by the Super Administrator) |
-| Production (PRD) | 10 | 10 | 0 | 0 | 0 | — (§5.5 merge UI built) |
-| Stock (STK) | 10 | 10 | 0 | 0 | 0 | — (§7.2 transfer reason now required) |
-| Clients & orders (ORD) | 10 | 10 | 0 | 0 | 0 | — (ORD-04: every cancellation needs reason + approval) |
+| Access control (AUTH) | 10 | 10 | 0 | 0 | 0 | — |
+| Production (PRD) | 10 | 10 | 0 | 0 | 0 | — |
+| Stock (STK) | 10 | 10 | 0 | 0 | 0 | — |
+| Clients & orders (ORD) | 10 | 10 | 0 | 0 | 0 | — |
 | Delivery (DEL) | 6 | 6 | 0 | 0 | 0 | — |
-| Workforce (WRK) | 7 | 7 | 0 | 0 | 0 | — (§7.4 review is Production Manager only) |
-| Finance (FIN) | 9 | 9 | 0 | 0 | 0 | — (§8: Finance R for PM, Sales, Proc., Top Mgt, Admin) |
+| Workforce (WRK) | 7 | 7 | 0 | 0 | 0 | — (see §7.4 for the payroll staffing constraint) |
+| Finance (FIN) | 9 | 9 | 0 | 0 | 0 | — |
 | Procurement (PRC) | 8 | 8 | 0 | 0 | 0 | — |
-| Reporting (RPT) | 7 | 7 | 0 | 0 | 0 | — (RPT-06: CSV exports end with the cut-off note rows) |
+| Reporting (RPT) | 7 | 7 | 0 | 0 | 0 | — |
 | Administration (ADM) | 5 | 5 | 0 | 0 | 0 | — |
-| Offline & sync (OFF) | 22 | 22 | 0 | 0 | 0 | — (OFF-11 pull stall fixed) |
-| Non-functional (NFR) | 18 | 13 | 0 | 0 | 5 | — (P1, M1, M2 fixed after the audit) |
+| Offline & sync (OFF) | 22 | 22 | 0 | 0 | 0 | — |
+| Non-functional (NFR) | 18 | 12 | 1 | 0 | 5 | NFR-M1: the parallel race suite is flaky |
 
-**Test evidence (run during this audit):**
-- Backend `go test -p 1 ./...`: 42 packages pass.
-- Backend `go test ./...` (packages in parallel against one Postgres): fails on this host with `out of shared memory`
-  (SQLSTATE 53200). An earlier parallel run on the previous tree failed 8 sync-pull tests (cause under OFF-11).
-- Frontend: `tsc -b` clean, vitest 20 files / 121 tests pass, preview build initial load 1.66 MB.
-- `cmd/loadtest run`, 50 users for 60 s: 7,444 reads, p95 6 ms, PASS. This only passed after raising
-  `RATE_LIMIT_AUTH_PER_MIN`; with the default, `/auth/me` returned 450 × 429 (see NFR-P1).
-- `cmd/loadtest reports`: 172 boards and reports, slowest 329 ms. The scratch DB was nearly empty.
+**Test evidence from this audit:**
 
-**Post-audit re-run (fixes for AUTH-05, OFF-11, NFR-P1, NFR-M1, NFR-M2, §9.2):**
-- Backend `go vet ./...` clean; `go test -race ./...` with packages in parallel: all packages pass (template-DB clones).
-- Frontend: `pnpm typecheck` clean, vitest passes (incl. lockout/syncschema catalogs, engine upgrade/too-new tests).
-- `cmd/loadtest run` with **default** rate limits, 50 users × 3 min, 12-month / 10-site / ~737k-row volume DB
-  (`devtools volume -scale 4 -sites 7 -perf-users 90`): 23 099 reads, p95 38 ms, p99 80 ms, 0 × 429, PASS.
-- `cmd/loadtest reports` on the same DB (quiet host): 172/172 within 5 s, slowest 3.16 s, PASS (see NFR-P2).
+| Check | Result |
+|---|---|
+| `go test -race ./...`, packages in parallel, run 1 | 41/42 packages pass. `syncsvc:TestPullDeltaScopeAndSnapshots` failed with "paged total 20 want 22" |
+| `go test -race ./...`, run 2 | 42/42 pass |
+| `TestPull*` repeated 6× on its own | Passes every time |
+| Frontend `tsc -b` | Clean |
+| Frontend vitest | 23 files, 141 tests pass |
+| Frontend eslint | 0 errors, 49 warnings |
+| `cmd/loadtest run`, 50 users, default limits, nearly empty scratch DB | 100 % of reads < 2 s. The harness still reports FAIL, because 21 and then 3 requests got 429 from the per-IP `global` limit (600/min) when all 50 virtual users share 127.0.0.1 |
+| Delta pull with an unrelated transaction held open for 20 s | Delivered the central product change at once. The stall reported against `4801060` is fixed |
+| Push with `X-Sync-Schema: 99` | 409 `schema_too_new` |
+| Push with `X-Sync-Schema: 0` | 400 |
+| CSV export | Ends with `# Data cut-off,DD/MM/YYYY HH:mm` |
+| Transfer request without a reason | 400 "Give the reason for the transfer" |
+| Seeded report schedules | All 10 enabled, SRS recipients, separate weekly and monthly orders/sales rows |
+| §8 cells by curl | sysadmin reads production, expenses and payroll · procurement reads stock · sales reads expenses and the finance dashboard · PM reads expenses · stock reads deliveries · supervisor → 403 on expenses · sales → 403 on production |
 
 **Allowed deviations:**
 - Stack: Go + Fiber, React + Vite, and an in-process PostgreSQL-leader job scheduler instead of FastAPI, Next.js and
-  Celery/Redis. SRS §2.5 allows the stack to be adjusted in discovery.
-- No payment gateway (owner decision). Payments are recorded, not processed. The SRS never requires a gateway, so no
-  requirement is affected.
+  Celery/Redis. SRS §2.5 allows the stack to change in discovery.
+- No payment gateway (owner decision). Payments are recorded only, and the SRS never requires a gateway.
+
+## Previously open items — re-verified
+
+| Item (audit of 4801060) | Now | How verified |
+|---|---|---|
+| AUTH-05 lockout not configurable | ✅ | Settings → Account lockout (Super Admin), `adminapi/adminapi.go` lockout fields with min/max, `SettingsPage.tsx`; `app/lockout_policy_test.go` |
+| ORD-04 draft cancel without approval | ✅ | `sales/lifecycle.go` `cancelNeedsApproval` = every cancellable state; `sales.cancel` approver ≠ requester |
+| RPT-06 CSV without cut-off | ✅ | `export/export.go` + `dataexport` append `# Data cut-off` / `# Unsynchronised data` rows (seen live) |
+| OFF-11 delta pull stalled by any open txn | ✅ | Watermark + sync advisory lock (`syncsvc/pull.go` `pullUpper`, `migrations/03250_sync_watermark.sql`); `idle_in_transaction_session_timeout` 5 min (`db/db.go`); live 20 s open-txn test passed |
+| NFR-P1 `/auth/me` 30/min per IP | ✅ | New `session` group, per user, 120/min (`ratelimit.go`); `app/ratelimit_test.go`. See the note in the NFR table |
+| NFR-M1 parallel tests / e2e not in CI | ⚠️ | Template-DB clones removed the lock exhaustion, and CI now has an `e2e` Chrome job (`frontend/e2e/run-ci.sh`). One sync test is still flaky under parallel load (see the NFR table) |
+| NFR-M2 no external uptime probe | ✅ | `deploy/uptime-check.sh` + `btn-ops-uptime.timer`; `/api/health?db=1` |
+| §5.2 no offline dashboard/report cache; no online-only gate | ✅ | `offline/cache.ts` (`offlineQueryFn`/`useReportCache`) used by the dashboard, boards, reports, finance, sales, procurement, production and workforce; `OfflineDataBanner` "data as of"; `Button onlineOnly` on approve/verify/pay/admin actions in 29 module files; `OnlineOnlyZone`; `lib/api.ts` refuses direct writes offline; `cache.test.ts`, `onlineOnly.test.ts` |
+| §5.5 raw-JSON merge; one version in the audit | ✅ | `ConflictsPage.tsx` + `conflictMerge.ts`: merge target prefilled, "Keep as additional batch", per-field picker. `syncsvc/conflicts.go` writes `sync.conflict_open` / `sync.conflict_resolve` with server Before / device After; `conflictMerge.test.ts` |
+| §6.3 hard deletes | ✅ | `migrations/03230_no_hard_delete.sql`: `btn_forbid_delete` on budget, threshold, charge rule, attachments, target, recipe, piece-work; `btn_archive_deleted` archives replaced child lines into `deleted_record`; `httpx.RemovalReason` + RemoveDialog |
+| §7.2 transfer reason optional | ✅ | `note` is required, at least 3 characters (live 400) |
+| §7.4 supervisor could review wages | ⚠️ | `payroll.check` = PM only ✅. New constraint below |
+| §8 ~20 mismatched cells | ✅ | `auth/permissions.go` matches the matrix (deviations below); live cells above |
+| §9.2 sync schema version not enforced | ✅ | `X-Sync-Schema` + per-record-type ranges (426/409, nothing stored); `app/sync_schema_test.go`; client "Update required" notice (`SchemaUpgradeNotice.tsx`) |
+| §10 weekly+monthly orders; finance on variance | ✅ | `migrations/03200_srs_roles_schedules.sql`: `orders_sales` weekly + `orders_sales_monthly`; `stock_movement_variance` → PM, FM; all enabled |
 
 ## Per requirement
 
 ### AUTH — Access control and users
-| ID | Status | Evidence | Missing → fix |
+| ID | Status | Evidence | Note |
 |---|---|---|---|
-| AUTH-01 | ✅ | Argon2id PHC `auth/password.go:14-32`; login `auth/routes.go:120`; `auth_unit_test.go:TestHashRoundTripAndFormat`, `app/auth_flow_test.go:TestFullSignInFlow` | Sign-in is by email only, no username (the SRS says "or", so this is acceptable) |
-| AUTH-02 | ✅ | Matrix `auth/permissions.go` aligned with SRS §8 cell by cell; `RequirePermission` on every route (`openapi:TestOpenAPIDocumentCoversEveryRoute`); UI guards in each `routes.tsx` / `app/nav.ts`; `TestPermissions`, `TestSRSRoleMatrix` (the §8 table encoded; fails on any over-grant or unbacked cell) | |
-| AUTH-03 | ✅ | `IsPlantScoped`/`UserPlantScoped` `permissions.go:201-213`. curl: sup1 requesting `/stock/balances?plantId=BTN-2` got only BTN-1 data. `production:TestPermissionsAndPlantScope`, `stock:TestReadEndpointsPermissionsAndScope` | |
-| AUTH-04 | ✅ | Single-use 30-min link `auth/reset_link.go:22,59` (`used_at`/`invalidated_at`); forced first-login change `auth/middleware.go:16`; `f3_tokens_test.go:TestPasswordResetLink`, `TestPasswordChangeForcedAndPolicy` | |
-| AUTH-05 | ✅ | Fixed after the audit: the Super Administrator sets the threshold (3–20 failures, default 5) and period (1–1440 min, default 15) in Administration → Settings → *Account lockout* (`settings.Security`, `adminapi.putSettings`, 403 for any other role); the login flow reads it on every failure (`auth/routes.go` → `settings.LoadSecurity`); the change is audited with before/after (`settings.update`) and each lock records the period (`auth.lock`); UI in en/am/rw/fr (`i18n/ns/lockout.ts`). `app:TestLockoutPolicyConfigurable`, `TestAccountLockout` | |
-| AUTH-06 | ✅ | 15-min access token + rotating 14-day refresh `auth/tokens.go:36-41`; device list and revoke `auth/devices.go:346`, AdminDevicesPage; `TestAccessExpiryAndRefreshRotation`, `TestDevicesOwnAndAdmin` | |
-| AUTH-07 | ✅ | Append-only triggers + device id `migrations/01100_audit_immutable.sql`; sign-ins audited `routes.go:219`; `audit:TestAuditImmutableAndDevice`, `TestAuditCommitsAtomicallyWithTheTransaction` | |
-| AUTH-08 | ✅ | `isActive` toggle, no delete `users/users.go:150,218,294`; UsersPage; `TestUsersCRUD` | |
-| AUTH-09 | ✅ | Email OTP on every password sign-in, plus passkeys (`auth/otp.go`, `passkey.go`); `TestOTPAttemptsLockTheChallenge`, `TestPasskeyRegistrationAndDiscoverableLogin` | Mandatory for everyone, which exceeds "optional for finance/admin" |
-| AUTH-10 | ✅ | Ed25519-signed offline package `auth/offline.go`, 14-day default; `offline/ui/OfflineUnlockScreen.tsx`; `TestOfflinePackageSignature`; e2e T-07 | |
+| AUTH-01 | ✅ | Argon2id `auth/password.go`; `TestHashRoundTripAndFormat`, `app/auth_flow_test.go:TestFullSignInFlow` | Email sign-in only (the SRS says "email or username") |
+| AUTH-02 | ✅ | `auth/permissions.go` Matrix + `RequirePermission` on every route (`TestOpenAPIDocumentCoversEveryRoute`); UI route guards | |
+| AUTH-03 | ✅ | `IsPlantScoped`/`UserPlantScoped`; `production:TestPermissionsAndPlantScope`, `stock:TestReadEndpointsPermissionsAndScope` | |
+| AUTH-04 | ✅ | Single-use 30-min link `auth/reset_link.go`; forced change `auth/middleware.go`; `TestPasswordResetLink`, `TestPasswordChangeForcedAndPolicy` | |
+| AUTH-05 | ✅ | Configurable threshold and period (Settings → Account lockout); attempts in `AuthAttempt`; `TestAccountLockout`, `lockout_policy_test.go` | |
+| AUTH-06 | ✅ | 15-min access + rotating refresh `auth/tokens.go`; device revoke `auth/devices.go`, AdminDevicesPage; `TestAccessExpiryAndRefreshRotation` | |
+| AUTH-07 | ✅ | Append-only audit + device `01100_audit_immutable.sql`; `TestAuditImmutableAndDevice` | |
+| AUTH-08 | ✅ | Deactivate/reactivate, no delete `users/users.go`; `TestUsersCRUD` | |
+| AUTH-09 | ✅ | Email OTP on every password sign-in + passkeys; `TestOTPAttemptsLockTheChallenge` | Exceeds "optional" |
+| AUTH-10 | ✅ | Signed offline package `auth/offline.go` (14 days); `OfflineUnlockScreen.tsx`; `TestOfflinePackageSignature`; e2e T-07 | |
 
 ### PRD — Production
-| ID | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| PRD-01 | ✅ | `POST /production/reports` (`production/module.go:54`) with site, date, shift, product, `batchRef`, quantity; ProductionFormPage; `srs_test.go:TestBatchesAndAdditionalBatch` | |
-| PRD-02 | ✅ | Defects by `defect_reason` refdata code + note; reasons edited in RefDataPage; `TestDefectsByReason` | |
-| PRD-03 | ✅ | `materialUsages` per entry → `MaterialMovement` CONSUMPTION (`production/store.go:773`); `TestWorkflowApprovePostsLedgersAtomically` | |
-| PRD-04 | ✅ | Posts to stock on submit; edits post deltas; withdrawal reverses (`store.go:768-774`); `TestLedgerFollowsStatus` | |
-| PRD-05 | ✅ | `/production/targets`, `/targets/progress`; TargetsPage; `TestTargetsAndProgress` | |
-| PRD-06 | ✅ | curl: a duplicate batch got 409 `duplicate_batch`; with `additionalBatch:true` it was accepted as `…-D-2`; `TestBatchesAndAdditionalBatch` | |
-| PRD-07 | ✅ | `/days/close`, `/days/reopen`, `/corrections` approve/reject, auto-close job; DaysPage, CorrectionsPage; `TestDayCloseAndCorrections`, `TestAutoCloseJob` | |
-| PRD-08 | ✅ | `/summary/periods` by day/week/month/custom, per site and consolidated, with yield and defect rate, PDF/CSV/XLSX; ProductionSummaryPage; `TestPeriodsExportsAndDenials`, `calc_test.go:TestPeriodsAndPlanned` | |
-| PRD-09 | ✅ | `/reports/:id/notes`, `/reports/:id/flags` (breakdown, weather, shortage); `TestNotesAndExceptionFlags` | |
-| PRD-10 | ✅ | Versioned `/recipes`, expected usage, tolerance setting, variance flag + notification; RecipesPage; `TestRecipesAndVariance` | |
+| ID | Status | Evidence |
+|---|---|---|
+| PRD-01 | ✅ | `POST /production/reports` with site, date, shift, product, `batchRef`, qty; ProductionFormPage; `TestBatchesAndAdditionalBatch` |
+| PRD-02 | ✅ | `defect_reason` refdata + note; `TestDefectsByReason` |
+| PRD-03 | ✅ | `materialUsages` → CONSUMPTION movements; `TestWorkflowApprovePostsLedgersAtomically` |
+| PRD-04 | ✅ | Posts on submit, deltas on edit; `TestLedgerFollowsStatus` |
+| PRD-05 | ✅ | `/production/targets`, `/targets/progress`; TargetsPage; `TestTargetsAndProgress` |
+| PRD-06 | ✅ | 409 `duplicate_batch` unless `additionalBatch`; `TestBatchesAndAdditionalBatch` |
+| PRD-07 | ✅ | Day close/reopen, corrections approved by PM; `TestDayCloseAndCorrections`, `TestAutoCloseJob` |
+| PRD-08 | ✅ | `/summary/periods` day/week/month/custom, site + consolidated, yield/defect rate; `TestPeriodsExportsAndDenials` |
+| PRD-09 | ✅ | Notes + flags (breakdown, weather, shortage); `TestNotesAndExceptionFlags` |
+| PRD-10 | ✅ | Versioned recipes, tolerance, variance flag; RecipesPage; `TestRecipesAndVariance` |
 
 ### STK — Stock and warehouse
-| ID | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| STK-01 | ✅ | `Plant.kind` SITE/HQ/WAREHOUSE (`01302_location_kind.sql`); separate product and material ledgers per location | |
-| STK-02 | ✅ | Category, unit, reorder level, plus per-location reorder level (`02101_stock_ledger.sql:42-66`); MasterDataPage; `TestCatalogueCategoriesUnitsAndReorderLevel` | |
-| STK-03 | ✅ | Ledger rows immutable (update/delete trigger `02101:37-40`); balances summed from movements; all movement types (`02100`); `TestReceiptsIssuesLotsAndHistory` | |
-| STK-04 | ✅ | `/transfers` approve, reject, dispatch, receive, cancel, reverse (`transfers/module.go:37-47`); all 6 states; HQ↔site and site↔site; Transfer pages; `TestTransferFullWorkflowWithShortfall`, `TestTransferStateMachine` | |
-| STK-05 | ✅ | curl: an online over-issue got 409 `insufficient_stock`; offline it is accepted and flagged `NEGATIVE_STOCK` (`stock/sync.go:72-79`); `TestStockMovementSyncHandler`, `TestConcurrentWithdrawalsCannotOverdraw` | |
-| STK-06 | ✅ | `/stock-counts` (full, category or blind) → variance → approval creates the adjustments; variance PDF; StockCountsPage; `TestBlindCategoryCountVarianceApproval` | |
-| STK-07 | ✅ | `stock/alerts.go`: `stock.low_stock` sent in-app and by email by default; `/stock/low-stock` page; `TestLowStockAlertsDedupEmailAndJob` | |
-| STK-08 | ✅ | `/stock/history` filters item, location, type, user, period, lot; export; `TestReceiptsIssuesLotsAndHistory` | |
-| STK-09 | ✅ | `POST /procurement/orders/:id/receipts` → `stock.ReceiveGoods` with the PO reference; `TestReceiveGoodsAPI` | |
-| STK-10 | ✅ | `lotRef` on receipts, issues and transfers; `/stock/lots`, FIFO; `TestAllocateFIFO` | |
+| ID | Status | Evidence |
+|---|---|---|
+| STK-01 | ✅ | `Plant.kind` SITE/HQ/WAREHOUSE; separate product and material ledgers |
+| STK-02 | ✅ | Category, unit, reorder level (global + per location); `TestCatalogueCategoriesUnitsAndReorderLevel` |
+| STK-03 | ✅ | Immutable ledger rows, balances derived; `TestReceiptsIssuesLotsAndHistory` |
+| STK-04 | ✅ | `/transfers` with 6 states, HQ↔site and site↔site; `TestTransferFullWorkflowWithShortfall`, `TestTransferStateMachine` |
+| STK-05 | ✅ | Online 409 `insufficient_stock`; offline accepted + `NEGATIVE_STOCK`; `TestStockMovementSyncHandler` |
+| STK-06 | ✅ | `/stock-counts` → variance → PM approval → adjustments; `TestBlindCategoryCountVarianceApproval` |
+| STK-07 | ✅ | `stock.low_stock` in-app + email; `TestLowStockAlertsDedupEmailAndJob` |
+| STK-08 | ✅ | `/stock/history` filters item, location, type, user, period, lot |
+| STK-09 | ✅ | PO receipts → `stock.ReceiveGoods`; `TestReceiveGoodsAPI` |
+| STK-10 | ✅ | `lotRef`, `/stock/lots`, FIFO; `TestAllocateFIFO` |
 
 ### ORD — Clients and orders
-| ID | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| ORD-01 | ✅ | Client type, status, notes, TIN, contacts and communications tables (`02200_orders_delivery.sql:8-46`); CustomersPage/CustomerPage; `TestClientDatabaseDuplicatesAndHistory` | |
-| ORD-02 | ✅ | `POST /sales/customers/duplicates` matches on name, phone or TIN (`sales/dupes.go`); warning in the form; `TestDuplicateScoring` | |
-| ORD-03 | ✅ | Line discount, delivery requirements, requested date, payment terms, deposit (`02200:62-146`); SaleFormPage; `TestLineDiscountMaths`, `TestPaymentTermsDepositAndKinds` | |
-| ORD-04 | ✅ | All Figure 3 states (`sales/lifecycle.go`); `/quote`, `/confirm`, `/fulfilment`, `/ready`, `/close`, `/cancel`; approval by value and role via `approval_threshold`; partial dispatch keeps the order open. **Cancel from Draft, Quoted or Confirmed always needs a reason and an approval** (`cancelNeedsApproval` = `cancellable`): a CANCEL `sale_approval` with the threshold levels + a `sales.cancel` level (Sales Manager / Production Manager, §8 Orders A), never decided by the requester; audit `sales.approval.request` → `sales.approval.approve` → `sales.cancel`; approvers notified (`sales.approval_pending`), requester told of the decision; UI "Request cancellation" (online-only) + ApprovalsPage. `TestFigure3Transitions`, `TestSaleLifecycleAndDiscountRule` (draft cancel), `TestValueApprovalsAndCancellation` | |
-| ORD-05 | ✅ | `GET /sales/:id/availability`; shortfall notification `sales.order_shortfall` to production holders; SaleDetailPage | |
-| ORD-06 | ✅ | `POST /:id/payments` (DEPOSIT/PART/BALANCE), mirrored as income (`income:TestIncomeOrderPayments`); ReceivablesPage, statement | |
-| ORD-07 | ✅ | `/customers/:id/orders`, `/customers/:id/communications`, search; CustomerPage | |
-| ORD-08 | ✅ | `/pdf/quotation`, `/pdf/confirmation`, `/pdf/delivery-note` with branding (`sales/pdf_docs.go`); `sales:TestPDFs` | |
-| ORD-09 | ✅ | `/sales/reports/orders` + PDF/CSV/XLSX; SalesReportsPage; `TestReportsExportsAndOverdue` | |
-| ORD-10 | ✅ | Terms locked after Quoted; `POST /:id/amendments` → approval, `sale_amendment`/`sale_version` (`02200:234-262`); `TestAmendmentsVersionHistory` | |
+| ID | Status | Evidence |
+|---|---|---|
+| ORD-01 | ✅ | Client type, status, notes, TIN, contacts, communications (`02200_orders_delivery.sql`); `TestClientDatabaseDuplicatesAndHistory` |
+| ORD-02 | ✅ | `POST /sales/customers/duplicates` on name, phone or TIN; `TestDuplicateScoring` |
+| ORD-03 | ✅ | Line discount, delivery requirements, dates, payment terms; `TestLineDiscountMaths` |
+| ORD-04 | ✅ | All Figure 3 states (`sales/lifecycle.go`). Cancel from Draft/Quoted/Confirmed always needs reason + approval. Value/role thresholds via `approval_threshold`. Partial dispatch keeps the order open. `TestFigure3Transitions`, `TestValueApprovalsAndCancellation` |
+| ORD-05 | ✅ | `/sales/:id/availability`; `sales.order_shortfall` notification |
+| ORD-06 | ✅ | `POST /:id/payments` (deposit/part/balance) recorded as income; `income:TestIncomeOrderPayments` |
+| ORD-07 | ✅ | Per-client orders and communications, searchable |
+| ORD-08 | ✅ | Quotation, confirmation and delivery-note PDFs with branding; `sales:TestPDFs` |
+| ORD-09 | ✅ | `/sales/reports/orders` + exports; `TestReportsExportsAndOverdue` |
+| ORD-10 | ✅ | Approved, versioned amendments; `TestAmendmentsVersionHistory` |
 
 ### DEL — Delivery
-| ID | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| DEL-01 | ✅ | `transportMode` CLIENT/BTN on sale and delivery (`02200:66,165`); SaleFormPage | |
-| DEL-02 | ✅ | `delivery_charge_rule` FIXED/ZONE/DISTANCE (`sales/charges.go:19`); DeliveryChargesPage; `TestDeliveryChargeRules` | |
-| DEL-03 | ✅ | `POST /:id/deliveries` with destination, vehicle, driver and partial quantities; `TestOrderLifecycleChargesDeliveryAndPayments` | |
-| DEL-04 | ✅ | Dispatch reduces stock at the dispatching location (asserted at `orders_http_test.go:300`) | |
-| DEL-05 | ✅ | `POST /deliveries/:id/delivered` with receiver, note and photo (`delivery_photo`); modals.tsx | |
-| DEL-06 | ✅ | `/sales/deliveries` filtered by client, order, date and transport mode; `/deliveries/pending`; DeliveriesPage | |
+| ID | Status | Evidence |
+|---|---|---|
+| DEL-01 | ✅ | `transportMode` CLIENT/BTN |
+| DEL-02 | ✅ | `delivery_charge_rule` FIXED/ZONE/DISTANCE; `TestDeliveryChargeRules` |
+| DEL-03 | ✅ | Partial dispatch with vehicle, driver and destination; `TestOrderLifecycleChargesDeliveryAndPayments` |
+| DEL-04 | ✅ | Dispatch reduces stock at the dispatching location |
+| DEL-05 | ✅ | `/deliveries/:id/delivered` with receiver, note, photo |
+| DEL-06 | ✅ | `/sales/deliveries` filters + `/deliveries/pending` |
 
 ### WRK — Workforce
-| ID | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| WRK-01 | ✅ | Worker: ID number, MoMo phone, site, `rateBasis` DAILY/PIECE/MIXED, status; access-controlled (`payroll/workers.go`, `workforce/calc.go:17-35`); WorkersPage; `TestWorkerRecordAndReports` | |
-| WRK-02 | ✅ | `/attendance`, `/mark-all` with present, absent, half-day and overtime hours, site-scoped; headcount report; DailyTab; `TestRosterAndRecord`, `TestPermissionAndScope` | |
-| WRK-03 | ✅ | `workforce/calc.go:322-452`: daily, half, overtime, piece and effective-dated rules; CalcDetails.tsx per worker; `TestCalculateDailyWithHalfAndOvertime`, `TestCalculatePieceAndMixed` | |
-| WRK-04 | ✅ | `wage_payment` (`02300_workforce.sql:197`); `/periods/:id/record-payment`; `/workforce/workers/:id/payments`; WorkerPaymentsPage; `TestLockCorrectionPaymentAndAdjustment` | |
-| WRK-05 | ✅ | Attendance day submit/approve lock (`attendance/days.go`); audited manager-approved corrections (`corrections.go`); paid periods locked; `TestSyncDoubleEntryLockAndOvertime` | |
-| WRK-06 | ✅ | `/workforce/reports/summary` per site plus a consolidated row, CSV/XLSX/PDF (curl verified); `TestWorkerRecordAndReports` | |
-| WRK-07 | ✅ | A second-site mark needs an exception + reason (`02300:38-44`); `TestCrossSiteException` | |
+| ID | Status | Evidence |
+|---|---|---|
+| WRK-01 | ✅ | Worker ID, phone, site, rate basis, status; access-controlled; `TestWorkerRecordAndReports` |
+| WRK-02 | ✅ | Present/absent/half-day/overtime, site-scoped; headcount; `TestRosterAndRecord` |
+| WRK-03 | ✅ | `workforce/calc.go` daily/half/overtime/piece, per-worker breakdown; `TestCalculateDailyWithHalfAndOvertime`, `TestCalculatePieceAndMixed` |
+| WRK-04 | ✅ | `wage_payment`, `/periods/:id/record-payment`, per-worker history; `TestLockCorrectionPaymentAndAdjustment` |
+| WRK-05 | ✅ | Attendance day lock, audited manager corrections, paid periods locked |
+| WRK-06 | ✅ | `/workforce/reports/summary` per site + consolidated |
+| WRK-07 | ✅ | Cross-site mark needs an exception + reason; `TestCrossSiteException` |
 
 ### FIN — Finance
-| ID | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| FIN-01 | ✅ | Expense: category, amount, date, site/department, supplier, method, source, budget link or unbudgeted; JPEG/PNG/WebP/PDF attachments (`expenses/create.go:68-73`, `attach.go`); ExpenseFormModal; `TestExpenseApprovalPaymentAndReceipts`, `finance:TestExpenseBudgetLinkRules` | |
-| FIN-02 | ✅ | Per-custodian floats, top-ups, approvals, entries (as PETTY_CASH expenses), reconciliation (`pettycash/module.go:63-81`); FloatsTab, ReconciliationsTab; `TestFloatsTopUpsAndReconciliation` | |
-| FIN-03 | ✅ | `budget` (department + period) and `budget_line` (category); `/budgets/vs-actual` with variance, PDF/CSV; BudgetsPage; `TestBudgetLifecycleAndPermissions` | |
-| FIN-04 | ✅ | Income module (`03100`, `income`, `income_link`); order payments become income; receivables ageing; `TestIncomeOrderPayments`, `TestFinanceDashboard` | |
-| FIN-05 | ✅ | `/procurement/trace`, `/expenses/trace`: request → approval → PO → receipt → invoice → expense/payment; PurchaseTracePage; `TestOrderReceiveInvoiceTrace` | |
-| FIN-06 | ✅ | `/finance/dashboard`: income/revenue, expenses, petty cash, budgets, receivables, procurement spend (curl); FinanceDashboardPage | |
-| FIN-07 | ✅ | Every finance report `?format=csv\|xlsx` (curl: 200, correct MIME); shared ExportMenu | |
-| FIN-08 | ✅ | `POST /expenses/budget-check` warns in the form; over-budget needs `/:id/overrun/approve`; `TestBudgetOverrunControl` | |
-| FIN-09 | ✅ | `expenses.*`, `budgets.*`, `pettycash.*`, `income.*` on every route; records only by Finance; read (`*.view`) by the §8 Finance R roles (PM, Sales, Proc., Top Mgt, Admin); supervisors and stock officers get 403 (`expenses:TestExpensePermissionsAndScope`, `finance:TestFinanceRecordEndpoints`) | |
+| ID | Status | Evidence |
+|---|---|---|
+| FIN-01 | ✅ | Expense with category, amount, date, site/department, supplier, method, attachments, budget link or unbudgeted; `TestExpenseApprovalPaymentAndReceipts`, `TestExpenseBudgetLinkRules` |
+| FIN-02 | ✅ | Per-custodian floats, top-ups, approvals, PETTY_CASH expenses, reconciliation; `TestFloatsTopUpsAndReconciliation` |
+| FIN-03 | ✅ | Budgets by category and department; `/budgets/vs-actual`; `TestBudgetLifecycleAndPermissions` |
+| FIN-04 | ✅ | Income module, order payments as income, receivables; `TestIncomeOrderPayments`, `TestFinanceDashboard` |
+| FIN-05 | ✅ | `/procurement/trace`, `/expenses/trace`; `TestOrderReceiveInvoiceTrace` |
+| FIN-06 | ✅ | `/finance/dashboard`: revenue/income, expenses, petty cash, budgets, balances, procurement spend |
+| FIN-07 | ✅ | CSV/XLSX on every finance report |
+| FIN-08 | ✅ | `/expenses/budget-check` warning + overrun approval; `TestBudgetOverrunControl` |
+| FIN-09 | ✅ | Finance permissions per route; supervisor → 403 (live) |
 
 ### PRC — Procurement
-| ID | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| PRC-01 | ✅ | `POST /procurement/requests` with items, quantity, justification, required date, estimated cost (`procurement/requests.go:81-130`); RequestFormPage | |
-| PRC-02 | ✅ | `RouteLevels` by value and requester; self-approval escalates (`workflow.go:109-147`); `TestRouteLevelsByValue`, `TestRouteLevelsByRequester`, `TestSelfApprovalEscalationRejectRevise` | |
-| PRC-03 | ✅ | `/suppliers` CRUD + `/suppliers/:id/orders`; SuppliersPage/SupplierDetailPage; `TestSupplierDirectory` | |
-| PRC-04 | ✅ | `purchase_order.quotation_ref`; `POST /orders/:id/invoices`; OrderFormPage/OrderDetailPage | |
-| PRC-05 | ✅ | All 8 request states plus the PO state machine (`workflow.go:17-36`); `TestStateMachines` | |
-| PRC-06 | ✅ | Partial or full receipt into any HQ/site location (`procurement/receiving.go`); `TestUnderReceiptShortCloseAndCancel` | |
-| PRC-07 | ✅ | `/requests/low-stock`, `POST /requests/from-low-stock`; LowStockModal; `TestLowStockProposal` | |
-| PRC-08 | ✅ | `/reports/spend` by supplier, category, month, location + PDF/exports; procurement ReportsPage | |
+| ID | Status | Evidence |
+|---|---|---|
+| PRC-01 | ✅ | Requests with items, qty, justification, required date, estimated cost |
+| PRC-02 | ✅ | `RouteLevels` by value and requester; self-approval escalates; `TestRouteLevelsByValue`, `TestRouteLevelsByRequester` |
+| PRC-03 | ✅ | Suppliers + purchase history; `TestSupplierDirectory` |
+| PRC-04 | ✅ | PO quotation ref + invoices |
+| PRC-05 | ✅ | All 8 statuses; `TestStateMachines` |
+| PRC-06 | ✅ | Partial or full receipt into any location; `TestUnderReceiptShortCloseAndCancel` |
+| PRC-07 | ✅ | `/requests/from-low-stock`; `TestLowStockProposal` |
+| PRC-08 | ✅ | `/reports/spend` by supplier, category, period, location |
 
 ### RPT — Reporting, dashboards, notifications
-| ID | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| RPT-01 | ✅ | 6 boards `dashboard/boards.go:51-76`, `GET /dashboard/boards/:board`, all 200 in 5–30 ms, wrong role 403; `dashboard/boards.tsx`; `boards_test.go`, `boards.test.ts`. Checklist in §10 | |
-| RPT-02 | ✅ | `report_schedule` (`02600`, `03200`): 11 schedules incl. weekly **and** monthly order & sales summary, **all enabled by default** (sending still needs `JOBS_ENABLED` and SMTP); job `reports.scheduled` (`reports/schedule_run.go`) emails PDF/XLSX; SchedulesPage; `TestScheduleDefaultsFollowSRS10`, `TestScheduleDispatchCreatesOneRunPerSlot`, `TestSendNowEmailsAttachmentsPerRecipient`, `TestScheduledRunRetriesThenFails` | On the first job run after 03200, a slot still inside the grace window (and a wage period ended in the last 7 days) is sent once |
-| RPT-03 | ✅ | Site/date filters and `?format=csv\|xlsx\|json` on every report, plus PDF (`reports/module.go:30`); `hub_http_test.go:TestEveryCatalogReportServesPDFAndExports` | |
-| RPT-04 | ✅ | Notification centre: low stock, approvals, transfers, sync conflicts / negative stock, procurement; NotificationBell/NotificationsPage; `platform:TestNotificationsAPI`, `notify:TestDedupAndReadState` | |
-| RPT-05 | ✅ | `GET/PUT /notifications/preferences`, email default per event; PreferencesPage; `TestPreferencesAPI`, `TestPreferenceResolution` | |
-| RPT-06 | ✅ | `/reports/cutoff` (cut-off + pending sites) shown on screens (`components/DataCutoff.tsx`), dashboards, PDF, XLSX, JSON and emails; **CSV**: every export through `export.SendDoc` and the bulk data export (`export.WriteCSVNotes`) ends with `# Data cut-off,<time>` and `# Unsynchronised data,<n sites (codes)>` rows padded to the column count (header stays line 1; skip with `Comment: '#'`; data cells starting `#` are written `'#…`; format in `backend/README.md`); `TestCutoffStatement`, `export:TestCSVCarriesCutoffNotes`, `dataexport:TestDataExport` | |
-| RPT-07 | ✅ | Boards 5–30 ms; `TestBoardsRenderTwelveMonthsWithinBudget` | |
+| ID | Status | Evidence |
+|---|---|---|
+| RPT-01 | ✅ | 6 role boards (`dashboard/boards.go`); checklist in §10; `boards_test.go` |
+| RPT-02 | ✅ | `report_schedule` (10 rows, enabled) + job `reports.scheduled`; `TestScheduleDispatchCreatesOneRunPerSlot`, `TestSendNowEmailsAttachmentsPerRecipient` |
+| RPT-03 | ✅ | Site/date filters, PDF + CSV/XLSX/JSON; `TestEveryCatalogReportServesPDFAndExports` |
+| RPT-04 | ✅ | Notification centre: low stock, approvals, transfers, sync conflicts, procurement |
+| RPT-05 | ✅ | Per-event email preferences; `TestPreferencesAPI` |
+| RPT-06 | ✅ | Cut-off + unsynced sites on screens, dashboards, PDF, XLSX, CSV (comment rows) and emails; `TestCutoffStatement`, dataexport tests |
+| RPT-07 | ✅ | Boards render in milliseconds; `TestBoardsRenderTwelveMonthsWithinBudget` |
 
 ### ADM — Administration
-| ID | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| ADM-01 | ✅ | Sites, products, materials (`/admin/sites`, `/admin/master-data`); refdata kinds incl. unit, defect_reason, expense_category (`01303_refdata.sql`); rate rules (`workforce/module.go:39-41`); thresholds (`refdata/thresholds.go`); RefDataPage; `TestCRUDCachingETagAndPermissions` | |
-| ADM-02 | ✅ | `/audit` search + facets, CSV/XLSX/JSON export (`adminapi/export_reports.go`, curl 200); AuditPage | |
-| ADM-03 | ✅ | `/sync/monitor` per device and site: last sync, pending, rejected, open conflicts, clock skew; SyncMonitorPage | |
-| ADM-04 | ✅ | `/ops/monitoring/health`, `/ops/jobs`, error capture; critical alerts to `admin.monitor` holders + `OPS_ALERT_EMAIL`; `TestErrorCaptureAndMonitoringAPI`, `TestJobFailureAlertAndBuiltins` | |
-| ADM-05 | ✅ | `/data/export/tables[/:table]`, `/all` as CSV/JSON (`dataexport.go:202-204`); DataExportPage | |
+| ID | Status | Evidence |
+|---|---|---|
+| ADM-01 | ✅ | Sites, products, materials, units, reason codes, expense categories, rate rules, thresholds (RefDataPage, MasterDataPage) |
+| ADM-02 | ✅ | `/audit` search + CSV/XLSX/JSON export |
+| ADM-03 | ✅ | `/sync/monitor` per device and site |
+| ADM-04 | ✅ | Health, jobs, errors; critical alerts in-app + `OPS_ALERT_EMAIL`; external probe `deploy/uptime-check.sh` |
+| ADM-05 | ✅ | `/data/export` CSV/JSON (with cut-off notes) |
 
 ### OFF — Offline operation and synchronisation
-| ID | Status | Evidence | Missing → fix |
+| ID | Status | Evidence | Note |
 |---|---|---|---|
-| OFF-01 | ✅ | VitePWA injectManifest (`vite.config.ts`), `src-sw/sw.ts` precache + NavigationRoute; e2e T-02 offline relaunch | |
-| OFF-02 | ✅ | IndexedDB/Dexie `offline/core/db.ts`, persistent storage request `core/quota.ts`; e2e T-02 | |
-| OFF-03 | ✅ | `core/store.ts` writes the encrypted outbox before the "Saved on this device" toast | |
-| OFF-04 | ✅ | `core/connectivity.ts` probes `/api/health` (≤5 s, plus online/visibility events); `connectivity.test.ts` | |
-| OFF-05 | ✅ | `offline/ui/ConnectionIndicator.tsx` (Online/Offline/Syncing + pending count) in `AppLayout.tsx:174` | |
-| OFF-06 | ✅ | WireRecord: uuid, device, user, capturedAt, seq, schemaVersion (`core/store.ts`); `sync_ledger` (`01201_sync.sql`) | |
-| OFF-07 | ✅ | `core/engine.ts` auto-starts in the background on reconnect; `engine.test.ts` | |
-| OFF-08 | ✅ | Capture order, batches ≤200, exponential back-off + Retry-After, resumable (`engine.ts`, `backoff.ts`); `backoff.test.ts` | |
-| OFF-09 | ✅ | Dedup on (uuid, revision) `syncsvc/push.go:383-399`; `TestPushIdempotencyAndDuplicates`; curl: resent batch → `duplicate` | |
-| OFF-10 | ✅ | accepted / duplicate / conflict / rejected + reasonCode (`syncsvc/registry.go:52-64`); curl verified | |
-| OFF-11 | ✅ | `GET /sync/pull` with (stamp, version, scope) cursor (`syncsvc/pull.go`). Fixed after the audit (migration `03250_sync_watermark.sql`, `pullUpper`): writers of synced rows take a shared advisory lock, then stamp `greatest(xid, watermark)`; a pull raises the watermark before its snapshot and is held back only by in-flight transactions holding that lock in its own schema — the invariant (no row below the cursor can commit later) is proved in the code comment. A stuck writer is bounded by `idle_in_transaction_session_timeout` = 5 min on every pool connection (`db.Connect`). Tests: `TestPullNotStalledByUnrelatedTransactions` (open write txn on another table, another schema's sync lock and another database: pull not stalled; a txn whose xid predates the cursor and then writes a synced row is still delivered), `TestPullDoesNotSkipSlowTransactions`, `TestPullDeltaScopeAndSnapshots` (polling workaround removed) | |
-| OFF-12 | ✅ | Signed offline package, 14 days default, configurable via `PUT /sync/settings` (max 60); revoke in AdminDevicesPage; `TestDeviceRevokeStopsSyncAndRefresh` | |
-| OFF-13 | ✅ | AES-GCM-256 key wrapped by PBKDF2 (310k) + device secret (`core/crypto.ts`); wiped on sign-out (`runtime.ts`); `crypto.test.ts` | |
-| OFF-14 | ✅ | `runtime.ts:418-441` confirm before sign-out with pending/issues; e2e T-10 | Browser-level "clear site data" cannot be intercepted (platform limit) |
-| OFF-15 | ✅ | `captured_at` + `received_at`; skew vs configurable `maxClockSkewMinutes` (`push.go:218-220`); `TestClockSkewFlags`; curl: +2 d → `CLOCK_SKEW` | |
-| OFF-16 | ✅ | Capture-time role snapshot plus current rules (`registry.go:56-58,211-219`); `TestRevalidationCaptureRoleAndCurrentRules` | |
-| OFF-17 | ✅ | `offline/pages/SyncIssuesPage.tsx`: reason, guidance, correct & resubmit, dismiss; e2e T-06 | |
-| OFF-18 | ✅ | `sync_conflict` kind `negative_stock` → review queue + notify (`syncsvc/notify.go`); `TestNegativeStockFlagRoutesToReview`; e2e T-04 | |
-| OFF-19 | ✅ | Pulls scoped to site + 60 days / open items; worker PII minimised; quota warnings `core/quota.ts` | |
-| OFF-20 | ✅ | "Sync now" in ConnectionIndicator; passphrase-encrypted export/import (`offline/transfer.ts`) | |
-| OFF-21 | ✅ | `registerType: prompt`; update applied only with no dirty form (`runtime.ts:497-505`); Dexie upgrade migration (`db.ts:100-120`) | |
-| OFF-22 | ✅ | Timeouts, batch halving, back-off, server idempotency; e2e T-03 | |
+| OFF-01 | ✅ | VitePWA injectManifest, `src-sw/sw.ts` precache + navigation fallback; e2e T-02 | |
+| OFF-02 | ✅ | Dexie IndexedDB + persistent storage; e2e T-02 | |
+| OFF-03 | ✅ | Encrypted outbox written before the "Saved on this device" toast | |
+| OFF-04 | ✅ | `core/connectivity.ts` real probe ≤5 s | |
+| OFF-05 | ✅ | `ConnectionIndicator.tsx` Online/Offline/Syncing + pending count | |
+| OFF-06 | ✅ | uuid, device, user, capturedAt, seq, schemaVersion per record | |
+| OFF-07 | ✅ | `core/engine.ts` auto background sync | |
+| OFF-08 | ✅ | Ordered batches ≤200, exponential back-off, resumable | |
+| OFF-09 | ✅ | Dedup on (uuid, revision); `TestPushIdempotencyAndDuplicates` | |
+| OFF-10 | ✅ | accepted / duplicate / conflict / rejected + reason | |
+| OFF-11 | ✅ | Cursor delta pull, watermark-bounded (`syncsvc/pull.go`); live open-transaction test delivered at once | A transient upper-bound drop can end a pagination series early with `hasMore=false`; the rows come on the next pull (deferred, not lost). This is the likely cause of the flaky test under NFR-M1 |
+| OFF-12 | ✅ | PIN/password unlock, 14 days, configurable; admin device revoke; `TestDeviceRevokeStopsSyncAndRefresh` | |
+| OFF-13 | ✅ | AES-GCM-256 + PBKDF2 + device secret; wiped on sign-out | |
+| OFF-14 | ✅ | Sign-out confirm with pending records; e2e T-10 | |
+| OFF-15 | ✅ | Capture + receipt time, configurable skew flag; `TestClockSkewFlags` | |
+| OFF-16 | ✅ | Capture-time role + current rules; `TestRevalidationCaptureRoleAndCurrentRules` | |
+| OFF-17 | ✅ | `SyncIssuesPage.tsx` correct & resubmit | |
+| OFF-18 | ✅ | `negative_stock` review + notify; `TestNegativeStockFlagRoutesToReview` | |
+| OFF-19 | ✅ | Site + 60-day scope; quota warnings | |
+| OFF-20 | ✅ | "Sync now"; passphrase-encrypted export | |
+| OFF-21 | ✅ | Prompted SW update when no dirty form; Dexie migrations; server schema ranges with an "Update required" notice | |
+| OFF-22 | ✅ | Timeouts, batch halving, back-off, idempotency; e2e T-03 | |
 
 ### NFR — Non-functional
 | ID | Status | Evidence | Missing → fix |
 |---|---|---|---|
-| NFR-P1 | ✅ | Fixed after the audit: signed-in traffic is rate-limited per user, not per IP (`app.go`: per-IP flood guard 30 000/min before the session, then per-user 600/min; `/auth/me`, logout, language, offline key/PIN in the per-user `session` group 120/min; login/OTP/reset/refresh stay per IP 30/min) — `app:TestSharedIPUsersAreLimitedPerUser` (60 users on one IP, default limits). `cmd/loadtest run` with DEFAULT limits on a scratch DB from `devtools volume -scale 4 -sites 7 -perf-users 90` (12 months, 10 sites, 106 users, ~737k rows): 50 users × 3 min, 23 099 reads, 127.6 req/s, p50 2 ms, p95 38 ms, p99 80 ms, 100 % < 2 s, 0 errors, 0 × 429 → PASS | Production hardware not yet measured (run the same command on staging) |
-| NFR-P2 | ✅ | `loadtest reports`: 172 boards/reports, slowest 329 ms (audit DB); `TestBoardsRenderTwelveMonthsWithinBudget` (12-month fixture). Post-audit re-run on the 12-month / 10-site / ~818k-row volume DB (`devtools volume -scale 4 -sites 7 -perf-users 90`, quiet host): **172/172 within 5 s, slowest 3.16 s** (sales-report PDF); `pettycash-statement` XLSX 461 ms (5 direct runs 0.44–0.52 s; its SQL incl. the running-balance window is 46 ms). The earlier 11.6 s reading was taken while a parallel `go test -race ./...` saturated the same PostgreSQL/CPU — contention, not the export | |
-| NFR-P3 | ✅ | `syncsvc:TestBatchOf200Under10s`; e2e "NFR" scenario: capture ≤300 ms, 200 records at 1 Mbps ≤10 s (runs in the CI `e2e` job) | |
-| NFR-P4 | ✅ | `e2e/load-size.mjs` on a preview build: 1.66 MB initial, repeat visit served from the SW cache | |
-| NFR-A1 | env | systemd units (`deploy/`), health endpoint, offline-first client | Hosting SLA |
-| NFR-R1 | env | `deploy/backup.sh` nightly encrypted pg_dump + rclone off-site with a timer; `deploy/restore-test.sh` | The quarterly restore drill has no timer or runbook date → schedule it |
-| NFR-S1 | ✅ | nginx TLS 1.2/1.3 (`deploy/nginx.conf:19,80`); permission on every route; CSRF header guard (`TestCSRFGuard`); parameterised SQL; security headers | TLS termination is environment |
-| NFR-S2 | ✅ | `.env` gitignored, only `*.example` tracked | Production least-privilege is a process matter |
-| NFR-S3 | ✅ | Encrypted vault; wiped on sign-out and on revoke after the final upload (`runtime.ts:447-461`); `TestRevokedDeviceFinalUpload`; e2e T-08 | |
-| NFR-S4 | ✅ | `auth` rate-limit group + DB lockout; sync push limiter (`syncsvc/module.go:21`); `TestAuthEndpointsAreRateLimited` | |
-| NFR-D1 | ✅ | `db.Tx` around every posting; ledger-derived balances; `TestWorkflowApprovePostsLedgersAtomically` | |
-| NFR-D2 | ✅ | `/privacy/subjects/:type/:id`: detail, JSON/PDF export, corrections, access log; PrivacyPage/SubjectPage; `TestWorkerExportContainsOnlyTheSubject` | |
-| NFR-U1 | env | Guided tour, help centre, keyboard-entry e2e | Measure training time at UAT |
-| NFR-C1 | env | All e2e runs in Chromium | No Edge or macOS run → add an `msedge` channel |
-| NFR-M1 | ✅ | CI `.github/workflows/ci.yml`: gofmt, vet, `go test -race ./...`, pnpm typecheck/test/build, shellcheck; migrations in git; OpenAPI. Fixed after the audit: (1) `internal/testutil` migrates a template database once per migration set and gives each test process its own clone (`CREATE DATABASE … TEMPLATE`), so parallel `go test -race ./...` no longer exhausts `max_locks_per_transaction` (42 packages pass in parallel; dev note in `backend/README.md`); the sync-pull flakiness is gone with OFF-11. (2) New CI job `e2e`: Postgres 17 service, builds API + web, headless Chrome, runs `frontend/e2e/run-ci.sh` (a11y, keyboard-entry, offline-attendance, offline-acceptance; artifacts on failure) | |
-| NFR-M2 | ✅ | slog structured logs, error capture (`monitor/capture.go`), job metrics `/ops/jobs`, health with uptime. Fixed after the audit: external probe `deploy/uptime-check.sh` (curl; `/api/health?db=1` now also pings PostgreSQL → 503) with e-mail/webhook alerts, repeat and recovery notices, run from another host by `deploy/btn-ops-uptime.{service,timer}` (every minute) or the `uptime` docker-compose profile; documented in README → *Uptime monitoring* | |
-| NFR-SC1 | env | Sites/users are data; indexes in place; b7e34db reports a 10-site / 100-user / 5.9M-row run | Not reproduced; the volume seeding script is not in the repo → commit it |
-| NFR-L1 | ✅ | DD/MM/YYYY + Africa/Kigali (`lib/dates.ts:33-39`), RWF, en/rw/fr (+am) catalogs with parity tests (`catalog.test.ts`) | Minor: `formatDate(Date)` uses the UTC day, so 22:00–24:00 UTC (00:00–02:00 Kigali) shows the previous day → format in the Kigali TZ |
+| NFR-P1 | ✅ | Load test: 50 users, 100 % < 2 s; signed-in `/auth/*` is limited per user | Note: the `global` limit is still 600/min **per IP**, so the harness logs a few 429s when 50 users share one IP. The commit's claim that it passes on default limits was not reproduced. It is fine for a site NAT of roughly 10–20 users; raise it, or key it by user for signed-in traffic, if a large site shares one IP |
+| NFR-P2 | ✅ | `loadtest reports` sweep; `TestBoardsRenderTwelveMonthsWithinBudget`; commit 4988b17 records 172/172 < 5 s on the volume DB | |
+| NFR-P3 | ✅ | `TestBatchOf200Under10s`; e2e NFR scenario (now in the CI e2e job) | |
+| NFR-P4 | ✅ | `e2e/load-size.mjs`: about 1.7 MB initial, cached repeat visits | |
+| NFR-A1 | env | systemd units, health endpoint, uptime timer, offline-first client | Hosting SLA |
+| NFR-R1 | env | `deploy/backup.sh` nightly encrypted dump + off-site with a timer; `deploy/restore-test.sh` | The quarterly restore drill still has no timer or runbook date |
+| NFR-S1 | ✅ | nginx TLS 1.2/1.3; permission on every route; CSRF header guard; parameterised SQL | |
+| NFR-S2 | ✅ | `.env` gitignored, only examples tracked | |
+| NFR-S3 | ✅ | Encrypted vault, wiped on sign-out and revoke; `TestRevokedDeviceFinalUpload` | |
+| NFR-S4 | ✅ | `auth` (per IP), `session` (per user) and sync push limits + DB lockout | |
+| NFR-D1 | ✅ | Transactions around every posting; ledger-derived balances | |
+| NFR-D2 | ✅ | Privacy subject detail, export, correction, access log | |
+| NFR-U1 | env | Guided tour, help centre, keyboard e2e | Measure at UAT |
+| NFR-C1 | env | Chromium e2e in CI | No Edge/macOS run |
+| NFR-M1 | ⚠️ | CI: gofmt, vet, `go test -race ./...`, frontend typecheck/test/build, and a new browser e2e job (`frontend/e2e/run-ci.sh`); template-DB test clones | **The parallel race suite is flaky.** `syncsvc:TestPullDeltaScopeAndSnapshots` failed 1 of 2 parallel runs ("paged total 20 want 22") and passed 6× alone. CI runs exactly this command, so expect intermittent red builds → make the pagination assertion loop until `hasMore=false` on a quiescent schema (or retry the final pull), or keep the bound from dropping within a page series |
+| NFR-M2 | ✅ | Structured logs, error capture, job metrics, external uptime probe | |
+| NFR-SC1 | env | Sites/users are data; volume generator `cmd/devtools volume.go` (10 sites, ~737k rows per commit 3d0431c) | 5M-row target not reproduced here |
+| NFR-L1 | ✅ | DD/MM/YYYY, Africa/Kigali timestamps, RWF, en/rw/fr (+am) | Minor: `formatDate(Date)` uses the UTC day. Correct for date-only values; a full timestamp passed to it could show the previous day after 22:00 UTC |
 
 ## §5 Offline sections
 
-### §5.1 principles — ✅
-Local first, event-based records, server-authoritative "Provisional" balances, safe to repeat, visible connection and
-per-record state (SyncBadge in 16 offline-capable screens), and an encrypted, user/device-bound store are all in place
-(see OFF-03, 06, 09, 13).
+**§5.1 principles — ✅.** Local first, event-based records, provisional balances, idempotent upload, visible
+connection and per-record state, and an encrypted, user/device-bound store are all in place.
 
-### §5.2 offline capability matrix — ✅
-| Row | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| Sign-in on a used device | ✅ | OfflineUnlockScreen, 14-day window | |
-| Production entry | ✅ | `production/offline.ts` + sync handler; provisional stock | |
-| Attendance & headcount | ✅ | `attendance/offline.ts`; a locked day becomes a correction request | |
-| Site stock receipts / issues / adjustments | ✅ | `stock` offline ops + handler; server recalculates | |
-| Transfer requests & receipts | ✅ | `transfers/offline.ts`; approval online | |
-| Order capture & dispatch notes | ✅ | `sales/offline.ts`, OfflineOrders.tsx; reservation confirmed on sync | |
-| Petty cash & expense entries | ✅ | `pettycash`, `expenses`, `income` offline.ts; approve disabled offline | |
-| Client / product / stock look-up | ✅ | refdata, sites, products, materials, customers, workers pulls + balances | |
-| Cached reports & last dashboard, "as of" | ✅ | `offline/cache.ts` `offlineQueryFn`/`useReportCache`: role dashboard + boards, reports hub catalog + cut-off, finance dashboard / cash flow / unbudgeted / trace, procurement spend / summary / trace, sales orders report, production period summary, workforce summary / headcount are stored AES-GCM-encrypted in the user's offline store (key = screen + user + pinned site + filters; a screen opened offline with new filters shows its last copy, flagged). `ui/OfflineDataBanner.tsx` shows "Offline — data as of DD/MM/YYYY HH:mm" and re-runs those queries on reconnect. Same store rules: unreadable when locked/expired, erased on sign-out/revocation, 60-day prune. PDF/Excel/CSV buttons are disabled offline with a reason (server-rendered, not cached — decision in `offline/README.md`). Tests: `cache.test.ts`; `e2e/offline-viewing.mjs` (reload with no network → dashboard, reports hub and finance dashboard from cache, banner time checked, cache encrypted at rest, refresh on reconnect, wiped on sign-out) | |
-| Approvals, user admin, email, live dashboards disabled with a message | ✅ | Shared guard `offline/onlineOnly.tsx`: `<Button onlineOnly>` / `ConfirmDialog onlineOnly` (aria-disabled, tooltip + described-by reason, click only explains) on every approve/reject/verify/void/authorise/record-payment/submit-for-approval/close-reopen and admin-config action (income verify/void, expense approve/reject/overrun/record payment, budget submit/approve/reject/archive, petty cash approve/reject/reconciliation review, payroll steps/return/pay, production submit/approve/reject/corrections/day close-reopen/settings/targets/recipes, stock adjustment decisions, stock counts, procurement requests/orders, transfers, sales approvals/withdraw, attendance submit/approve/corrections, rate rules, piece rates, delivery charges); `/admin/*`, `/reports/schedules` (email) and `/sync/conflicts` are wrapped in `OnlineOnlyZone` (notice + disabled fieldset). `lib/api` refuses any direct write while offline with the same message and mutations run `networkMode: "always"`, so nothing is paused/replayed; no approval/admin type is registered in the outbox. Tests: `onlineOnly.test.ts`; `e2e/offline-viewing.mjs` (approval step aria-disabled with reason, click → no request, outbox unchanged; admin page notice) | |
+**§5.2 offline capability matrix — ✅ (all 10 rows).**
+- Sign-in on a known device: offline unlock.
+- Capture offline:
+  - production
+  - attendance/headcount
+  - stock receipts, issues and adjustments
+  - transfer requests and receipts
+  - order drafts and dispatch notes
+  - petty cash, expense and income entries
+- Look-ups: cached reference data.
+- Cached dashboards and reports: shown offline with an "Offline — data as of …" banner (`offline/cache.ts`,
+  `OfflineDataBanner.tsx`).
+- Approvals, admin, email schedules, conflict resolution and exports: disabled offline with an explanation
+  (`Button onlineOnly`, `OnlineOnlyZone`); `lib/api.ts` refuses direct writes offline.
 
-### §5.5 conflict rules
-| Rule | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| Stock movements from two devices | ✅ | Both accepted; `negative_stock` review (`syncsvc/push.go:481-490`); T-04 | |
-| Production duplicate site/product/batch/date | ✅ | `production/sync.go` holds a `duplicate_batch` Conflict. ConflictsPage (`session/ConflictsPage.tsx`, helpers `conflictMerge.ts`): "Merge into the existing entry" with a target picker prefilled with the clashing entry (other clashing entries selectable), a field-by-field table (server / device / after merge per product+batch, materials, downtime, notes, names from lookups) and `mergeInto` filled in; "Keep as an additional batch"; "Keep the server version". Other conflicts: per-field device/server picker prefilled with the device values, JSON only as an advanced fallback. `TestSyncProductionEntry`, `conflictMerge.test.ts`, e2e T-05 | |
-| Attendance by two users | ✅ | `attendance/sync.go:185` Conflict + audit of both values; T-05 | |
-| Master data edited offline and centrally | ✅ (N/A) | Master data is read-only offline (no push handler), so no clash can arise | |
-| Order status changed centrally while offline edit pending | ✅ | Server wins, offline edit goes to review (`sales/sync.go:93`); `TestOfflineOrderDraftAndDispatchNote` | |
-| Offline edit to a locked record | ✅ (deviation) | Becomes a pending correction request (attendance) or a PM-only Conflict (closed production day) instead of Rejected | Meets "correction via approval workflow"; confirm with BTN |
-| Offline update to a centrally deleted record | ✅ | Rejected `not_found`; kept locally until dismissed | |
-| Both versions of any conflict in the audit trail | ✅ | `syncsvc.Conflict` and the negative-stock review rows write `sync.conflict_open` (before = server version, after = device version) into the immutable AuditLog; `sync.conflict_resolve` carries both versions in before (`clientPayload`, `serverData`, `serverVersion`) and the decision + merged payload in after, for every conflict kind; `TestConflictCreationAndResolution`, `TestNegativeStockFlagRoutesToReview` | |
+**§5.5 conflict rules — ✅ (all 7 + audit).**
+
+| Rule | How it is handled |
+|---|---|
+| Stock movements from two devices | Both accepted as events; negative stock goes to review |
+| Duplicate production batch | Held as Conflict; resolved as merge (target prefilled) or as an additional batch |
+| Attendance entered by two users | Conflict, resolved by the supervisor |
+| Master data | Read-only offline, so no clash can arise |
+| Order status changed centrally | Server wins; the offline edit is shown for review |
+| Edit to a locked record | Becomes a correction request or a PM-only conflict. This meets "correction via approval workflow" |
+| Update to a deleted record | Rejected `not_found`; the local copy is kept until dismissed |
+
+Both versions of every conflict are written to the immutable audit (`sync.conflict_open`, `sync.conflict_resolve`).
 
 ## §6.3 Data rules
-| Rule | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| Device UUIDs; readable numbers on acceptance | ✅ | Push keyed by client UUID; `seq` numbering (`seq:TestNextNumberFormatAndConcurrency`) | |
-| RWF exact, quantities exact, UTC storage, Kigali display | ✅ | NUMERIC/BIGINT money (no float columns); UTC writes; Kigali formatters | Columns are `timestamp without time zone`, so UTC is a convention only |
-| Never hard-delete | ✅ | `03230_no_hard_delete.sql`: draft budgets → status VOID; approval thresholds retired; delivery-charge rules, income/expense receipts, production targets, recipes and piece-work entries carry `removed_at/by/reason`, are filtered from normal reads and listed in history views. All of these need a reason (`httpx.RemovalReason`) and write audit before/after (`budgets.void`, `approvals.threshold.retire`, `sales.charge.remove`, `income.detach`, `expenses.detach`, `production.target_remove`, `production.recipe_remove`). `btn_forbid_delete` triggers refuse DELETE on those 8 tables. Child rows replaced with their parent (sale/PO/request/budget/production/payroll lines, material usages, recipe items, contacts, exception flags, expense approval steps, reorder levels) are copied by `btn_archive_deleted` into the append-only `deleted_record` table. UI: `RemoveDialog` (reason required) on the 6 affected screens. Tests: `sales:TestRemovalKeepsRecords`, `TestNoHardDeleteTriggersInstalled`, `budgets:TestBudgetLifecycleAndPermissions`, `refdata:TestApprovalThresholdsAPIAndLevels`, `income:TestIncomeVerifyVoidAttachmentsLinks`, `expenses:TestExpenseApprovalPaymentAndReceipts`, `production:TestTargetsAndProgress`, `TestRecipesAndVariance`, `workforce:TestPieceWork` | Excluded by design (not business records): auth tokens, passkey challenges and passkey revocation, AuthAttempt/OTP, monitor retention, email outbox, read notifications, stock_alert_state, i18n_override, the legacy importer `--replace` (CLI) |
-| CSV import validated, with an import report | ✅ | `/data/import/:kind/validate`, templates, history, report (`dataimport.go:51-55`); ImportPage; `TestDryRunCommitIdempotent`, `TestOpeningBalances` | |
-| Personal data minimal, access-controlled, exportable | ✅ | Privacy module + access log; worker PII stripped from offline pulls | |
+| Rule | Status | Evidence / note |
+|---|---|---|
+| Device UUIDs; server numbers on acceptance | ✅ | Push keyed by client UUID; `seq` numbering |
+| RWF exact, quantities exact, UTC storage, Kigali display | ✅ | NUMERIC/BIGINT money; UTC writes (stored in `timestamp without time zone`) |
+| Never hard-delete | ✅ | `03230_no_hard_delete.sql`: delete-forbidding triggers + archive of replaced child lines into `deleted_record`; removals need a reason and are audited. Remaining DELETEs are housekeeping (sessions, challenges, OTP, read notifications, sent mail, job runs), user-owned passkeys, i18n overrides, alert state, and the legacy importer replacing its own imported rows. None of these delete business records |
+| CSV import validated, with an import report | ✅ | `/data/import/:kind/validate` + report; `TestDryRunCommitIdempotent`, `TestOpeningBalances` |
+| Personal data minimal, access-controlled, exportable | ✅ | Privacy module; worker PII stripped from offline pulls |
 
 ## §7 Business rules
 | Rule | Status | Evidence | Missing → fix |
 |---|---|---|---|
-| 7.2 Transfers | ✅ | Six states; **a request needs a reason** (`transfers/service.go` `parseCreate`: `note`/`reason` ≥ 3 characters, 400 otherwise; same rule in the offline record type `transfers/offline.ts` and the sync handler, so an offline request without one is Rejected with the reason); request form field "Reason for the transfer" (required); rejection needs a reason; dispatch posts the source TRANSFER_OUT; a shortfall creates a `transfer_shortfall` adjustment for review; cancel only before In transit, then `reverse`; threshold approval levels, each level by a different person; `TestTransferValidationCancelReverseInsufficient`, `TestTransferMultiLevelApproval`, `TestTransferSyncHandlers` | |
-| 7.3 Approvals / petty cash / procurement receipts | ✅ | `approval_threshold` for 7 domains with value bands + role (`approvals.go:25-34`); receipt reference required (`pettycash/validate.go:208`); no self top-up approval (`TestTopUpSelfApprovalBlocked`); periodic reconciliation with differences (`TestReconcileDifference`); over/under receipt needs a reason + exception notification (`procurement/receiving.go:181-298`, `TestEvaluateReceipt`) | |
-| 7.4 Wages | ✅ | Formula incl. half rate, overtime and piece (`workforce/calc.go`); rate rules admin-only; prepare (FM) → **check = Production Manager review, PM only** (`payroll.check`) → verify (FM) → authorize → record payment; locked periods; `wage_adjustment` carried into the next period (`payroll/wages.go`); UI shows the step only to `payroll.check` holders ("Production Manager only"); `payroll:TestWorkflowSeparationOfDutiesAndPay` (supervisor, GM and FM get 403 on the review) | |
+| 7.2 Transfers | ✅ | Reason required; rejection needs a reason; dispatch posts the source issue; shortfall → adjustment for review; cancel before In transit, then `reverse`; `TestTransferValidationCancelReverseInsufficient` | |
+| 7.3 Approvals, petty cash, receipts | ✅ | Value bands + role thresholds; receipt reference required; no self top-up approval; reconciliation differences; over/under receipt needs a reason + exception notification (`TestTopUpSelfApprovalBlocked`, `TestReconcileDifference`, `TestEvaluateReceipt`) | |
+| 7.4 Wages | ⚠️ | Formula, admin rate rules, PM-only review (`payroll.check` = PM), GM/MD authorise, locked periods, adjustments in the next period | **Payroll cannot be completed with a single Finance Manager.** `payroll.prepare` and `payroll.verify` are both FM-only (`auth/permissions.go`), and `payroll/calc.go` `CheckTransition` requires the preparer and verifier to be different people. The tests use 2–3 FM users (`payroll_test.go:222-224`). Before the §8 re-alignment, a Supervisor or PM could prepare → either confirm BTN has two finance users, or let the PM/Supervisor prepare (or a second role verify) |
 
 ## §8 Roles and permissions — ✅
 
-`auth/permissions.go` now follows the §8 table cell by cell (audit 9941a63 listed ~20 differing cells). The table is
-encoded in `auth.TestSRSRoleMatrix`: each permission is mapped to the §8 module and letters (C R U A) that grant it, and
-the test fails when a role holds a permission its cells do not give it, or when a letter of a cell is backed by no
-permission. Highlights: SYSTEM_ADMIN reads every business module and is the only role that changes users, settings,
-master data, devices and report schedules (Top management reads users via `users.view` and the audit log); the
-Production Manager approves orders and cancellations (`sales.approve`, `sales.cancel`) and is the only wage reviewer;
-the stock officer creates deliveries; procurement reads stock; Sales, PM, Procurement and Admin read finance; Sales no
-longer reads production; supervisors no longer prepare wages, record expenses, hold floats or create deliveries; GM/MD
-no longer approve production, transfers, counts or orders. Default approval thresholds were moved accordingly
-(migration 03200). The full table is in `docs/SRS_BUILD_PLAN.md` ("Roles and permissions"); the frontend gates nav,
-pages and buttons on the same permissions (`app/nav.ts`; UsersPage is read-only for `users.view`).
+`auth/permissions.go` now matches the matrix cell by cell. A Super Administrator holds everything, and the extra roles
+are Lead Operator and Operator (production and attendance capture) and Operations Advisor (read).
 
-Stated deviations: `payroll.authorize` (GM, MD) — wages are PAYROLL expenses, so the authorisation is Finance "Top Mgt A";
-`income.record` for Sales records customer payments on orders (Clients & orders C, ORD-06); `data.export` for FM
-(ADM-05 "authorised users", FIN-07); LEAD_OPERATOR/OPERATOR (not §8 roles) never exceed the supervisor.
+Remaining deviations, each one justifiable:
+- Sales may **create income records**. Order payments themselves are FM-only (`payments.record`).
+- Stock Officer, Procurement Officer and Supervisor may **receive procurement goods**. Receiving is a stock receipt,
+  required by STK-09/PRC-06.
+- GM/MD **authorise payroll** ("Attendance & wages" says Top Mgt R). This is documented as Finance "Top Mgt A", because
+  wages are PAYROLL expenses.
+
+**Workflow walk-through after the re-alignment.** Each step has a holder, and the module tests use those real roles.
+Petty cash and expenses work with one FM plus GM/MD.
+
+| Workflow | Steps and who holds them |
+|---|---|
+| Production | record: Sup/Lead/PM → approve, close a day: PM |
+| Orders | create, quote, confirm: Sales → value approval and cancel approval: Sales/PM (never the requester) → dispatch, delivered: Sales/Stock → payment: FM, recorded as income |
+| Procurement | request: Sup/Proc → approve by threshold: PM/FM/GM/MD → PO, invoice: Proc → receive: Stock/Proc/Sup → expense: FM |
+| Petty cash | custodian, entries: FM → approve: GM/MD |
+| Expenses | record: FM → approve: FM/GM/MD |
+| Transfers | request: Sup/Stock → approve: PM → dispatch, receive: Stock/Sup → shortfall review: PM |
+| Stock counts | count: Stock/Sup → approve: PM |
+| Payroll | prepare: FM → check: PM → verify: a **second** FM → authorise: GM/MD → pay: FM. This is the §7.4 finding |
+| Attendance | record: Sup/Lead → approve: PM. Workers are created by FM only, so a supervisor cannot add a new casual worker on site |
 
 ## §9 Interfaces
-| Item | Status | Evidence | Missing → fix |
-|---|---|---|---|
-| 9.1 UI | ✅ | Responsive layout; rw + fr catalogs cover all backend keys; SyncBadge Pending/Synced/Conflict/Rejected on 16 offline screens; `e2e/a11y.mjs` axe WCAG 2.1 AA at 1280×720 and 768×1024; `e2e/keyboard-entry.mjs` (both in the CI `e2e` job) | |
-| 9.2 REST | ✅ | `/api/v1` (`app.go:84`); OpenAPI 3.1 at `/api/v1/openapi.json` (447 paths) + `/docs`; pagination `{items,total,page,pageSize}` (`httpx/json.go:84-98`); errors `{"error":{"code","message"}}`; SMTP templates (`mail/`); CSV/XLSX/PDF | |
-| 9.2 Sync API | ✅ | `/sync/push`, `/sync/pull` (cursor delta), `/sync/status` (`syncsvc/module.go:38-41`), rate-limited. Fixed after the audit (`syncsvc/schema.go`): the client sends `X-Sync-Schema` (absent = 1); the server supports min 1 … current 2 (advertised in `/sync/status` → `schema`); below min → 426 `schema_upgrade_required`, above current → 409 `schema_too_new`; each record type declares its supported `schemaVersion` range (`SchemaVersions(min,max)`, default 1..1) and an out-of-range record refuses the whole batch with the same codes, nothing stored. Client: `transport.ts` sends the version, the engine blocks with `blocked: "upgrade"` keeping records pending, and `SchemaUpgradeNotice` shows "Update required" (en/am/rw/fr). `syncsvc:TestSchemaVersionsEnforced`, `engine.test.ts` (upgrade + too-new), `app:TestClientRecordSchemasSupportedByServer` (every client record type's schemaVersion is inside the server's range; attendance accepts 1..2) | |
-
-## §10 Dashboards and scheduled reports
-
-### Dashboards — all ✅ (`dashboard/boards.go`, `widgets.go`, `frontend/src/modules/dashboard/boards.tsx`)
-| Dashboard | SRS items → widget |
-|---|---|
-| Executive / Top Mgt | production vs target `production.vsTarget` · sales & orders `sales.orders` · stock position `stock.position` · revenue `finance.revenue`/`finance.income` · expenses `finance.expenses` · budget status `budgets.status` · site comparison `site.comparison` · alerts `alerts` · sync status of sites `sync.sites` |
-| Production Manager | daily production `production.bySite` · defects `production.defects` · material usage & variance `materials.usage` · site stock `stock.position` · pending transfers `transfers.pending` · headcount `workforce.headcount` · open orders `sales.openOrders` · pending deliveries `deliveries.pending` · conflicts `sync.conflicts` |
-| Finance | revenue · expenses · petty cash `pettycash.summary` · budget vs actual `budgets.status` · client balances `sales.receivables` · procurement spend `procurement.spend` |
-| Procurement | pending requests `procurement.requests` · approved purchases `procurement.approved` · suppliers `procurement.suppliers` · awaiting receipt `procurement.awaitingReceipt` |
-| Site Supervisor | own-site production `site.production` · stock `stock.position`/`materials.low` · attendance `workforce.headcount` · pending/unsynced `site.pending` · sync issues `sync.issues` |
-| System Admin | users & roles `admin.users` · devices `admin.devices` · sync monitor `sync.sites` · audit log `admin.audit` · job health `admin.jobs`/`admin.errors` |
-
-### Scheduled reports (`migrations/02600_report_schedules.sql`, `03200_srs_roles_schedules.sql`, `reports/schedule_run.go`, SchedulesPage)
-| Report | SRS freq → seeded | SRS recipients → seeded | Status |
-|---|---|---|---|
-| Daily production | daily → 06:30 | PM, mgmt → PM, MD, GM, OA | ✅ |
-| Daily stock | daily → 06:35 | PM, stock officers → PM, STOCK_OFFICER | ✅ |
-| Daily headcount/attendance | daily → 06:40 | PM, finance → PM, FM | ✅ |
-| Order & sales summary | weekly/monthly → `orders_sales` weekly **and** `orders_sales_monthly` monthly | sales, mgmt → SM, MD, GM, OA | ✅ |
-| Stock movement & variance | weekly/on demand → weekly + send-now | PM, finance → PM, FM | ✅ |
-| Procurement & expense | monthly → monthly | finance, mgmt → FM, MD, GM, OA | ✅ |
-| Wage & workforce | per wage period → `wage_period` | finance, PM → FM, PM | ✅ |
-| Budget monitoring | monthly → monthly | finance, mgmt → FM, MD, GM, OA | ✅ |
-| Site performance | monthly → monthly | mgmt → MD, GM, OA | ✅ |
-| (extra) Monthly finance records | monthly | finance, mgmt → FM, MD, GM, OA | ✅ (FINANCE_RECORDS_DESIGN §5; not in §10) |
-
-All schedules ship **enabled** (`03200_srs_roles_schedules.sql`; rows never edited by an administrator are aligned to the recipients above); e-mails still go out only when the job runner runs (`JOBS_ENABLED`) and SMTP is configured. `reports:TestScheduleDefaultsFollowSRS10` pins frequencies, recipients and the enabled flag.
-
-## §12.2 Offline acceptance scenarios — all ✅
-Every scenario is automated in `frontend/e2e/offline-acceptance.mjs` (real Chromium against the API). Backend tests
-back them up:
-
-| T | e2e | Go test |
+| Item | Status | Evidence |
 |---|---|---|
-| T-01 | `:431` | module sync tests (`TestSyncAttendance`, `TestSyncProductionEntry`, `TestStockMovementSyncHandler`) |
-| T-02 | `:521` | browser-only |
-| T-03 | `:581` | `TestPushIdempotencyAndDuplicates` |
-| T-04 | `:623` | `TestNegativeStockFlagRoutesToReview` |
-| T-05 | `:677` | `TestConflictCreationAndResolution`, `TestSyncDoubleEntryLockAndOvertime` |
-| T-06 | `:727` | `TestRevalidationCaptureRoleAndCurrentRules` |
-| T-07 | `:775` | `TestOfflinePackageSignature` |
-| T-08 | `:810` | `TestDeviceRevokeStopsSyncAndRefresh`, `TestRevokedDeviceFinalUpload` |
-| T-09 | `:845` | `TestClockSkewFlags`, `TestPushOrderingGapsAndLate` |
-| T-10 | `:493` | browser-only |
+| 9.1 UI | ✅ | Responsive; rw + fr catalogs; SyncBadge on offline records; axe WCAG 2.1 AA + keyboard e2e, now in the CI e2e job |
+| 9.2 REST | ✅ | `/api/v1`; OpenAPI 3.1 `/api/v1/openapi.json` + `/docs`; pagination; `{"error":{code,message}}`; SMTP templates; CSV/XLSX/PDF |
+| 9.2 Sync API | ✅ | `/sync/push`, `/sync/pull` (cursor delta), `/sync/status`; schema ranges enforced (live 409/400); `app/sync_schema_test.go` |
 
-This audit verified what each scenario asserts and the backend halves. The browser suite was not re-run, and it does
-not run in CI.
+## §10 Dashboards and scheduled reports — ✅
+
+**Dashboards** (`dashboard/boards.go`, `widgets.go`, `frontend/src/modules/dashboard/boards.tsx`): every SRS item is
+present.
+
+| Dashboard | SRS items |
+|---|---|
+| Executive / Top Mgt | production vs target · sales/orders · stock · revenue · expenses · budget · site comparison · alerts · site sync status |
+| Production Manager | daily production and defects · material usage/variance · site stock · pending transfers · headcount · open orders · pending deliveries · conflicts |
+| Finance | revenue · expenses · petty cash · budget vs actual · client balances · procurement spend |
+| Procurement | pending requests · approved purchases · suppliers · awaiting receipt |
+| Site Supervisor | own-site production · stock · attendance · pending/unsynced · sync issues |
+| System Administrator | users/roles · devices · sync monitor · audit log · job health |
+
+**Scheduled reports** (scratch DB after migrations; all `enabled=true`):
+
+| Report | Frequency | Recipients |
+|---|---|---|
+| Daily production | daily 06:30 | PM, MD, GM, OA |
+| Daily stock | daily 06:35 | PM, Stock |
+| Daily headcount | daily 06:40 | PM, FM |
+| Orders & sales | weekly 07:00 **and** monthly 07:05 | Sales, MD, GM, OA |
+| Stock movement & variance | weekly + send-now | PM, FM |
+| Procurement & expense | monthly | FM, MD, GM, OA |
+| Wage & workforce | per wage period | FM, PM |
+| Budget monitoring | monthly | FM, MD, GM, OA |
+| Site performance | monthly | MD, GM, OA |
+
+## §12.2 Offline acceptance — ✅
+T-01…T-10 are automated in `frontend/e2e/offline-acceptance.mjs`, which now runs in the CI `e2e` job. Backend tests
+back them up: `TestPushIdempotencyAndDuplicates` (T-03), `TestNegativeStockFlagRoutesToReview` (T-04),
+`TestConflictCreationAndResolution` (T-05), `TestRevalidationCaptureRoleAndCurrentRules` (T-06),
+`TestOfflinePackageSignature` (T-07), `TestDeviceRevokeStopsSyncAndRefresh` / `TestRevokedDeviceFinalUpload` (T-08)
+and `TestClockSkewFlags` (T-09). This audit did not re-run the browser suite.
 
 ## Found when running the system
-1. ~~**Delta-pull stall** (OFF-11)~~ — fixed: only in-flight writers of synced rows in the same schema hold pull back
-   (`TestPullNotStalledByUnrelatedTransactions`).
-2. ~~**Parallel backend test run fails**~~ — fixed: per-process clones of a once-migrated template database.
-3. ~~**`/auth/me` is rate-limited at 30/min per IP**~~ — fixed: signed-in calls are limited per user; the load test
-   passes with the default limits.
-4. Monitoring correctly flagged SMTP as critical (expected, because the audit pointed SMTP at a dead port).
+1. **Flaky parallel test** `syncsvc:TestPullDeltaScopeAndSnapshots`: 1 of 2 parallel race runs failed ("paged total
+   20 want 22") (NFR-M1).
+2. **Load-test harness reports FAIL on default limits**: a few 429s from the per-IP `global` limit with 50 users on one
+   IP. Latency was well within budget.
+3. **Payroll needs two distinct Finance Managers** after the §8 re-alignment (§7.4).
