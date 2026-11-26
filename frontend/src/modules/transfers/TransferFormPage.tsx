@@ -121,8 +121,8 @@ export function TransferFormPage() {
             <Field label={t("transfers.field.neededBy")} error={fe("neededBy")} htmlFor="tr-needed">
               <DateInput id="tr-needed" value={neededBy} min={todayISO()} clearable onChange={(v) => { touch(); setNeededBy(v ?? ""); }} />
             </Field>
-            <Field label={t("transfers.field.note")} error={fe("note")} htmlFor="tr-note" className="sm:col-span-2 lg:col-span-4">
-              <Textarea id="tr-note" value={note} maxLength={500} onChange={(e) => { touch(); setNote(e.target.value); }} />
+            <Field label={t("transfers.field.requestReason")} hint={t("transfers.field.requestReasonHint")} error={fe("note")} htmlFor="tr-note" required className="sm:col-span-2 lg:col-span-4">
+              <Textarea id="tr-note" value={note} maxLength={500} required aria-required="true" onChange={(e) => { touch(); setNote(e.target.value); }} />
             </Field>
             {pinnedEnd ? <div className="sm:col-span-2 lg:col-span-4"><Alert tone="amber">{t("transfers.v.ownSite")}</Alert></div> : null}
           </CardBody>

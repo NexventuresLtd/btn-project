@@ -71,7 +71,14 @@ func parseCreate(v *httpx.V, lang i18n.Lang) CreateInput {
 			in.NeededBy = &t
 		}
 	}
+	// SRS §7.2: a request states the quantity and a reason. The reason travels as "note" (older clients) or "reason".
 	in.Note = strings.TrimSpace(v.NullStr("note").Trim().Max(500).Get())
+	if in.Note == "" {
+		in.Note = strings.TrimSpace(v.NullStr("reason").Trim().Max(500).Get())
+	}
+	if len([]rune(in.Note)) < 3 {
+		v.Fail("note", "transfers.v.reason_required")
+	}
 	raw, ok := v.Raw("lines").([]any)
 	switch {
 	case !ok || len(raw) == 0:
@@ -251,6 +258,10 @@ func approve(ctx context.Context, tx pgx.Tx, lang i18n.Lang, a stock.Actor, id, 
 	}
 	if !stock.CanApproveLevel(a.Role, *next, "transfers.approve") {
 		return t, httpx.NewKey(403, "forbidden", "stock.err.level_required", "level", next.Label)
+	}
+	if a.Role != auth.RoleSuperAdmin && approvedBy(t, a.UserID) {
+		// each level is a separate person (§7.2 levels are all held by the Production Manager role under SRS §8)
+		return t, httpx.NewKey(403, "forbidden", "transfers.err.already_approved")
 	}
 	now := db.Now()
 	t.Approvals = append(t.Approvals, stock.Approval{Level: next.Level, Label: next.Label, UserID: a.UserID, Name: a.Name, At: now})
@@ -653,6 +664,16 @@ func reverse(ctx context.Context, tx pgx.Tx, a stock.Actor, id, reason string) (
 	return after, send(ctx, tx, after, EvCancelled, notify.Warning, notify.ToPermissionAtSite("transfers.receive", after.To.ID).Without(a.UserID), map[string]any{"reason": reason})
 }
 
+// approvedBy reports whether userID already decided an earlier level of t.
+func approvedBy(t Transfer, userID string) bool {
+	for _, ap := range t.Approvals {
+		if ap.UserID == userID {
+			return true
+		}
+	}
+	return false
+}
+
 // actionsFor lists what the user may do now (drives the UI buttons; the API re-checks everything).
 func actionsFor(u *auth.User, t Transfer) []string {
 	out := []string{}
@@ -662,7 +683,8 @@ func actionsFor(u *auth.User, t Transfer) []string {
 	switch t.Status {
 	case Requested:
 		if can("transfers.approve") && (!own || u.Role == auth.RoleSuperAdmin) {
-			if n := stock.NextLevel(t.RequiredLevels, t.Approvals); n == nil || stock.CanApproveLevel(u.Role, *n, "transfers.approve") {
+			if n := stock.NextLevel(t.RequiredLevels, t.Approvals); (n == nil || stock.CanApproveLevel(u.Role, *n, "transfers.approve")) &&
+				(u.Role == auth.RoleSuperAdmin || !approvedBy(t, u.ID)) {
 				out = append(out, ActApprove)
 			}
 			out = append(out, ActReject)

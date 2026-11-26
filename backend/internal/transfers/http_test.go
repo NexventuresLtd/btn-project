@@ -134,7 +134,10 @@ func TestTransferFullWorkflowWithShortfall(t *testing.T) {
 	if transferOf(tr)["status"] != "APPROVED" {
 		t.Fatalf("approved %+v", tr)
 	}
-	if r := e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, f.gm); r.StatusCode != 409 {
+	if r := e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, f.gm); r.StatusCode != 403 {
+		t.Fatalf("gm approves (SRS §8 Top Mgt R) %d", r.StatusCode)
+	}
+	if r := e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, e.User(auth.RoleProductionManager)); r.StatusCode != 409 {
 		t.Fatalf("approve twice %d", r.StatusCode)
 	}
 	// SUP of BTN-2 may not dispatch from HQ
@@ -262,25 +265,43 @@ func TestTransferValidationCancelReverseInsufficient(t *testing.T) {
 	e := f.e
 	f.receive(t, "BTN-1", "material", f.mat["CEMENT"], 40)
 	// validation
-	_, _, fields := e.ErrorOf(e.Do("POST", "/api/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-1"],
-		"lines": []any{map[string]any{"itemKind": "product", "itemId": f.prod["HB20"], "qty": 1.5}}}, f.pm))
+	_, _, fields := e.ErrorOf(e.Do("POST", "/api/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-1"], "note": "validation",
+		"lines": []any{map[string]any{"itemKind": "product", "itemId": f.prod["HB20"], "qty": 1.5}}}, f.sto))
 	if fields["lines.0.qty"] != "Whole blocks only" {
 		t.Fatalf("fields %v", fields)
 	}
-	_, _, fields = e.ErrorOf(e.Do("POST", "/api/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-1"],
-		"lines": []any{map[string]any{"itemKind": "product", "itemId": f.prod["HB20"], "qty": 2}}}, f.pm))
+	_, _, fields = e.ErrorOf(e.Do("POST", "/api/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-1"], "note": "validation",
+		"lines": []any{map[string]any{"itemKind": "product", "itemId": f.prod["HB20"], "qty": 2}}}, f.sto))
 	if fields["toPlantId"] != "Choose a different destination" {
 		t.Fatalf("same location %v", fields)
 	}
-	if r := e.Do("POST", "/api/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-3"], "lines": []any{}}, f.pm); r.StatusCode != 400 {
+	if r := e.Do("POST", "/api/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-3"], "note": "validation", "lines": []any{}}, f.sto); r.StatusCode != 400 {
 		t.Fatalf("empty %d", r.StatusCode)
 	}
+	// SRS §7.2: a request states a reason (sent as "note", or "reason")
+	noReason := map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-3"],
+		"lines": []any{map[string]any{"itemKind": "material", "itemId": f.mat["CEMENT"], "qty": 1}}}
+	r0 := e.Do("POST", "/api/transfers", noReason, f.sto)
+	if _, _, fields := e.ErrorOf(r0); r0.StatusCode != 400 || fields["note"] != "Give the reason for the transfer (at least 3 characters)" {
+		t.Fatalf("reason required: %d %v", r0.StatusCode, fields)
+	}
+	noReason["note"] = "  ab "
+	if r := e.Do("POST", "/api/transfers", noReason, f.sto); r.StatusCode != 400 {
+		t.Fatalf("short reason %d", r.StatusCode)
+	}
+	delete(noReason, "note")
+	noReason["reason"] = "Cement for the BTN-3 slab"
+	withReason := transferOf(f.ok(t, e.Do("POST", "/api/transfers", noReason, f.sto), 201))
+	if withReason["note"] != "Cement for the BTN-3 slab" {
+		t.Fatalf("reason stored %v", withReason["note"])
+	}
+	f.ok(t, e.Do("POST", "/api/transfers/"+withReason["id"].(string)+"/cancel", map[string]any{"reason": "test only"}, f.sto), 200)
 	// a site user must be at one end
-	if r := e.Do("POST", "/api/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-3"],
+	if r := e.Do("POST", "/api/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-3"], "note": "scope check",
 		"lines": []any{map[string]any{"itemKind": "material", "itemId": f.mat["CEMENT"], "qty": 1}}}, f.sup2); r.StatusCode != 403 {
 		t.Fatalf("scope %d", r.StatusCode)
 	}
-	if r := e.Do("POST", "/api/transfers", map[string]any{}, f.gm); r.StatusCode != 403 { // GM may approve, not request
+	if r := e.Do("POST", "/api/transfers", map[string]any{}, f.gm); r.StatusCode != 403 { // SRS §8: Top Mgt reads stock, never requests
 		t.Fatalf("gm request %d", r.StatusCode)
 	}
 
@@ -343,13 +364,13 @@ func TestTransferMultiLevelApproval(t *testing.T) {
 	f := setup(t)
 	e := f.e
 	if _, err := e.Pool.Exec(t.Context(), `INSERT INTO approval_threshold (domain, level, min_amount, permission, role, label)
-		VALUES ('transfer', 2, 100000, 'transfers.approve', 'GENERAL_MANAGER', 'GM for big transfers')`); err != nil {
+		VALUES ('transfer', 2, 100000, 'transfers.approve', 'PRODUCTION_MANAGER', 'Second PM for big transfers')`); err != nil {
 		t.Fatal(err)
 	}
 	approvals.Invalidate()
 	f.receive(t, "BTN-1", "product", f.prod["SB20"], 100)
 	big := f.ok(t, e.Do("POST", "/api/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["HQ"],
-		"lines": []any{map[string]any{"itemKind": "product", "itemId": f.prod["SB20"], "qty": 60}}}, f.sto1), 201) // 60 × 2 500 = 150 000 RWF
+		"note": "Return to HQ", "lines": []any{map[string]any{"itemKind": "product", "itemId": f.prod["SB20"], "qty": 60}}}, f.sto1), 201) // 60 × 2 500 = 150 000 RWF
 	id := transferOf(big)["id"].(string)
 	if lv := transferOf(big)["requiredLevels"].([]any); len(lv) != 2 {
 		t.Fatalf("levels %+v", lv)
@@ -361,7 +382,10 @@ func TestTransferMultiLevelApproval(t *testing.T) {
 	if r := e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, f.pm); r.StatusCode != 403 {
 		t.Fatalf("pm level 2 %d", r.StatusCode)
 	}
-	b = f.ok(t, e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, f.gm), 200)
+	if r := e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, f.gm); r.StatusCode != 403 {
+		t.Fatalf("gm level 2 %d", r.StatusCode)
+	}
+	b = f.ok(t, e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, e.User(auth.RoleProductionManager)), 200)
 	if transferOf(b)["status"] != "APPROVED" {
 		t.Fatalf("after level 2 %+v", b)
 	}
@@ -372,7 +396,13 @@ func TestTransferSyncHandlers(t *testing.T) {
 	e := f.e
 	f.receive(t, "HQ", "material", f.mat["CEMENT"], 100)
 	dc := e.SignInDevice(f.sup2, "")
-	rec := apptest.SyncRecord("transfer_request", 0, map[string]any{"fromPlantId": f.plant["HQ"], "toPlantId": f.plant["BTN-2"],
+	// offline request without a reason (§7.2) → Rejected with the field message, kept on the device for correction
+	nr := dc.Push(apptest.SyncRecord("transfer_request", 0, map[string]any{"fromPlantId": f.plant["HQ"], "toPlantId": f.plant["BTN-2"],
+		"lines": []any{map[string]any{"itemKind": "material", "itemId": f.mat["CEMENT"], "qty": 20}}}))
+	if nr.Results[0].Status != "rejected" || nr.Results[0].ReasonCode != "validation" || nr.Results[0].Fields["note"] == "" {
+		t.Fatalf("no reason %+v", nr.Results[0])
+	}
+	rec := apptest.SyncRecord("transfer_request", 0, map[string]any{"fromPlantId": f.plant["HQ"], "toPlantId": f.plant["BTN-2"], "note": "Cement for the week",
 		"lines": []any{map[string]any{"itemKind": "material", "itemId": f.mat["CEMENT"], "qty": 20}}})
 	res := dc.Push(rec)
 	if res.Status != 200 || res.Results[0].Status != "accepted" || res.Results[0].ServerID != rec["uuid"] {

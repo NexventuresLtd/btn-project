@@ -32,6 +32,7 @@ export function validateRequest(p: TransferRequestInput): string | null {
   if (!p.toPlantId) return tr("transfers.v.to");
   if (p.fromPlantId === p.toPlantId) return tr("transfers.v.sameLocation");
   if (p.neededBy && !ISO.test(p.neededBy)) return tr("transfers.v.date");
+  if ((p.note ?? "").trim().length < 3) return tr("transfers.v.reason"); // SRS §7.2: quantity + reason
   if ((p.note ?? "").length > 500) return tr("transfers.v.noteLong");
   if (!p.lines.length) return tr("transfers.v.lines");
   if (p.lines.length > 100) return tr("transfers.v.linesMax");
@@ -76,7 +77,7 @@ registerOfflineRecordType<TransferRequestInput, LocalTransfer>({
   describe: (p) => tr("transfers.offline.describeRequest", { lines: p.lines.length, qty: formatQty(p.lines.reduce((s, l) => s + Number(l.qty || 0), 0)) }),
   fields: [
     { name: "neededBy", kind: "date", label: () => tr("transfers.field.neededBy") },
-    { name: "note", kind: "text", label: () => tr("transfers.field.note") },
+    { name: "note", kind: "text", label: () => tr("transfers.field.requestReason") },
   ],
   invalidate: [TRANSFERS_KEY],
   pull: {
