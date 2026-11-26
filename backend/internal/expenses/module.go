@@ -205,6 +205,7 @@ func (h *handler) detail(ctx context.Context, lang i18n.Lang, u *auth.User, r *r
 		lk    *lookups
 		dec   map[string][]approvalRow
 		atts  []Attachment
+		rem   []Attachment
 		links []finlink.Link
 		check *budgets.CheckResult
 	)
@@ -212,6 +213,7 @@ func (h *handler) detail(ctx context.Context, lang i18n.Lang, u *auth.User, r *r
 	g.Go(func() (err error) { lk, err = loadLookups(gctx, h.d.Pool, lang); return })
 	g.Go(func() (err error) { dec, err = loadApprovals(gctx, h.d.Pool, lang, r.ID); return })
 	g.Go(func() (err error) { atts, err = loadAttachments(gctx, h.d.Pool, r.ID); return })
+	g.Go(func() (err error) { rem, err = loadRemovedAttachments(gctx, h.d.Pool, r.ID); return })
 	g.Go(func() (err error) {
 		links, err = finlink.List(gctx, h.d.Pool, lang, finlink.ExpenseLinks, r.ID, true)
 		return
@@ -238,6 +240,9 @@ func (h *handler) detail(ctx context.Context, lang i18n.Lang, u *auth.User, r *r
 		e.Approvals = []approvalRow{}
 	}
 	e.Attachments = atts
+	if len(rem) > 0 {
+		e.RemovedFiles = rem
+	}
 	e.Links = links
 	e.Actions = actionsFor(u, r, dec[r.ID])
 	if check != nil {
@@ -329,7 +334,7 @@ func ComputeSummary(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to tim
 			count(*) FILTER (WHERE status = 'SUBMITTED' AND overrun_status = 'PENDING')::int,
 			COALESCE(SUM(amount) FILTER (WHERE status IN ('APPROVED','PAID') AND source = 'PROCUREMENT' AND date >= $1 AND date <= $2), 0)::bigint,
 			count(*) FILTER (WHERE status IN ('SUBMITTED','APPROVED','PAID') AND source IN ('DIRECT','OTHER') AND date >= $1 AND date <= $2
-				AND NOT EXISTS (SELECT 1 FROM expense_attachment a WHERE a.expense_id = e.id))::int,
+				AND NOT EXISTS (SELECT 1 FROM expense_attachment a WHERE a.expense_id = e.id AND a.removed_at IS NULL))::int,
 			COALESCE(SUM(amount) FILTER (WHERE status IN ('APPROVED','PAID') AND source = 'PETTY_CASH' AND date >= $1 AND date <= $2), 0)::bigint,
 			COALESCE(SUM(amount) FILTER (WHERE status IN ('APPROVED','PAID') AND source = 'PAYROLL' AND date >= $1 AND date <= $2), 0)::bigint,
 			COALESCE(SUM(amount) FILTER (WHERE status IN ('APPROVED','PAID') AND budget_line_id IS NULL AND date >= $1 AND date <= $2), 0)::bigint,

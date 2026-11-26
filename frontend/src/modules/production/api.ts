@@ -272,6 +272,10 @@ export interface Recipe {
   createdAt: string;
   current: boolean;
   items: { materialId: string; material: { id: string; code: string; name: string; unit: string }; qtyPerUnit: number }[];
+  /** removed versions only (SRS §6.3: kept, no longer used) */
+  removedAt?: string;
+  removedBy?: string | null;
+  removedReason?: string | null;
 }
 
 export interface ProductRecipes {
@@ -279,6 +283,7 @@ export interface ProductRecipes {
   current: Recipe | null;
   upcoming: Recipe[];
   history: Recipe[];
+  removed?: Recipe[];
 }
 
 export const PRODUCTION_KEY = ["production"] as const;

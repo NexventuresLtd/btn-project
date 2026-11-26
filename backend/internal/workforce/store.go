@@ -119,7 +119,7 @@ func CalculateWorkers(ctx context.Context, q db.DBTX, workerIDs []string, from, 
 	}
 	pieces := map[string][]PieceEntry{}
 	rows, err = q.Query(ctx, `SELECT worker_id, date, plant_id, product_id, quantity FROM piece_work_entry
-		WHERE worker_id = ANY($1) AND date >= $2 AND date <= $3`, workerIDs, from, to)
+		WHERE worker_id = ANY($1) AND date >= $2 AND date <= $3 AND removed_at IS NULL`, workerIDs, from, to)
 	if err != nil {
 		return nil, err
 	}

@@ -829,7 +829,7 @@ func computeVariance(ctx context.Context, q db.DBTX, r *reportRec, tol float64) 
 	if len(pids) > 0 {
 		rows, err := q.Query(ctx, `WITH rc AS (
 				SELECT DISTINCT ON (pr."productId") pr."productId", pr.id FROM production_recipe pr
-				WHERE pr."productId" = ANY($1) AND pr."effectiveFrom" <= $2 ORDER BY pr."productId", pr."effectiveFrom" DESC)
+				WHERE pr.removed_at IS NULL AND pr."productId" = ANY($1) AND pr."effectiveFrom" <= $2 ORDER BY pr."productId", pr."effectiveFrom" DESC)
 			SELECT rc."productId", ri."materialId", m.code, m.name, m.unit, ri."qtyPerUnit"::float8
 			FROM rc JOIN production_recipe_item ri ON ri."recipeId" = rc.id JOIN "Material" m ON m.id = ri."materialId"`, pids, r.Date)
 		if err != nil {

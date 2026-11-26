@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Save, Target as TargetIcon, Trash2 } from "lucide-react";
-import { Alert, Button, Card, CardBody, CardHeader, DateInput, ErrorState, ExportMenu, Field, Input, PageHeader, PageLoader, Select, StatCard, Tabs } from "@/components/ui";
+import { Alert, Button, Card, CardBody, CardHeader, DateInput, ErrorState, ExportMenu, Field, Input, PageHeader, PageLoader, RemoveDialog, Select, StatCard, Tabs } from "@/components/ui";
 import { useAuth } from "@/auth/AuthProvider";
 import { sitesOnly, useLookups } from "@/hooks/useLookups";
 import { fieldError, useMutate } from "@/hooks/useMutate";
-import { del, put } from "@/lib/api";
+import { api, put } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatDate, todayISO } from "@/lib/dates";
 import { formatInt, formatPercent } from "@/lib/format";
@@ -47,7 +47,9 @@ export function TargetsPage() {
     () => put("/production/targets", { targets: Object.entries(draft).filter(([, v]) => v.trim() !== "").map(([productId, v]) => ({ plantId: editPlant, productId, period, periodStart: start, quantity: Number(v) })) }),
     { success: t("production.toast.targetsSaved"), invalidate: [["production"]] },
   );
-  const remove = useMutate((id: string) => del(`/production/targets/${id}`), { success: t("production.toast.targetDeleted"), invalidate: [["production"]] });
+  const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
+  const remove = useMutate(({ id, reason }: { id: string; reason: string }) => api(`/production/targets/${id}`, { method: "DELETE", body: { reason } }),
+    { success: t("production.toast.targetDeleted"), invalidate: [["production"]], onSuccess: () => setRemoving(null) });
   const p = progress.data;
 
   return (
@@ -120,7 +122,7 @@ export function TargetsPage() {
                   <Field label={pr.name} className="flex-1" error={fieldError(save.error, `targets.${i}.quantity`)}>
                     <Input type="number" inputMode="numeric" min={0} step={1} value={draft[pr.id] ?? ""} onChange={(e) => setDraft((d) => ({ ...d, [pr.id]: e.target.value }))} className="tabular text-right" placeholder="0" />
                   </Field>
-                  {current.get(pr.id) ? <button type="button" className="mb-1.5 rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600" aria-label={t("production.deleteTarget", { name: pr.name })} onClick={() => remove.mutate(current.get(pr.id)!.id)}><Trash2 className="size-4" /></button> : null}
+                  {current.get(pr.id) ? <button type="button" className="mb-1.5 rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600" aria-label={t("production.deleteTarget", { name: pr.name })} onClick={() => setRemoving({ id: current.get(pr.id)!.id, name: pr.name })}><Trash2 className="size-4" /></button> : null}
                 </div>
               ))}
             </div>
@@ -128,6 +130,8 @@ export function TargetsPage() {
           </CardBody>
         </Card>
       ) : null}
+      <RemoveDialog open={!!removing} onClose={() => setRemoving(null)} onConfirm={(reason) => removing && remove.mutate({ id: removing.id, reason })} loading={remove.isPending} error={remove.error} onlineOnly
+        title={t("production.deleteTarget", { name: removing?.name ?? "" })} />
     </>
   );
 }

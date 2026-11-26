@@ -184,9 +184,9 @@ func insertSaleLines(ctx context.Context, tx db.DBTX, saleID string, lines []lin
 
 // loadChargeRules reads the delivery charge rules (DEL-02).
 func loadChargeRules(ctx context.Context, q db.DBTX, activeOnly bool) ([]chargeRule, error) {
-	sql := `SELECT id, name, method, zone, min_km::float8, max_km::float8, amount, is_active, sort_order FROM delivery_charge_rule`
+	sql := `SELECT id, name, method, zone, min_km::float8, max_km::float8, amount, is_active, sort_order FROM delivery_charge_rule WHERE removed_at IS NULL`
 	if activeOnly {
-		sql += ` WHERE is_active`
+		sql += ` AND is_active`
 	}
 	rows, err := q.Query(ctx, sql+` ORDER BY method, sort_order, name`)
 	if err != nil {

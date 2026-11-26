@@ -32,6 +32,7 @@ const (
 	StatusApproved  = "APPROVED"
 	StatusRejected  = "REJECTED"
 	StatusArchived  = "ARCHIVED"
+	StatusVoid      = "VOID" // a draft withdrawn with a reason (SRS §6.3: never deleted)
 )
 
 // Payroll wages are attributed to this department / category (wage sheets are site production labour).
@@ -45,7 +46,7 @@ const WarnRatio = 0.9
 
 var (
 	PeriodTypes = []string{PeriodMonth, PeriodQuarter, PeriodYear}
-	Statuses    = []string{StatusDraft, StatusSubmitted, StatusApproved, StatusRejected, StatusArchived}
+	Statuses    = []string{StatusDraft, StatusSubmitted, StatusApproved, StatusRejected, StatusArchived, StatusVoid}
 )
 
 // PeriodBounds returns the first and last day of the period of kind periodType containing d.

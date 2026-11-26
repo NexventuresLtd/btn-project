@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { apiUrl, del, ensureFreshSession, get, patch, post, upload } from "@/lib/api";
+import { api, apiUrl, ensureFreshSession, get, patch, post, upload } from "@/lib/api";
 import { expenseBudgetCheck, type BudgetCheckInput, type ExpenseBudgetCheck, type LinkInput, type MoneyLink } from "@/components/finance/api";
 
 export type ExpenseStatus = "SUBMITTED" | "APPROVED" | "REJECTED" | "PAID" | "CANCELLED";
@@ -56,6 +56,10 @@ export interface Attachment {
   sha256: string;
   uploadedBy: string;
   uploadedAt: string;
+  /** removed files only (SRS §6.3: kept for audit, never deleted) */
+  removedAt?: string;
+  removedBy?: string;
+  removedReason?: string | null;
 }
 
 export interface ExpenseActions {
@@ -136,6 +140,7 @@ export interface Expense {
   updatedAt: string;
   approvals?: Decision[];
   attachments?: Attachment[];
+  removedAttachments?: Attachment[];
   actions?: ExpenseActions;
   budgetCheck?: BudgetCheck | null;
 }
@@ -244,7 +249,8 @@ export function uploadReceipt(id: string, file: File) {
   form.append("file", file);
   return upload<Attachment>(`/expenses/${id}/attachments`, form);
 }
-export const deleteReceipt = ({ id, aid }: { id: string; aid: string }) => del<{ ok: boolean }>(`/expenses/${id}/attachments/${aid}`);
+/** Mark a receipt removed, with the reason (SRS §6.3: the file is kept for audit). */
+export const deleteReceipt = ({ id, aid, reason }: { id: string; aid: string; reason: string }) => api<{ ok: boolean }>(`/expenses/${id}/attachments/${aid}`, { method: "DELETE", body: { reason } });
 
 /** Open a receipt in a new tab (the session cookie authenticates the same-origin request). */
 export function openReceipt(id: string, aid: string) {

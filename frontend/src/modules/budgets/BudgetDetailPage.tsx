@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Archive, Check, Pencil, Send, ShieldAlert, Trash2, WifiOff, X } from "lucide-react";
 import {
-  Alert, Badge, Button, Card, CardHeader, ConfirmDialog, DataTable, ErrorState, ExportMenu, Field, Input, Modal, PageHeader, PageLoader, PdfButton, StatCard, Textarea, type Column,
+  Alert, Badge, Button, Card, CardHeader, ConfirmDialog, DataTable, ErrorState, ExportMenu, Field, Input, Modal, PageHeader, PageLoader, PdfButton, RemoveDialog, StatCard, Textarea, type Column,
 } from "@/components/ui";
 import { useT } from "@/i18n";
 import { fieldError, useMutate } from "@/hooks/useMutate";
@@ -135,14 +135,15 @@ export function BudgetDetailPage() {
 
       <BudgetEditor open={editing} onClose={() => setEditing(false)} budget={b} />
       <ConfirmDialog
-        open={!!confirm}
         onClose={() => setConfirm(null)}
-        onConfirm={() => (confirm === "submit" ? submit.mutate(b.id) : confirm === "archive" ? archive.mutate(b.id) : remove.mutate(b.id))}
-        title={confirm === "submit" ? t("budgets.confirm.submitTitle") : confirm === "archive" ? t("budgets.confirm.archiveTitle") : t("budgets.confirm.deleteTitle")}
-        message={confirm === "submit" ? t("budgets.confirm.submitText") : confirm === "archive" ? t("budgets.confirm.archiveText") : t("budgets.confirm.deleteText")}
-        tone={confirm === "delete" ? "danger" : "primary"}
-        loading={submit.isPending || archive.isPending || remove.isPending}
+        open={confirm === "submit" || confirm === "archive"}
+        onConfirm={() => (confirm === "submit" ? submit.mutate(b.id) : archive.mutate(b.id))}
+        title={confirm === "submit" ? t("budgets.confirm.submitTitle") : t("budgets.confirm.archiveTitle")}
+        message={confirm === "submit" ? t("budgets.confirm.submitText") : t("budgets.confirm.archiveText")}
+        loading={submit.isPending || archive.isPending}
       />
+      <RemoveDialog open={confirm === "delete"} onClose={() => setConfirm(null)} onConfirm={(why) => remove.mutate({ id: b.id, reason: why })} onlineOnly
+        title={t("budgets.confirm.deleteTitle")} message={t("budgets.confirm.deleteText")} confirmLabel={t("budgets.action.delete")} loading={remove.isPending} error={remove.error} />
       <ConfirmDialog onlineOnly open={approving} onClose={() => setApproving(false)} onConfirm={() => approve.mutate({ id: b.id, comment: comment.trim() || undefined })}
         title={t("budgets.confirm.approveTitle", { number: b.number })} confirmLabel={t("budgets.action.approve")} tone="success" loading={approve.isPending}>
         <p className="mb-3 text-sm text-slate-600">{t("budgets.confirm.approveText", { total: formatRWF(b.lines.reduce((s, l) => s + l.amount, 0)) })}</p>

@@ -3,6 +3,7 @@ package sales
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"btn-ops/internal/audit"
 	"btn-ops/internal/db"
@@ -17,7 +18,8 @@ import (
 //
 //	GET    /delivery-charges            rules (+ zones)       GET /delivery-charges/quote?zone=&km=  charge for an order
 //	POST   /delivery-charges            {name, method FIXED|ZONE|DISTANCE, zone?, minKm?, maxKm?, amount, isActive?, sortOrder?}
-//	PATCH  /delivery-charges/:id        DELETE /delivery-charges/:id
+//	PATCH  /delivery-charges/:id        DELETE /delivery-charges/:id {reason} (removed, never deleted: SRS §6.3)
+//	GET    /delivery-charges/removed    removed rules with who, when and why
 //
 // Precedence when an order is delivered by BTN: zone rule → distance band → fixed charge (pricing.go pickCharge).
 
@@ -125,7 +127,7 @@ func (h *handler) saveCharge(partial bool) fiber.Handler {
 		err = db.Tx(r.ctx, h.d.Pool, func(tx pgx.Tx) error {
 			var before chargeRule
 			if partial {
-				if err := tx.QueryRow(r.ctx, `SELECT id, name, method, zone, min_km::float8, max_km::float8, amount, is_active, sort_order FROM delivery_charge_rule WHERE id = $1 FOR UPDATE`, id).
+				if err := tx.QueryRow(r.ctx, `SELECT id, name, method, zone, min_km::float8, max_km::float8, amount, is_active, sort_order FROM delivery_charge_rule WHERE id = $1 AND removed_at IS NULL FOR UPDATE`, id).
 					Scan(&before.ID, &before.Name, &before.Method, &before.Zone, &before.MinKm, &before.MaxKm, &before.Amount, &before.IsActive, &before.Sort); err != nil {
 					if db.IsNoRows(err) {
 						return httpx.NotFound("entity.charge_rule")
@@ -234,18 +236,65 @@ func appendOnce(s []string, k string) []string {
 
 func (h *handler) deleteCharge(c *fiber.Ctx) error {
 	r := newRq(c)
-	err := db.Tx(r.ctx, h.d.Pool, func(tx pgx.Tx) error {
+	reason, err := httpx.RemovalReason(c)
+	if err != nil {
+		return err
+	}
+	err = db.Tx(r.ctx, h.d.Pool, func(tx pgx.Tx) error {
 		var name string
-		if err := tx.QueryRow(r.ctx, `DELETE FROM delivery_charge_rule WHERE id = $1 RETURNING name`, c.Params("id")).Scan(&name); err != nil {
+		var active bool
+		var amount int64
+		if err := tx.QueryRow(r.ctx, `SELECT name, amount, is_active FROM delivery_charge_rule WHERE id = $1 AND removed_at IS NULL FOR UPDATE`,
+			c.Params("id")).Scan(&name, &amount, &active); err != nil {
 			if db.IsNoRows(err) {
 				return httpx.NotFound("entity.charge_rule")
 			}
 			return err
 		}
-		return audit.Record(c, tx, audit.Input{Action: "sales.charge.delete", Entity: "DeliveryChargeRule", EntityID: c.Params("id"), Summary: "Deleted delivery charge rule " + name})
+		if _, err := tx.Exec(r.ctx, `UPDATE delivery_charge_rule SET removed_at = now(), removed_by_id = $2, removed_reason = $3, is_active = false, updated_at = now()
+			WHERE id = $1`, c.Params("id"), r.u.ID, reason); err != nil {
+			return err
+		}
+		return audit.Record(c, tx, audit.Input{Action: "sales.charge.remove", Entity: "DeliveryChargeRule", EntityID: c.Params("id"),
+			Summary: "Removed delivery charge rule " + name + ": " + reason,
+			Before:  map[string]any{"name": name, "amount": amount, "isActive": active},
+			After:   map[string]any{"removed": true, "reason": reason, "isActive": false}})
 	})
 	if err != nil {
 		return err
 	}
 	return c.JSON(fiber.Map{"ok": true})
+}
+
+// removedCharges lists removed rules (history: the prices past orders were charged with).
+func (h *handler) removedCharges(c *fiber.Ctx) error {
+	r := newRq(c)
+	rows, err := h.d.Pool.Query(r.ctx, `SELECT d.id, d.name, d.method, d.zone, d.amount, d.removed_at, d.removed_reason, COALESCE(u.name, '')
+		FROM delivery_charge_rule d LEFT JOIN "User" u ON u.id = d.removed_by_id WHERE d.removed_at IS NOT NULL ORDER BY d.removed_at DESC LIMIT 200`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type removed struct {
+		ID        string    `json:"id"`
+		Name      string    `json:"name"`
+		Method    string    `json:"method"`
+		Zone      *string   `json:"zone"`
+		Amount    int64     `json:"amount"`
+		RemovedAt time.Time `json:"removedAt"`
+		Reason    *string   `json:"reason"`
+		RemovedBy string    `json:"removedBy"`
+	}
+	out := []removed{}
+	for rows.Next() {
+		var x removed
+		if err := rows.Scan(&x.ID, &x.Name, &x.Method, &x.Zone, &x.Amount, &x.RemovedAt, &x.Reason, &x.RemovedBy); err != nil {
+			return err
+		}
+		out = append(out, x)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"items": out})
 }

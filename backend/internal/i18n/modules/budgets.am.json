@@ -5,6 +5,7 @@
  "budgets.status.SUBMITTED": "ማጽደቅ በመጠባበቅ ላይ",
  "budgets.status.APPROVED": "ጸድቋል",
  "budgets.status.REJECTED": "ውድቅ ተደርጓል",
+ "budgets.status.VOID": "ተሰርዟል",
  "budgets.status.ARCHIVED": "በማህደር ተቀምጧል",
  "budgets.period.MONTH": "ወር",
  "budgets.period.QUARTER": "ሩብ ዓመት",

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { del, get, patch, post, put } from "@/lib/api";
+import { api, get, patch, post, put } from "@/lib/api";
 import type { RefItem } from "@/hooks/useLookups";
 
 /** ADM-01 reference-data kinds (backend internal/refdata.Kinds, same order). */
@@ -44,8 +44,11 @@ export interface Threshold {
   role: string | null;
   label: string;
   isActive: boolean;
+  /** retired rows only (SRS §6.3: never deleted; kept for the audit of past approvals) */
+  retiredAt?: string;
+  retiredReason?: string | null;
 }
-export type ThresholdPayload = Partial<Omit<Threshold, "id">>;
+export type ThresholdPayload = Partial<Omit<Threshold, "id" | "retiredAt" | "retiredReason">>;
 
 export interface ApprovalLevel {
   level: number;
@@ -56,16 +59,17 @@ export interface ApprovalLevel {
   maxAmount: number | null;
 }
 
-export function useThresholds() {
+export function useThresholds(withRetired = false) {
   return useQuery({
-    queryKey: [...REFDATA_KEY, "thresholds"],
-    queryFn: ({ signal }) => get<{ items: Threshold[] }>("/approval-thresholds", signal).then((r) => r.items),
+    queryKey: [...REFDATA_KEY, "thresholds", withRetired],
+    queryFn: ({ signal }) => get<{ items: Threshold[] }>(`/approval-thresholds${withRetired ? "?retired=1" : ""}`, signal).then((r) => r.items),
   });
 }
 
 export const createThreshold = (body: ThresholdPayload) => post<Threshold>("/approval-thresholds", body);
 export const updateThreshold = ({ id, body }: { id: string; body: ThresholdPayload }) => patch<Threshold>(`/approval-thresholds/${id}`, body);
-export const deleteThreshold = (id: string) => del<{ ok: boolean }>(`/approval-thresholds/${id}`);
+/** Retire (never delete) a threshold, with the reason (SRS §6.3). */
+export const deleteThreshold = ({ id, reason }: { id: string; reason: string }) => api<{ ok: boolean }>(`/approval-thresholds/${id}`, { method: "DELETE", body: { reason } });
 
 /** Required approval levels for an amount (GET /api/approvals/levels; any signed-in user). */
 export const fetchLevels = (domain: ApprovalDomain, amount: number) => get<{ levels: ApprovalLevel[] }>(`/approvals/levels?domain=${domain}&amount=${amount}`).then((r) => r.levels);

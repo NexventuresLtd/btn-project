@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import { Pencil, Plus, Trash2 } from "lucide-react";
-import { Badge, Button, Card, Checkbox, ConfirmDialog, DataTable, ErrorState, Field, Input, Modal, PageHeader, Select } from "@/components/ui";
+import { Badge, Button, Card, Checkbox, DataTable, ErrorState, Field, Input, Modal, PageHeader, RemoveDialog, Select } from "@/components/ui";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthProvider";
 import { fieldError, useMutate } from "@/hooks/useMutate";
-import { del, patch, post } from "@/lib/api";
+import { api, get, patch, post } from "@/lib/api";
+import { formatDateTime } from "@/lib/dates";
 import { formatRWF } from "@/lib/format";
 import { useT } from "@/i18n";
 import { useChargeRules, type ChargeRule } from "./api";
 
 type Method = ChargeRule["method"];
+type RemovedRule = { id: string; name: string; method: Method; zone: string | null; amount: number; removedAt: string; reason: string | null; removedBy: string };
 const empty = { name: "", method: "FIXED" as Method, zone: "", minKm: "", maxKm: "", amount: "", isActive: true, sortOrder: "0" };
 
 /** Delivery charge rules (DEL-02): fixed, by zone, by distance band. Applied to BTN deliveries as a charge line. */
@@ -19,7 +22,11 @@ export function DeliveryChargesPage() {
   const zones = new Map(rules.data?.zones.map((z) => [z.code, z.name]));
   const [editing, setEditing] = useState<ChargeRule | "new" | null>(null);
   const [removing, setRemoving] = useState<ChargeRule | null>(null);
-  const remove = useMutate((id: string) => del(`/sales/delivery-charges/${id}`), { success: t("orders.charges.deleted"), invalidate: [["sales", "charges"]], onSuccess: () => setRemoving(null) });
+  const remove = useMutate(({ id, reason }: { id: string; reason: string }) => api(`/sales/delivery-charges/${id}`, { method: "DELETE", body: { reason } }),
+    { success: t("orders.charges.deleted"), invalidate: [["sales", "charges"]], onSuccess: () => setRemoving(null) });
+  const [showRemoved, setShowRemoved] = useState(false);
+  // SRS §6.3: removed rules are kept (the prices past orders were charged with)
+  const removed = useQuery({ queryKey: ["sales", "charges", "removed"], queryFn: ({ signal }) => get<{ items: RemovedRule[] }>("/sales/delivery-charges/removed", signal), staleTime: 60_000 });
   const manage = can("masterdata.manage");
   const describe = (r: ChargeRule) => (r.method === "ZONE" ? zones.get(r.zone ?? "") ?? r.zone : r.method === "DISTANCE" ? (r.maxKm != null ? t("orders.charges.band", { min: r.minKm ?? 0, max: r.maxKm }) : t("orders.charges.bandOpen", { min: r.minKm ?? 0 })) : t("orders.charges.always"));
   return (
@@ -46,8 +53,29 @@ export function DeliveryChargesPage() {
         )}
       </Card>
       <RuleModal rule={editing} zones={rules.data?.zones ?? []} onClose={() => setEditing(null)} />
-      <ConfirmDialog open={!!removing} onClose={() => setRemoving(null)} onConfirm={() => remove.mutate(removing!.id)} loading={remove.isPending} tone="danger"
-        title={t("orders.charges.deleteTitle")} confirmLabel={t("common.delete")} message={t("orders.charges.deleteMsg", { name: removing?.name ?? "" })} />
+      {removed.data?.items.length ? (
+        <div className="mt-4">
+          <Button variant="ghost" size="sm" onClick={() => setShowRemoved((v) => !v)}>{showRemoved ? t("records.hideRemoved") : t("records.showRemoved", { count: removed.data.items.length })}</Button>
+          {showRemoved ? (
+            <Card className="mt-2">
+              <p className="px-5 pt-4 text-sm font-medium text-slate-700">{t("records.removedTitle")}</p>
+              <DataTable
+                columns={[
+                  { key: "n", header: t("orders.charges.name"), cell: (r) => <span className="text-slate-500 line-through">{r.name}</span> },
+                  { key: "a", header: t("sales.col.amount"), align: "right", cell: (r) => <span className="tabular text-slate-500">{formatRWF(r.amount)}</span> },
+                  { key: "r", header: t("records.reason"), cell: (r) => <span className="text-sm text-slate-600">{r.reason ?? "—"}</span> },
+                  { key: "b", header: t("records.removed"), cell: (r) => <span className="text-xs text-slate-500">{t("records.removedBy", { name: r.removedBy || "—", date: formatDateTime(r.removedAt) })}</span> },
+                ]}
+                rows={removed.data.items}
+                rowKey={(r) => r.id}
+                empty={t("orders.charges.empty")}
+              />
+            </Card>
+          ) : null}
+        </div>
+      ) : null}
+      <RemoveDialog open={!!removing} onClose={() => setRemoving(null)} onConfirm={(reason) => remove.mutate({ id: removing!.id, reason })} loading={remove.isPending} error={remove.error}
+        title={t("orders.charges.deleteTitle")} message={t("orders.charges.deleteMsg", { name: removing?.name ?? "" })} onlineOnly />
     </>
   );
 }

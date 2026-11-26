@@ -5,6 +5,7 @@
  "budgets.status.SUBMITTED": "Awaiting approval",
  "budgets.status.APPROVED": "Approved",
  "budgets.status.REJECTED": "Rejected",
+ "budgets.status.VOID": "Voided",
  "budgets.status.ARCHIVED": "Archived",
  "budgets.period.MONTH": "Month",
  "budgets.period.QUARTER": "Quarter",

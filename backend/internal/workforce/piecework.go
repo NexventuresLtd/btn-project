@@ -82,7 +82,7 @@ func (h *handler) pieceDay(c *fiber.Ctx, plant *plantRef, date time.Time) error 
 	}
 	rows, err := h.d.Pool.Query(ctx, `SELECT w.id, w."firstName", w."lastName", w."jobTitle", w."rateBasis" FROM "Worker" w
 		WHERE (w."plantId" = $1 AND w."isActive" AND w."rateBasis" IN ('PIECE','MIXED'))
-		   OR EXISTS (SELECT 1 FROM piece_work_entry e WHERE e.worker_id = w.id AND e.plant_id = $1 AND e.date = $2)
+		   OR EXISTS (SELECT 1 FROM piece_work_entry e WHERE e.worker_id = w.id AND e.plant_id = $1 AND e.date = $2 AND e.removed_at IS NULL)
 		ORDER BY w."firstName", w."lastName", w.id`, plant.ID, date)
 	if err != nil {
 		return err
@@ -121,7 +121,7 @@ func (h *handler) pieceDay(c *fiber.Ctx, plant *plantRef, date time.Time) error 
 	}
 	prow.Close()
 	entries := []pieceEntryOut{}
-	erow, err := h.d.Pool.Query(ctx, `SELECT id, worker_id, product_id, quantity, note FROM piece_work_entry WHERE plant_id = $1 AND date = $2 ORDER BY created_at`, plant.ID, date)
+	erow, err := h.d.Pool.Query(ctx, `SELECT id, worker_id, product_id, quantity, note FROM piece_work_entry WHERE plant_id = $1 AND date = $2 AND removed_at IS NULL ORDER BY created_at`, plant.ID, date)
 	if err != nil {
 		return err
 	}
@@ -267,20 +267,31 @@ func (h *handler) savePieceWork(c *fiber.Ctx) error {
 		for _, e := range in {
 			var old int
 			var oid string
-			err := tx.QueryRow(ctx, `SELECT id, quantity FROM piece_work_entry WHERE worker_id = $1 AND date = $2 AND plant_id = $3 AND product_id = $4 FOR UPDATE`,
-				e.WorkerID, date, plant.ID, e.ProductID).Scan(&oid, &old)
+			var removed bool
+			err := tx.QueryRow(ctx, `SELECT id, quantity, removed_at IS NOT NULL FROM piece_work_entry WHERE worker_id = $1 AND date = $2 AND plant_id = $3 AND product_id = $4 FOR UPDATE`,
+				e.WorkerID, date, plant.ID, e.ProductID).Scan(&oid, &old, &removed)
+			if removed {
+				old = 0 // a cleared entry counts as nothing
+			}
 			if err != nil && !db.IsNoRows(err) {
 				return err
 			}
 			if e.Quantity == 0 {
-				if oid != "" {
-					if _, err := tx.Exec(ctx, `DELETE FROM piece_work_entry WHERE id = $1`, oid); err != nil {
+				// SRS §6.3: a cleared entry is marked removed (kept with its last quantity), never deleted
+				if oid != "" && !removed {
+					why := "cleared (quantity set to 0)"
+					if reason != nil {
+						why += ": " + *reason
+					}
+					if _, err := tx.Exec(ctx, `UPDATE piece_work_entry SET removed_at = now(), removed_by_id = $2, removed_reason = $3, updated_at = now() WHERE id = $1`,
+						oid, u.ID, why); err != nil {
 						return err
 					}
 				}
 			} else if _, err := tx.Exec(ctx, `INSERT INTO piece_work_entry (worker_id, plant_id, date, product_id, quantity, note, recorded_by)
 				VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (worker_id, date, plant_id, product_id) DO UPDATE SET quantity = EXCLUDED.quantity,
-				note = EXCLUDED.note, recorded_by = EXCLUDED.recorded_by, updated_at = now()`, e.WorkerID, plant.ID, date, e.ProductID, e.Quantity, e.Note, u.ID); err != nil {
+				note = EXCLUDED.note, recorded_by = EXCLUDED.recorded_by, updated_at = now(), removed_at = NULL, removed_by_id = NULL, removed_reason = NULL`,
+				e.WorkerID, plant.ID, date, e.ProductID, e.Quantity, e.Note, u.ID); err != nil {
 				return err
 			}
 			if old == e.Quantity {

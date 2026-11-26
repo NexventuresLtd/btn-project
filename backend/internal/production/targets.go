@@ -47,7 +47,7 @@ type targetOut struct {
 func loadTargets(ctx context.Context, q db.DBTX, plantID, period string, from, to time.Time) ([]targetOut, error) {
 	rows, err := q.Query(ctx, `SELECT t.id, t."plantId", p.code, t."productId", pr.code, pr.name, pr.unit, t.period, t."periodStart", t.quantity, t.note, u.name, t."updatedAt"
 		FROM production_target t JOIN "Plant" p ON p.id = t."plantId" JOIN "Product" pr ON pr.id = t."productId" LEFT JOIN "User" u ON u.id = t."updatedById"
-		WHERE ($1 = '' OR t."plantId" = $1) AND ($2 = '' OR t.period = $2)
+		WHERE t.removed_at IS NULL AND ($1 = '' OR t."plantId" = $1) AND ($2 = '' OR t.period = $2)
 		  AND t."periodStart" <= $4 AND (CASE t.period WHEN 'DAY' THEN t."periodStart" WHEN 'WEEK' THEN t."periodStart" + 6
 		       ELSE (t."periodStart" + interval '1 month' - interval '1 day')::date END) >= $3
 		ORDER BY t."periodStart", p.code, pr."sortOrder", pr.name`, plantID, period, from, to)
@@ -171,7 +171,8 @@ func (h *handler) putTargets(c *fiber.Ctx) error {
 		tag, err := tx.Exec(ctx, `INSERT INTO production_target ("plantId","productId",period,"periodStart",quantity,note,"createdById","updatedById")
 			SELECT u.pl, u.pr, u.pe, u.st, u.q, u.n, $7, $7 FROM unnest($1::text[], $2::text[], $3::text[], $4::date[], $5::int[], $6::text[]) AS u(pl, pr, pe, st, q, n)
 			ON CONFLICT ("plantId","productId",period,"periodStart") DO UPDATE SET quantity = EXCLUDED.quantity, note = EXCLUDED.note,
-				"updatedById" = EXCLUDED."updatedById", "updatedAt" = now()`, pl, pr, pe, st, qt, nt, u.ID)
+				"updatedById" = EXCLUDED."updatedById", "updatedAt" = now(),
+				removed_at = NULL, removed_by_id = NULL, removed_reason = NULL`, pl, pr, pe, st, qt, nt, u.ID)
 		if err != nil {
 			return err
 		}
@@ -213,14 +214,21 @@ func uniq(s []string) []string {
 	return out
 }
 
+// deleteTarget removes a planned target (SRS §6.3: kept with who, when and why; no longer counted).
+// DELETE /production/targets/:id {reason}. Setting the same site/product/period again restores the row.
 func (h *handler) deleteTarget(c *fiber.Ctx) error {
 	ctx := httpx.Ctx(c)
 	u := auth.MustUser(c)
+	reason, err := httpx.RemovalReason(c)
+	if err != nil {
+		return err
+	}
 	return db.Tx(ctx, h.d.Pool, func(tx pgx.Tx) error {
 		var plant, period string
 		var qty int
 		var start time.Time
-		err := tx.QueryRow(ctx, `DELETE FROM production_target WHERE id = $1 RETURNING "plantId", period, "periodStart", quantity`, c.Params("id")).Scan(&plant, &period, &start, &qty)
+		err := tx.QueryRow(ctx, `SELECT "plantId", period, "periodStart", quantity FROM production_target WHERE id = $1 AND removed_at IS NULL FOR UPDATE`,
+			c.Params("id")).Scan(&plant, &period, &start, &qty)
 		if db.IsNoRows(err) {
 			return httpx.NotFound("production.entity_target")
 		}
@@ -230,8 +238,14 @@ func (h *handler) deleteTarget(c *fiber.Ctx) error {
 		if err := auth.AssertPlantAccess(u, plant); err != nil {
 			return err
 		}
-		if err := audit.Record(c, tx, audit.Input{Action: "production.target_delete", Entity: "ProductionTarget", EntityID: c.Params("id"),
-			Summary: fmt.Sprintf("Deleted %s target from %s (%d)", period, dates.ToISO(start), qty)}); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE production_target SET removed_at = now(), removed_by_id = $2, removed_reason = $3, "updatedById" = $2, "updatedAt" = now()
+			WHERE id = $1`, c.Params("id"), u.ID, reason); err != nil {
+			return err
+		}
+		if err := audit.Record(c, tx, audit.Input{Action: "production.target_remove", Entity: "ProductionTarget", EntityID: c.Params("id"),
+			Summary: fmt.Sprintf("Removed %s target from %s (%d): %s", period, dates.ToISO(start), qty, reason),
+			Before:  map[string]any{"plantId": plant, "period": period, "periodStart": dates.ToISO(start), "quantity": qty},
+			After:   map[string]any{"removed": true, "reason": reason}}); err != nil {
 			return err
 		}
 		return c.SendStatus(204)

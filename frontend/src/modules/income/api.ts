@@ -4,7 +4,7 @@
  * on the order and appear here with source ORDER_PAYMENT. Backend: backend/internal/income.
  */
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { apiUrl, del, ensureFreshSession, get, patch, post, qs, upload } from "@/lib/api";
+import { api, apiUrl, ensureFreshSession, get, patch, post, qs, upload } from "@/lib/api";
 import type { LinkInput, MoneyLink } from "@/components/finance/api";
 
 export type IncomeStatus = "RECORDED" | "VERIFIED" | "VOID";
@@ -34,6 +34,10 @@ export interface Attachment {
   sha256: string;
   uploadedBy: string;
   uploadedAt: string;
+  /** removed files only (SRS §6.3: kept for audit, never deleted) */
+  removedAt?: string;
+  removedBy?: string;
+  removedReason?: string | null;
 }
 
 export interface IncomeActions {
@@ -96,6 +100,7 @@ export interface Income {
   updatedAt: string;
   serverVersion: number;
   attachments?: Attachment[];
+  removedAttachments?: Attachment[];
   links?: MoneyLink[];
   history?: HistoryItem[];
   actions?: IncomeActions;
@@ -195,7 +200,8 @@ export function uploadReceipt(id: string, file: File) {
   form.append("file", file);
   return upload<Attachment>(`/income/${id}/attachments`, form);
 }
-export const deleteReceipt = ({ id, aid }: { id: string; aid: string }) => del<{ ok: boolean }>(`/income/${id}/attachments/${aid}`);
+/** Mark a receipt removed, with the reason (SRS §6.3: the file is kept for audit). */
+export const deleteReceipt = ({ id, aid, reason }: { id: string; aid: string; reason: string }) => api<{ ok: boolean }>(`/income/${id}/attachments/${aid}`, { method: "DELETE", body: { reason } });
 
 /** Open a receipt in a new tab (the session cookie authenticates the same-origin request). */
 export function openReceipt(id: string, aid: string) {

@@ -186,6 +186,7 @@ func urlEscape(s string) string {
 func (h *handler) deleteAttachment(c *fiber.Ctx) error {
 	ctx, lang, u := httpx.Ctx(c), httpx.Lang(c), auth.MustUser(c)
 	id, aid := c.Params("id"), c.Params("aid")
+	reason, reasonErr := httpx.RemovalReason(c) // SRS §6.3: the file is marked removed and kept, never deleted
 	err := db.Tx(ctx, h.d.Pool, func(tx pgx.Tx) error {
 		r, err := getRow(ctx, tx, id, true)
 		if err != nil {
@@ -200,15 +201,20 @@ func (h *handler) deleteAttachment(c *fiber.Ctx) error {
 		if r.Status != StatusSubmitted && r.Status != StatusRejected {
 			return httpx.NewKey(409, "conflict", "expenses.err.attach_closed", "status", i18n.T(lang, "expenses.status."+r.Status))
 		}
+		if reasonErr != nil {
+			return reasonErr
+		}
 		var name string
-		if err := tx.QueryRow(ctx, `DELETE FROM expense_attachment WHERE id = $1 AND expense_id = $2 RETURNING file_name`, aid, id).Scan(&name); err != nil {
+		if err := tx.QueryRow(ctx, `UPDATE expense_attachment SET removed_at = now(), removed_by_id = $3, removed_reason = $4
+			WHERE id = $1 AND expense_id = $2 AND removed_at IS NULL RETURNING file_name`, aid, id, u.ID, reason).Scan(&name); err != nil {
 			if db.IsNoRows(err) {
 				return httpx.NotFound("expenses.attachment")
 			}
 			return err
 		}
 		return audit.Record(c, tx, audit.Input{Action: "expenses.detach", Entity: "Expense", EntityID: id,
-			Summary: r.Number + " receipt removed: " + name, Before: map[string]any{"attachmentId": aid, "fileName": name}})
+			Summary: r.Number + " receipt removed: " + name + " (" + reason + ")", Before: map[string]any{"attachmentId": aid, "fileName": name},
+			After: map[string]any{"attachmentId": aid, "removed": true, "reason": reason}})
 	})
 	if err != nil {
 		return err

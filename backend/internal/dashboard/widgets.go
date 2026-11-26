@@ -133,7 +133,7 @@ type siteProd struct {
 const plannedTargetSQL = `SELECT t."plantId", SUM(t.quantity::float8 * GREATEST(0, (LEAST(t.t_end, $2::date) - GREATEST(t."periodStart", $1::date) + 1))::float8
 		/ (t.t_end - t."periodStart" + 1))::float8
 	FROM (SELECT x.*, CASE x.period WHEN 'DAY' THEN x."periodStart" WHEN 'WEEK' THEN x."periodStart" + 6
-		ELSE (x."periodStart" + interval '1 month' - interval '1 day')::date END AS t_end FROM production_target x) t
+		ELSE (x."periodStart" + interval '1 month' - interval '1 day')::date END AS t_end FROM production_target x WHERE x.removed_at IS NULL) t
 	WHERE t."periodStart" <= $2::date AND t.t_end >= $1::date AND ($3 = '' OR t."plantId" = $3) GROUP BY 1`
 
 func loadSiteProduction(ctx context.Context, e *env, from, to time.Time) ([]siteProd, error) {
@@ -333,7 +333,7 @@ func wMaterialUsage(ctx context.Context, e *env, w *Widget) error {
 			WHERE r.status='APPROVED' AND r.date >= $1::date AND r.date <= $2::date AND ($3 = '' OR r."plantId" = $3) AND l."producedQty" > 0),
 		ex AS (
 			SELECT ri."materialId" mid, SUM(ln."producedQty" * ri."qtyPerUnit")::float8 q FROM ln
-			CROSS JOIN LATERAL (SELECT pr.id FROM production_recipe pr WHERE pr."productId" = ln."productId" AND pr."effectiveFrom" <= ln.date
+			CROSS JOIN LATERAL (SELECT pr.id FROM production_recipe pr WHERE pr.removed_at IS NULL AND pr."productId" = ln."productId" AND pr."effectiveFrom" <= ln.date
 				ORDER BY pr."effectiveFrom" DESC LIMIT 1) rc
 			JOIN production_recipe_item ri ON ri."recipeId" = rc.id GROUP BY 1),
 		ac AS (

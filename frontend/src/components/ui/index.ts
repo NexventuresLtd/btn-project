@@ -14,3 +14,4 @@ export * from "./ExportMenu";
 export * from "./DateInput";
 export * from "./radioGroup";
 export * from "./ScrollX";
+export * from "./RemoveDialog";

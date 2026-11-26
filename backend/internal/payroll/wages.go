@@ -166,7 +166,7 @@ func recalc(ctx context.Context, tx pgx.Tx, p *periodHead) ([]calcLine, error) {
 	}
 	rows, err := tx.Query(ctx, `SELECT w.id FROM "Worker" w WHERE w."plantId" = $1 AND (w."isActive"
 			OR EXISTS (SELECT 1 FROM "Attendance" a WHERE a."workerId" = w.id AND a.date >= $2 AND a.date <= $3)
-			OR EXISTS (SELECT 1 FROM piece_work_entry e WHERE e.worker_id = w.id AND e.date >= $2 AND e.date <= $3))
+			OR EXISTS (SELECT 1 FROM piece_work_entry e WHERE e.worker_id = w.id AND e.date >= $2 AND e.date <= $3 AND e.removed_at IS NULL))
 		ORDER BY w.id`, p.PlantID, p.Start, p.End)
 	if err != nil {
 		return nil, err

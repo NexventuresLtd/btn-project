@@ -55,6 +55,9 @@ type Threshold struct {
 	Label      string    `json:"label"`
 	IsActive   bool      `json:"isActive"`
 	UpdatedAt  time.Time `json:"updatedAt"`
+	// Retired rows (SRS §6.3: never deleted) no longer apply; they stay listed for the audit of past approvals.
+	RetiredAt     *time.Time `json:"retiredAt,omitempty"`
+	RetiredReason *string    `json:"retiredReason,omitempty"`
 }
 
 // Level is one required approval step.
@@ -149,9 +152,17 @@ func SeedDefaults(ctx context.Context, q db.DBTX) error {
 
 // List returns the thresholds of a domain ("" = all), ordered by domain, level, min amount.
 func List(ctx context.Context, q db.DBTX, domain string, activeOnly bool) ([]Threshold, error) {
-	sql := `SELECT id, domain, level, min_amount, max_amount, permission, role, label, is_active, updated_at FROM approval_threshold WHERE ($1='' OR domain=$1)`
+	return ListWith(ctx, q, domain, activeOnly, false)
+}
+
+// ListWith is List, optionally including retired rows (history view).
+func ListWith(ctx context.Context, q db.DBTX, domain string, activeOnly, withRetired bool) ([]Threshold, error) {
+	sql := `SELECT id, domain, level, min_amount, max_amount, permission, role, label, is_active, updated_at, removed_at, removed_reason FROM approval_threshold WHERE ($1='' OR domain=$1)`
 	if activeOnly {
 		sql += ` AND is_active`
+	}
+	if !withRetired {
+		sql += ` AND removed_at IS NULL`
 	}
 	rows, err := q.Query(ctx, sql+` ORDER BY array_position($2::text[], domain), level, min_amount`, domain, Domains)
 	if err != nil {
@@ -161,7 +172,7 @@ func List(ctx context.Context, q db.DBTX, domain string, activeOnly bool) ([]Thr
 	out := []Threshold{}
 	for rows.Next() {
 		var t Threshold
-		if err := rows.Scan(&t.ID, &t.Domain, &t.Level, &t.MinAmount, &t.MaxAmount, &t.Permission, &t.Role, &t.Label, &t.IsActive, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Domain, &t.Level, &t.MinAmount, &t.MaxAmount, &t.Permission, &t.Role, &t.Label, &t.IsActive, &t.UpdatedAt, &t.RetiredAt, &t.RetiredReason); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

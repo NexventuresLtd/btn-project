@@ -1,0 +1,5 @@
+{
+  "records.reason_required": "Indiquez un motif (3 à 500 caractères) : les enregistrements ne sont jamais supprimés, ils sont marqués comme retirés et conservés pour l'audit",
+  "records.already_removed": "Cet enregistrement a déjà été retiré",
+  "records.removed": "Retiré"
+}

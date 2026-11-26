@@ -202,12 +202,14 @@ func (h *handler) detail(ctx context.Context, lang i18n.Lang, u *auth.User, r *r
 	var (
 		lk    *lookups
 		atts  []Attachment
+		rem   []Attachment
 		links []finlink.Link
 		hist  []HistoryItem
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() (err error) { lk, err = loadLookups(gctx, h.d.Pool, lang); return })
 	g.Go(func() (err error) { atts, err = loadAttachments(gctx, h.d.Pool, r.ID); return })
+	g.Go(func() (err error) { rem, err = loadRemovedAttachments(gctx, h.d.Pool, r.ID); return })
 	g.Go(func() (err error) {
 		links, err = finlink.List(gctx, h.d.Pool, lang, finlink.IncomeLinks, r.ID, true)
 		return
@@ -218,6 +220,9 @@ func (h *handler) detail(ctx context.Context, lang i18n.Lang, u *auth.User, r *r
 	}
 	in := toIncome(r, lk)
 	in.Attachments, in.Links, in.History = atts, links, hist
+	if len(rem) > 0 {
+		in.RemovedFiles = rem
+	}
 	in.Actions = actionsFor(u, r)
 	return in, nil
 }

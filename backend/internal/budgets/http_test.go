@@ -3,6 +3,7 @@ package budgets_test
 import (
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,15 +147,45 @@ func TestBudgetLifecycleAndPermissions(t *testing.T) {
 	}
 	_, d := call(e, "POST", "/api/budgets", map[string]any{"name": "Spare", "department": "ADMIN", "periodType": "YEAR", "periodStart": q,
 		"lines": []map[string]any{{"category": "OFFICE", "amount": 10}}}, fm)
-	if c, _ := call(e, "DELETE", "/api/budgets/"+d["id"].(string), nil, fm); c != 200 {
-		t.Errorf("delete draft: %d", c)
+	// SRS §6.3: a draft is voided with a reason, never deleted
+	if c, m := call(e, "DELETE", "/api/budgets/"+d["id"].(string), nil, fm); c != 400 || m["error"].(map[string]any)["fields"].(map[string]any)["reason"] == nil {
+		t.Errorf("void without reason: %d %v", c, m)
 	}
-	if c, _ := call(e, "GET", "/api/budgets/"+d["id"].(string), nil, fm); c != 404 {
-		t.Errorf("deleted: %d", c)
+	if c, _ := call(e, "DELETE", "/api/budgets/"+d["id"].(string), map[string]any{"reason": "TEST created by mistake"}, fm); c != 200 {
+		t.Errorf("void draft: %d", c)
+	}
+	if c, vb := call(e, "GET", "/api/budgets/"+d["id"].(string), nil, fm); c != 200 || vb["status"] != "VOID" {
+		t.Errorf("voided draft kept: %d %v", c, vb["status"])
+	}
+	if _, l := call(e, "GET", "/api/budgets?periodType=YEAR", nil, oa); l["total"].(float64) != 0 {
+		t.Errorf("voided draft listed: %v", l["total"])
+	}
+	if _, l := call(e, "GET", "/api/budgets?status=VOID", nil, oa); l["total"].(float64) != 1 {
+		t.Errorf("void filter: %v", l["total"])
+	}
+	var vreason string
+	_ = e.Pool.QueryRow(t.Context(), `SELECT removed_reason FROM budget WHERE id=$1`, d["id"]).Scan(&vreason)
+	if vreason != "TEST created by mistake" {
+		t.Errorf("void reason: %q", vreason)
+	}
+	if n := countWhere(t, e, `SELECT count(*) FROM "AuditLog" WHERE action='budgets.void' AND "entityId"=$1`, d["id"]); n != 1 {
+		t.Errorf("void audit: %d", n)
+	}
+	if _, err := e.Pool.Exec(t.Context(), `DELETE FROM budget WHERE id=$1`, d["id"]); err == nil || !strings.Contains(err.Error(), "never deleted") {
+		t.Errorf("raw delete must be refused: %v", err)
 	}
 	var audits int
 	_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM "AuditLog" WHERE entity='Budget'`).Scan(&audits)
 	if audits < 8 {
 		t.Errorf("audit rows: %d", audits)
 	}
+}
+
+func countWhere(t *testing.T, e *apptest.Env, sql string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := e.Pool.QueryRow(t.Context(), sql, args...).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }

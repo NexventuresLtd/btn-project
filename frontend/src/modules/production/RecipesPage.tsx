@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { FlaskConical, Pencil, Plus, Trash2 } from "lucide-react";
-import { Alert, Badge, Button, Card, CardBody, CardHeader, ConfirmDialog, DateInput, ErrorState, Field, Input, Modal, PageHeader, PageLoader, Select } from "@/components/ui";
+import { Alert, Badge, Button, Card, CardBody, CardHeader, DateInput, ErrorState, Field, Input, Modal, PageHeader, PageLoader, RemoveDialog, Select } from "@/components/ui";
 import { useAuth } from "@/auth/AuthProvider";
 import { useLookups } from "@/hooks/useLookups";
 import { fieldError, useMutate } from "@/hooks/useMutate";
-import { del, post } from "@/lib/api";
-import { formatDate, todayISO } from "@/lib/dates";
+import { api, post } from "@/lib/api";
+import { formatDate, formatDateTime, todayISO } from "@/lib/dates";
 import { formatQty } from "@/lib/format";
 import { useT } from "@/i18n";
 import { useProductionSettings, useRecipes, type ProductRecipes, type Recipe } from "./api";
@@ -37,7 +37,8 @@ export function RecipesPage() {
     productId: draft!.productId, effectiveFrom: draft!.effectiveFrom, note: draft!.note.trim() || null,
     items: draft!.items.filter((i) => i.materialId).map((i) => ({ materialId: i.materialId, qtyPerUnit: Number(i.qtyPerUnit) })),
   }), { success: t("production.toast.recipeSaved"), invalidate: [["production"]], onSuccess: () => setDraft(null) });
-  const remove = useMutate((r: Recipe) => del(`/production/recipes/${r.id}`), { success: t("production.toast.recipeDeleted"), invalidate: [["production"]], onSuccess: () => setDeleting(null) });
+  const remove = useMutate(({ r, reason }: { r: Recipe; reason: string }) => api(`/production/recipes/${r.id}`, { method: "DELETE", body: { reason } }),
+    { success: t("production.toast.recipeDeleted"), invalidate: [["production"]], onSuccess: () => setDeleting(null) });
 
   const open = (p: ProductRecipes, base?: Recipe | null) => setDraft({
     productId: p.product.id, productName: p.product.name, effectiveFrom: base && base.effectiveFrom > todayISO() ? base.effectiveFrom : todayISO(), note: base?.note ?? "",
@@ -73,6 +74,16 @@ export function RecipesPage() {
                 {!p.current && !p.upcoming.length ? <Alert tone="amber">{t("production.noRecipe")}</Alert> : null}
                 {p.upcoming.map((r) => version(r, p, "blue"))}
                 {p.current ? version(p.current, p, "green") : null}
+                {p.removed?.length ? (
+                  <details className="text-sm"><summary className="cursor-pointer font-medium text-slate-500">{t("records.showRemoved", { count: p.removed.length })}</summary>
+                    <ul className="mt-2 space-y-1.5">{p.removed.map((r) => (
+                      <li key={r.id} className="rounded-lg border border-dashed border-line px-3 py-2 text-xs text-slate-500">
+                        <span className="font-medium line-through">{t("production.effectiveFrom", { date: formatDate(r.effectiveFrom) })}</span>
+                        {" · "}{t("records.removedBy", { name: r.removedBy ?? "—", date: r.removedAt ? formatDateTime(r.removedAt) : "" })}{r.removedReason ? ` — ${r.removedReason}` : ""}
+                      </li>
+                    ))}</ul>
+                  </details>
+                ) : null}
                 {p.history.length ? (
                   <details className="text-sm"><summary className="cursor-pointer font-medium text-slate-600">{t("production.previousVersions", { n: p.history.length })}</summary><div className="mt-2 space-y-2">{p.history.map((r) => version(r, p, "slate"))}</div></details>
                 ) : null}
@@ -112,8 +123,8 @@ export function RecipesPage() {
           </div>
         ) : null}
       </Modal>
-      <ConfirmDialog open={!!deleting} onClose={() => setDeleting(null)} onConfirm={() => deleting && remove.mutate(deleting)} tone="danger" loading={remove.isPending}
-        title={t("production.deleteVersionTitle")} message={t("production.deleteVersionText", { date: deleting ? formatDate(deleting.effectiveFrom) : "" })} confirmLabel={t("common.delete")} />
+      <RemoveDialog open={!!deleting} onClose={() => setDeleting(null)} onConfirm={(reason) => deleting && remove.mutate({ r: deleting, reason })} loading={remove.isPending} error={remove.error} onlineOnly
+        title={t("production.deleteVersionTitle")} message={t("production.deleteVersionText", { date: deleting ? formatDate(deleting.effectiveFrom) : "" })} />
     </>
   );
 }

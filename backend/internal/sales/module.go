@@ -73,6 +73,7 @@ func Register(r fiber.Router, d *deps.Deps) {
 
 	// delivery charges (DEL-02)
 	r.Get("/delivery-charges", auth.RequirePermission("sales.view", "sales.create", "masterdata.manage"), h.listCharges)
+	r.Get("/delivery-charges/removed", auth.RequirePermission("sales.view", "sales.create", "masterdata.manage"), h.removedCharges)
 	r.Get("/delivery-charges/quote", auth.RequirePermission("sales.view", "sales.create"), h.quoteCharge)
 	r.Post("/delivery-charges", auth.RequirePermission("masterdata.manage"), h.saveCharge(false))
 	r.Patch("/delivery-charges/:id", auth.RequirePermission("masterdata.manage"), h.saveCharge(true))

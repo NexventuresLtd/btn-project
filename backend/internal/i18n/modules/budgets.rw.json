@@ -5,6 +5,7 @@
  "budgets.status.SUBMITTED": "Bitegereje kwemezwa",
  "budgets.status.APPROVED": "Byemejwe",
  "budgets.status.REJECTED": "Byanzwe",
+ "budgets.status.VOID": "Byahagaritswe",
  "budgets.status.ARCHIVED": "Byashyinguwe",
  "budgets.period.MONTH": "Ukwezi",
  "budgets.period.QUARTER": "Igihembwe",

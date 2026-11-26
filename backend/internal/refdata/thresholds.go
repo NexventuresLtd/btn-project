@@ -28,7 +28,7 @@ func registerApprovals(r fiber.Router, d *deps.Deps) {
 }
 
 func (h *handler) listThresholds(c *fiber.Ctx) error {
-	items, err := approvals.List(httpx.Ctx(c), h.d.Pool, c.Query("domain"), false)
+	items, err := approvals.ListWith(httpx.Ctx(c), h.d.Pool, c.Query("domain"), false, c.Query("retired") == "1")
 	if err != nil {
 		return err
 	}
@@ -197,18 +197,28 @@ func (h *handler) updateThreshold(c *fiber.Ctx) error {
 	return c.JSON(out)
 }
 
+// deleteThreshold retires a threshold (SRS §6.3: never deleted). The row keeps the rule that past approvals were
+// routed by; it no longer applies to new requests. DELETE /approval-thresholds/:id {reason}.
 func (h *handler) deleteThreshold(c *fiber.Ctx) error {
 	ctx := httpx.Ctx(c)
 	id := c.Params("id")
-	err := db.Tx(ctx, h.d.Pool, func(tx pgx.Tx) error {
+	reason, err := httpx.RemovalReason(c)
+	if err != nil {
+		return err
+	}
+	u := auth.MustUser(c)
+	err = db.Tx(ctx, h.d.Pool, func(tx pgx.Tx) error {
 		before, err := oneThreshold(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM approval_threshold WHERE id=$1`, id); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE approval_threshold SET removed_at=now(), removed_by_id=$2, removed_reason=$3, is_active=false, updated_at=now() WHERE id=$1`,
+			id, u.ID, reason); err != nil {
 			return err
 		}
-		return audit.Record(c, tx, audit.Input{Action: "approvals.threshold.delete", Entity: "ApprovalThreshold", EntityID: id, Summary: before.Domain + " L" + strconv.Itoa(before.Level), Before: before})
+		return audit.Record(c, tx, audit.Input{Action: "approvals.threshold.retire", Entity: "ApprovalThreshold", EntityID: id,
+			Summary: before.Domain + " L" + strconv.Itoa(before.Level) + " retired: " + reason, Before: before,
+			After: map[string]any{"retired": true, "reason": reason, "isActive": false}})
 	})
 	if err != nil {
 		return err

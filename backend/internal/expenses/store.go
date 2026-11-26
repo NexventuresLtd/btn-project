@@ -22,7 +22,7 @@ const rowCols = `e.id, e.number, e.date, e.category, e.department, e.plant_id, p
 	e.overrun_amount, e.overrun_status, e.overrun_levels, e.overrun_reason, e.source_type, e.source_id, e.source_number,
 	e.request_id, e.purchase_order_id, e.paid_at, e.paid_by_id, pu.name, e.payment_reference, e.decided_by_id, du.name,
 	e.decided_at, e.decision_comment, e.created_by_id, cu.name, cu.role::text, e.device_id, e.created_at, e.updated_at,
-	(SELECT count(*)::int FROM expense_attachment a WHERE a.expense_id = e.id), b.number, e.server_version,
+	(SELECT count(*)::int FROM expense_attachment a WHERE a.expense_id = e.id AND a.removed_at IS NULL), b.number, e.server_version,
 	e.source, e.budget_line_id, e.budget_line_suggested, e.unbudgeted, e.unbudgeted_reason, bl.category, lb.id, lb.number, lb.department,
 	e.float_id, pf.code, pf.name, e.petty_cash_entry_id, pce.number, e.payroll_period_id, pp.number,
 	(SELECT count(*)::int FROM expense_link l WHERE l.expense_id = e.id AND l.removed_at IS NULL)`
@@ -171,11 +171,30 @@ type Attachment struct {
 	SHA256      string    `json:"sha256"`
 	UploadedBy  string    `json:"uploadedBy"`
 	UploadedAt  time.Time `json:"uploadedAt"`
+	// Set on removed files only (SRS §6.3: kept, listed apart under removedAttachments).
+	RemovedAt     *time.Time `json:"removedAt,omitempty"`
+	RemovedBy     string     `json:"removedBy,omitempty"`
+	RemovedReason *string    `json:"removedReason,omitempty"`
 }
 
 func loadAttachments(ctx context.Context, q db.DBTX, id string) ([]Attachment, error) {
-	rows, err := q.Query(ctx, `SELECT a.id, a.file_name, a.content_type, a.size_bytes, a.sha256, COALESCE(u.name, ''), a.created_at
-		FROM expense_attachment a LEFT JOIN "User" u ON u.id = a.uploaded_by_id WHERE a.expense_id = $1 ORDER BY a.created_at`, id)
+	return queryAttachments(ctx, q, id, false)
+}
+
+// loadRemovedAttachments lists the files removed from the record (who, when, why).
+func loadRemovedAttachments(ctx context.Context, q db.DBTX, id string) ([]Attachment, error) {
+	return queryAttachments(ctx, q, id, true)
+}
+
+func queryAttachments(ctx context.Context, q db.DBTX, id string, removed bool) ([]Attachment, error) {
+	cond := "a.removed_at IS NULL"
+	if removed {
+		cond = "a.removed_at IS NOT NULL"
+	}
+	rows, err := q.Query(ctx, `SELECT a.id, a.file_name, a.content_type, a.size_bytes, a.sha256, COALESCE(u.name, ''), a.created_at,
+		a.removed_at, COALESCE(ru.name, ''), a.removed_reason
+		FROM expense_attachment a LEFT JOIN "User" u ON u.id = a.uploaded_by_id LEFT JOIN "User" ru ON ru.id = a.removed_by_id
+		WHERE a.expense_id = $1 AND `+cond+` ORDER BY a.created_at`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +202,7 @@ func loadAttachments(ctx context.Context, q db.DBTX, id string) ([]Attachment, e
 	out := []Attachment{}
 	for rows.Next() {
 		var a Attachment
-		if err := rows.Scan(&a.ID, &a.FileName, &a.ContentType, &a.Size, &a.SHA256, &a.UploadedBy, &a.UploadedAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.FileName, &a.ContentType, &a.Size, &a.SHA256, &a.UploadedBy, &a.UploadedAt, &a.RemovedAt, &a.RemovedBy, &a.RemovedReason); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -258,6 +277,7 @@ type Expense struct {
 	ServerVersion    int64          `json:"serverVersion"`
 	Approvals        []approvalRow  `json:"approvals,omitempty"`
 	Attachments      []Attachment   `json:"attachments,omitempty"`
+	RemovedFiles     []Attachment   `json:"removedAttachments,omitempty"`
 	Actions          *Actions       `json:"actions,omitempty"`
 	Extra            map[string]any `json:"-"`
 }

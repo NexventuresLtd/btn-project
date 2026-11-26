@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router";
 import { Ban, CheckCircle2, Download, Eye, History, Paperclip, Pencil, ShoppingCart, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
-import { Alert, Badge, Button, Card, CardBody, CardHeader, ConfirmDialog, EmptyState, ErrorState, Field, PageHeader, PageLoader, PdfButton, Textarea } from "@/components/ui";
+import { Alert, Badge, Button, Card, CardBody, CardHeader, ConfirmDialog, EmptyState, ErrorState, Field, PageHeader, PageLoader, PdfButton, RemoveDialog, Textarea } from "@/components/ui";
 import { LinksEditor } from "@/components/finance/LinksEditor";
 import { useT } from "@/i18n";
 import { useAuth } from "@/auth/AuthProvider";
@@ -307,8 +307,20 @@ function Receipts({ i, online, onChanged }: { i: Income; online: boolean; onChan
           </ul>
         )}
       </CardBody>
-      <ConfirmDialog open={!!removing} onClose={() => setRemoving(null)} onConfirm={() => removing && remove.mutate({ id: i.id, aid: removing })}
-        title={t("income.receipt.removeTitle")} message={t("income.receipt.removeText")} confirmLabel={t("common.remove")} tone="danger" loading={remove.isPending} />
+      {i.removedAttachments?.length ? (
+        <CardBody className="border-t border-line">
+          <details className="text-sm"><summary className="cursor-pointer font-medium text-slate-500">{t("records.showRemoved", { count: i.removedAttachments.length })}</summary>
+            <ul className="mt-2 divide-y divide-line">{i.removedAttachments.map((f) => (
+              <li key={f.id} className="flex flex-wrap items-center justify-between gap-3 py-2 text-xs text-slate-500">
+                <span className="min-w-0"><span className="font-medium line-through">{f.fileName}</span> · {t("records.removedBy", { name: f.removedBy || "—", date: f.removedAt ? formatDateTime(f.removedAt) : "" })}{f.removedReason ? ` — ${f.removedReason}` : ""}</span>
+                <Button size="icon" variant="ghost" title={t("income.receipt.view")} aria-label={t("income.receipt.viewFile", { name: f.fileName })} onClick={() => openReceipt(i.id, f.id)}><Eye className="size-4" /></Button>
+              </li>
+            ))}</ul>
+          </details>
+        </CardBody>
+      ) : null}
+      <RemoveDialog open={!!removing} onClose={() => setRemoving(null)} onConfirm={(reason) => removing && remove.mutate({ id: i.id, aid: removing, reason })} onlineOnly
+        title={t("income.receipt.removeTitle")} message={t("income.receipt.removeText")} confirmLabel={t("common.remove")} loading={remove.isPending} error={remove.error} />
     </Card>
   );
 }

@@ -3,12 +3,13 @@ import { ArrowDown, ArrowUp, ListTree, Pencil, Plus, Power, Scale, Trash2 } from
 import { LANG_NAMES, useT, type Lang } from "@/i18n";
 import { useAuth } from "@/auth/AuthProvider";
 import {
-  Alert, Badge, Button, Card, CardHeader, Checkbox, ConfirmDialog, DataTable, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Select,
+  Alert, Badge, Button, Card, CardHeader, Checkbox, DataTable, EmptyState, ErrorState, Field, Input, Modal, PageHeader, RemoveDialog, Select,
   Textarea, type Column,
 } from "@/components/ui";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import type { RefItem } from "@/hooks/useLookups";
 import { formatRWF } from "@/lib/format";
+import { formatDateTime } from "@/lib/dates";
 import { cn } from "@/lib/cn";
 import {
   APPROVAL_DOMAINS, REF_KINDS, REFDATA_KEY, createRef, createThreshold, deleteThreshold, fetchLevels, reorderRef, updateRef, updateThreshold,
@@ -244,11 +245,12 @@ const APPROVAL_PERMISSIONS = ["sales.approve", "procurement.approve", "expenses.
 
 function ThresholdsPanel() {
   const { t, tx } = useT();
-  const query = useThresholds();
+  const [showRetired, setShowRetired] = useState(false);
+  const query = useThresholds(showRetired);
   const [domain, setDomain] = useState<ApprovalDomain | "">("");
   const [editing, setEditing] = useState<Threshold | "new" | null>(null);
   const [deleting, setDeleting] = useState<Threshold | null>(null);
-  const remove = useMutate((id: string) => deleteThreshold(id), { success: t("refdata.th.deleted"), invalidate: INVALIDATE, onSuccess: () => setDeleting(null) });
+  const remove = useMutate(deleteThreshold, { success: t("refdata.th.deleted"), invalidate: INVALIDATE, onSuccess: () => setDeleting(null) });
   const rows = (query.data ?? []).filter((r) => !domain || r.domain === domain);
   const range = (r: { minAmount: number; maxAmount: number | null }) =>
     r.maxAmount == null ? t("refdata.th.fromAmount", { amount: formatRWF(r.minAmount) }) : t("refdata.th.rangeAmount", { min: formatRWF(r.minAmount), max: formatRWF(r.maxAmount) });
@@ -262,13 +264,15 @@ function ThresholdsPanel() {
       header: t("refdata.th.col.approver"),
       cell: (r) => (r.role ? tx(`enums.role.${r.role}`, undefined, r.role) : t("refdata.th.anyRole", { permission: r.permission })),
     },
-    { key: "label", header: t("refdata.th.col.label"), hideOnMobile: true, cell: (r) => <span className="text-slate-600">{r.label || "—"}</span> },
-    { key: "status", header: t("refdata.col.status"), cell: (r) => <Badge tone={r.isActive ? "green" : "slate"} dot>{r.isActive ? t("refdata.active") : t("refdata.inactive")}</Badge> },
+    { key: "label", header: t("refdata.th.col.label"), hideOnMobile: true, cell: (r) => (r.retiredAt ? null :
+      <span className="text-slate-600">{r.label || "—"}{r.retiredAt ? <span className="block text-xs text-slate-500">{t("records.removedOn", { date: formatDateTime(r.retiredAt) })}{r.retiredReason ? ` — ${r.retiredReason}` : ""}</span> : null}</span>
+    ) },
+    { key: "status", header: t("refdata.col.status"), cell: (r) => (r.retiredAt ? <Badge tone="slate">{t("records.removed")}</Badge> : <Badge tone={r.isActive ? "green" : "slate"} dot>{r.isActive ? t("refdata.active") : t("refdata.inactive")}</Badge>) },
     {
       key: "actions",
       header: <span className="sr-only">{t("refdata.col.actions")}</span>,
       align: "right",
-      cell: (r) => (
+      cell: (r) => (r.retiredAt ? null :
         <div className="flex justify-end gap-1">
           <Button size="sm" variant="secondary" icon={<Pencil className="size-3.5" />} onClick={() => setEditing(r)}>{t("common.edit")}</Button>
           <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} aria-label={t("refdata.th.delete")} onClick={() => setDeleting(r)} className="text-red-600 hover:bg-red-50" />
@@ -289,6 +293,7 @@ function ThresholdsPanel() {
                 <option value="">{t("refdata.th.domainAll")}</option>
                 {APPROVAL_DOMAINS.map((d) => <option key={d} value={d}>{t(`refdata.domain.${d}`)}</option>)}
               </Select>
+              <Checkbox label={t("records.includeRemoved")} checked={showRetired} onChange={(e) => setShowRetired(e.target.checked)} />
               <Button icon={<Plus className="size-4" />} onClick={() => setEditing("new")}>{t("refdata.th.new")}</Button>
             </div>
           }
@@ -301,15 +306,16 @@ function ThresholdsPanel() {
       </Card>
       {domain ? <TryAmount domain={domain} /> : null}
       <ThresholdModal open={editing !== null} item={editing === "new" ? null : editing} defaultDomain={domain || "sales_order"} onClose={() => setEditing(null)} />
-      <ConfirmDialog
+      <RemoveDialog
         open={!!deleting}
         onClose={() => setDeleting(null)}
-        onConfirm={() => deleting && remove.mutate(deleting.id)}
+        onConfirm={(reason) => deleting && remove.mutate({ id: deleting.id, reason })}
         title={t("refdata.th.delete")}
         message={deleting ? t("refdata.th.deleteConfirm", { level: deleting.level, domain: t(`refdata.domain.${deleting.domain}`) }) : undefined}
-        confirmLabel={t("common.delete")}
-        tone="danger"
+        confirmLabel={t("refdata.th.delete")}
         loading={remove.isPending}
+        error={remove.error}
+        onlineOnly
       />
     </div>
   );

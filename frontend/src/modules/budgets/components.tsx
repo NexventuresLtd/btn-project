@@ -40,7 +40,7 @@ export function VarianceBadge({ status }: { status: VarianceStatus }) {
 
 export function BudgetStatusBadge({ status }: { status: string }) {
   const { tx } = useT();
-  const tone = status === "APPROVED" ? "green" : status === "SUBMITTED" ? "amber" : status === "REJECTED" ? "red" : status === "ARCHIVED" ? "slate" : "blue";
+  const tone = status === "APPROVED" ? "green" : status === "SUBMITTED" ? "amber" : status === "REJECTED" ? "red" : status === "ARCHIVED" || status === "VOID" ? "slate" : "blue";
   return <Badge tone={tone} dot>{tx(`budgets.status.${status}`)}</Badge>;
 }
 

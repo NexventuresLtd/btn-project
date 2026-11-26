@@ -1,0 +1,5 @@
+{
+  "records.reason_required": "Give a reason (3 to 500 characters): records are never deleted, they are marked as removed and kept for audit",
+  "records.already_removed": "This record was already removed",
+  "records.removed": "Removed"
+}

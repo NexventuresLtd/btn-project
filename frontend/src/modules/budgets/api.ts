@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { del, get, patch, post } from "@/lib/api";
+import { api, get, patch, post } from "@/lib/api";
 
 export type PeriodType = "MONTH" | "QUARTER" | "YEAR";
-export type BudgetStatus = "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED" | "ARCHIVED";
+export type BudgetStatus = "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED" | "ARCHIVED" | "VOID";
 /** Expense lines: ok | warning | over | unbudgeted | idle. Income lines (revenue targets): met | on_track | behind | unplanned | idle. */
 export type VarianceStatus = "ok" | "warning" | "over" | "unbudgeted" | "idle" | "met" | "on_track" | "behind" | "unplanned";
 /** EXPENSE = spending limit for an expense category; INCOME = revenue target for an income category. */
@@ -10,7 +10,7 @@ export type LineType = "EXPENSE" | "INCOME";
 export const LINE_TYPES: LineType[] = ["EXPENSE", "INCOME"];
 
 export const PERIOD_TYPES: PeriodType[] = ["MONTH", "QUARTER", "YEAR"];
-export const BUDGET_STATUSES: BudgetStatus[] = ["DRAFT", "SUBMITTED", "APPROVED", "REJECTED", "ARCHIVED"];
+export const BUDGET_STATUSES: BudgetStatus[] = ["DRAFT", "SUBMITTED", "APPROVED", "REJECTED", "ARCHIVED", "VOID"];
 
 export interface Actual {
   expenses: number;
@@ -177,4 +177,5 @@ export const submitBudget = (id: string) => post<Budget>(`/budgets/${id}/submit`
 export const approveBudget = ({ id, comment }: { id: string; comment?: string }) => post<Budget>(`/budgets/${id}/approve`, { comment: comment || null });
 export const rejectBudget = ({ id, comment }: { id: string; comment: string }) => post<Budget>(`/budgets/${id}/reject`, { comment });
 export const archiveBudget = (id: string) => post<Budget>(`/budgets/${id}/archive`);
-export const deleteBudget = (id: string) => del<{ ok: boolean }>(`/budgets/${id}`);
+/** Void a draft (SRS §6.3: kept with the reason, never deleted). */
+export const deleteBudget = ({ id, reason }: { id: string; reason: string }) => api<{ ok: boolean }>(`/budgets/${id}`, { method: "DELETE", body: { reason } });

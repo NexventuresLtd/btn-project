@@ -378,7 +378,7 @@ func (h *handler) list(c *fiber.Ctx) error {
 	cond := `($1 = '' OR b.status = $1) AND ($2 = '' OR b.period_type = $2) AND ($3 = '' OR b.department = $3)
 		AND ($4 = 0 OR extract(year FROM b.period_start)::int = $4 OR extract(year FROM b.period_end)::int = $4)`
 	if c.Query("archived") != "1" && status == "" {
-		cond += ` AND b.status <> 'ARCHIVED'`
+		cond += ` AND b.status NOT IN ('ARCHIVED','VOID')`
 	}
 	args := []any{status, ptype, dept, year}
 	var total int
@@ -1102,9 +1102,13 @@ func (h *handler) archive(c *fiber.Ctx) error {
 	})
 }
 
+// remove voids a draft budget (SRS §6.3: never deleted). DELETE /budgets/:id {reason}: the budget keeps its number
+// and lines with status VOID, who voided it, when and why; it frees its department + period for a new draft.
 func (h *handler) remove(c *fiber.Ctx) error {
 	ctx, lang := httpx.Ctx(c), httpx.Lang(c)
 	id := c.Params("id")
+	reason, reasonErr := httpx.RemovalReason(c)
+	u := auth.MustUser(c)
 	err := db.Tx(ctx, h.d.Pool, func(tx pgx.Tx) error {
 		b, err := getBudget(ctx, tx, id, true)
 		if err != nil {
@@ -1116,11 +1120,16 @@ func (h *handler) remove(c *fiber.Ctx) error {
 		if b.Status != StatusDraft || b.ApprovedAt != nil {
 			return httpx.NewKey(409, "conflict", "budgets.err.delete_draft", "status", i18n.T(lang, "budgets.status."+b.Status))
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM budget WHERE id = $1`, id); err != nil {
+		if reasonErr != nil {
+			return reasonErr
+		}
+		if _, err := tx.Exec(ctx, `UPDATE budget SET status = 'VOID', removed_at = now(), removed_by_id = $2, removed_reason = $3, updated_at = now() WHERE id = $1`,
+			id, u.ID, reason); err != nil {
 			return err
 		}
-		return audit.Record(c, tx, audit.Input{Action: "budgets.delete", Entity: "Budget", EntityID: id, Summary: b.Number + " draft deleted",
-			Before: map[string]any{"number": b.Number, "name": b.Name}})
+		return audit.Record(c, tx, audit.Input{Action: "budgets.void", Entity: "Budget", EntityID: id, Summary: b.Number + " draft voided: " + reason,
+			Before: map[string]any{"number": b.Number, "name": b.Name, "status": b.Status},
+			After:  map[string]any{"status": StatusVoid, "reason": reason}})
 	})
 	if err != nil {
 		return err

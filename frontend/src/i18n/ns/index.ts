@@ -37,7 +37,8 @@ import income from "./income";
 import offlineview from "./offlineview";
 import lockout from "./lockout";
 import syncschema from "./syncschema";
+import records from "./records";
 
 /** name → file; every key in a file must start with "<name>." (enforced by catalog.test.ts) */
-export const NAMESPACES = { common, enums, layout, auth, superadmin, security, dashboard, reports, production, stock, materials, sales, pettycash, payroll, attendance, admin, guide, refdata, transfers, stockcount, procurement, expenses, budgets, finance, workforce, offline, datepicker, notifications, monitoring, privacy, session, dataimport, exports, orders, finrecords, income, offlineview, lockout, syncschema } as const;
+export const NAMESPACES = { common, enums, layout, auth, superadmin, security, dashboard, reports, production, stock, materials, sales, pettycash, payroll, attendance, admin, guide, refdata, transfers, stockcount, procurement, expenses, budgets, finance, workforce, offline, datepicker, notifications, monitoring, privacy, session, dataimport, exports, orders, finrecords, income, offlineview, lockout, syncschema, records } as const;
 export type Namespaces = typeof NAMESPACES;

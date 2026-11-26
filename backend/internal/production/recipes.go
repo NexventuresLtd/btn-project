@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"btn-ops/internal/audit"
+	"btn-ops/internal/auth"
 	"btn-ops/internal/dates"
 	"btn-ops/internal/db"
 	"btn-ops/internal/httpx"
@@ -39,6 +40,9 @@ type recipeOut struct {
 	CreatedAt     string          `json:"createdAt"`
 	Current       bool            `json:"current"`
 	Items         []recipeItemOut `json:"items"`
+	RemovedAt     *string         `json:"removedAt,omitempty"` // removed versions (SRS §6.3: kept, no longer used)
+	RemovedBy     *string         `json:"removedBy,omitempty"`
+	RemovedReason *string         `json:"removedReason,omitempty"`
 }
 
 type productRecipes struct {
@@ -46,12 +50,14 @@ type productRecipes struct {
 	Current  *recipeOut  `json:"current"`
 	Upcoming []recipeOut `json:"upcoming"`
 	History  []recipeOut `json:"history"`
+	Removed  []recipeOut `json:"removed"`
 }
 
 // loadRecipes returns all recipe versions (two queries), grouped by product id, newest first.
 func loadRecipes(ctx context.Context, q db.DBTX) (map[string][]recipeOut, error) {
-	rows, err := q.Query(ctx, `SELECT r.id, r."productId", r."effectiveFrom", r.note, u.name, r."createdAt" FROM production_recipe r
-		LEFT JOIN "User" u ON u.id = r."createdById" ORDER BY r."productId", r."effectiveFrom" DESC`)
+	rows, err := q.Query(ctx, `SELECT r.id, r."productId", r."effectiveFrom", r.note, u.name, r."createdAt", r.removed_at, ru.name, r.removed_reason FROM production_recipe r
+		LEFT JOIN "User" u ON u.id = r."createdById" LEFT JOIN "User" ru ON ru.id = r.removed_by_id
+		ORDER BY r."productId", r."effectiveFrom" DESC, r.removed_at DESC NULLS FIRST`)
 	if err != nil {
 		return nil, err
 	}
@@ -60,11 +66,16 @@ func loadRecipes(ctx context.Context, q db.DBTX) (map[string][]recipeOut, error)
 	for rows.Next() {
 		var r recipeOut
 		var eff, at time.Time
-		if err := rows.Scan(&r.ID, &r.ProductID, &eff, &r.Note, &r.CreatedBy, &at); err != nil {
+		var rmAt *time.Time
+		if err := rows.Scan(&r.ID, &r.ProductID, &eff, &r.Note, &r.CreatedBy, &at, &rmAt, &r.RemovedBy, &r.RemovedReason); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		r.EffectiveFrom, r.CreatedAt, r.Items = dates.ToISO(eff), isoTime(at), []recipeItemOut{}
+		if rmAt != nil {
+			s := isoTime(*rmAt)
+			r.RemovedAt = &s
+		}
 		byID[r.ID] = &r
 		order = append(order, r.ID)
 	}
@@ -118,9 +129,11 @@ func (h *handler) listRecipes(c *fiber.Ctx) error {
 		if err := rows.Scan(&p.ID, &p.Code, &p.Name, &p.Unit); err != nil {
 			return err
 		}
-		pr := productRecipes{Product: p, Upcoming: []recipeOut{}, History: []recipeOut{}}
+		pr := productRecipes{Product: p, Upcoming: []recipeOut{}, History: []recipeOut{}, Removed: []recipeOut{}}
 		for _, r := range all[p.ID] {
 			switch {
+			case r.RemovedAt != nil:
+				pr.Removed = append(pr.Removed, r)
 			case r.EffectiveFrom > today:
 				pr.Upcoming = append(pr.Upcoming, r)
 			case pr.Current == nil:
@@ -196,7 +209,7 @@ func (h *handler) saveRecipe(c *fiber.Ctx) error {
 	id, err := db.TxVal(ctx, h.d.Pool, func(tx pgx.Tx) (string, error) {
 		var id string
 		var before any
-		if err := tx.QueryRow(ctx, `SELECT id FROM production_recipe WHERE "productId" = $1 AND "effectiveFrom" = $2 FOR UPDATE`, productID, eff).Scan(&id); err == nil {
+		if err := tx.QueryRow(ctx, `SELECT id FROM production_recipe WHERE "productId" = $1 AND "effectiveFrom" = $2 AND removed_at IS NULL FOR UPDATE`, productID, eff).Scan(&id); err == nil {
 			all, err := loadRecipes(ctx, tx)
 			if err != nil {
 				return "", err
@@ -246,20 +259,28 @@ func (h *handler) saveRecipe(c *fiber.Ctx) error {
 	return httpx.NotFound("production.entity_recipe")
 }
 
+// deleteRecipe removes a recipe version (SRS §6.3: kept with its items, who, when and why; expected usage no
+// longer uses it). DELETE /production/recipes/:id {reason}.
 func (h *handler) deleteRecipe(c *fiber.Ctx) error {
 	ctx := httpx.Ctx(c)
+	reason, err := httpx.RemovalReason(c)
+	if err != nil {
+		return err
+	}
 	return db.Tx(ctx, h.d.Pool, func(tx pgx.Tx) error {
 		var product string
 		var eff time.Time
-		err := tx.QueryRow(ctx, `DELETE FROM production_recipe WHERE id = $1 RETURNING "productId", "effectiveFrom"`, c.Params("id")).Scan(&product, &eff)
+		err := tx.QueryRow(ctx, `UPDATE production_recipe SET removed_at = now(), removed_by_id = $2, removed_reason = $3 WHERE id = $1 AND removed_at IS NULL
+			RETURNING "productId", "effectiveFrom"`, c.Params("id"), auth.MustUser(c).ID, reason).Scan(&product, &eff)
 		if db.IsNoRows(err) {
 			return httpx.NotFound("production.entity_recipe")
 		}
 		if err != nil {
 			return err
 		}
-		if err := audit.Record(c, tx, audit.Input{Action: "production.recipe_delete", Entity: "ProductionRecipe", EntityID: c.Params("id"),
-			Summary: "Deleted recipe version effective " + dates.FormatDate(eff), Before: map[string]string{"productId": product, "effectiveFrom": dates.ToISO(eff)}}); err != nil {
+		if err := audit.Record(c, tx, audit.Input{Action: "production.recipe_remove", Entity: "ProductionRecipe", EntityID: c.Params("id"),
+			Summary: "Removed recipe version effective " + dates.FormatDate(eff) + ": " + reason, Before: map[string]string{"productId": product, "effectiveFrom": dates.ToISO(eff)},
+			After: map[string]any{"removed": true, "reason": reason}}); err != nil {
 			return err
 		}
 		return c.SendStatus(204)
