@@ -397,6 +397,18 @@ func TestConflictCreationAndResolution(t *testing.T) {
 	if n := count(t, f.e, `SELECT count(*) FROM "AuditLog" WHERE action='sync.conflict_resolve'`); n != 2 {
 		t.Fatalf("audit rows %d", n)
 	}
+	// §5.5: both versions are in the immutable audit trail, on creation and on resolution.
+	for _, cid := range []string{id, id2} {
+		var openServer, openClient, resServer, resClient string
+		if err := f.e.Pool.QueryRow(t.Context(), `SELECT "before"->'serverData'->>'text', "after"->'clientPayload'->>'text' FROM "AuditLog"
+			WHERE action='sync.conflict_open' AND "entityId"=$1`, cid).Scan(&openServer, &openClient); err != nil || openServer != "server" || !strings.HasPrefix(openClient, "client text") {
+			t.Fatalf("open audit %s: %v %q %q", cid, err, openServer, openClient)
+		}
+		if err := f.e.Pool.QueryRow(t.Context(), `SELECT "before"->'serverData'->>'text', "before"->'clientPayload'->>'text' FROM "AuditLog"
+			WHERE action='sync.conflict_resolve' AND "entityId"=$1`, cid).Scan(&resServer, &resClient); err != nil || resServer != "server" || !strings.HasPrefix(resClient, "client text") {
+			t.Fatalf("resolve audit %s: %v %q %q", cid, err, resServer, resClient)
+		}
+	}
 	if n := count(t, f.e, `SELECT count(*) FROM sync_conflict WHERE status='open'`); n != 0 {
 		t.Fatalf("open conflicts %d", n)
 	}
@@ -431,6 +443,13 @@ func TestNegativeStockFlagRoutesToReview(t *testing.T) {
 	}
 	if resp := f.e.Do("POST", "/api/sync/conflicts/"+id+"/resolve", map[string]any{"resolution": "acknowledge", "note": "counted, correct"}, pm); resp.StatusCode != 200 {
 		t.Fatalf("acknowledge: %d %s", resp.StatusCode, f.e.Text(resp))
+	}
+	// §5.5: the device version of the review item is audited on creation and on resolution.
+	if n := count(t, f.e, `SELECT count(*) FROM "AuditLog" WHERE action='sync.conflict_open' AND "entityId"=$1 AND "after"->'clientPayload'->>'text'='neg'`, id); n != 1 {
+		t.Fatalf("review open audit %d", n)
+	}
+	if n := count(t, f.e, `SELECT count(*) FROM "AuditLog" WHERE action='sync.conflict_resolve' AND "entityId"=$1 AND "before"->'clientPayload'->>'text'='neg' AND "after"->>'resolution'='acknowledge'`, id); n != 1 {
+		t.Fatalf("review resolve audit %d", n)
 	}
 }
 

@@ -492,6 +492,10 @@ func (m *module) processOne(ctx context.Context, tx pgx.Tx, w *work, actor Actor
 			_ = sp.Rollback(ctx)
 			return Reject(ReasonHandlerError, err.Error()), rec.Revision
 		}
+		if err := AuditReviewOpen(ctx, sp, actor, id, "negative_stock", rec, res.Reason); err != nil { // §5.5 audit
+			_ = sp.Rollback(ctx)
+			return Reject(ReasonHandlerError, err.Error()), rec.Revision
+		}
 		*reviews = append(*reviews, ReviewItem{ID: id, Kind: "negative_stock", Type: rec.Type, PlantID: plant, UserID: actor.UserID,
 			DeviceID: rec.DeviceID, RecordUUID: rec.UUID, Entity: res.Entity, EntityID: res.EntityID, Reason: res.Reason})
 	}

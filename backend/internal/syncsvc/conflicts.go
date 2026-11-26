@@ -29,12 +29,15 @@ type ConflictInput struct {
 // Conflict stores both versions in sync_conflict and returns a Conflict result for the record. Call it from a
 // handler when the server version changed underneath the client's edit. The ledger row is linked automatically.
 func Conflict(ctx context.Context, tx pgx.Tx, rec Record, actor Actor, in ConflictInput) Result {
-	var server any
+	var serverJSON []byte
 	if in.ServerData != nil {
-		b, err := json.Marshal(in.ServerData)
-		if err == nil {
-			server = b
+		if b, err := json.Marshal(in.ServerData); err == nil {
+			serverJSON = b
 		}
+	}
+	var server any
+	if serverJSON != nil {
+		server = serverJSON
 	}
 	plant := in.PlantID
 	if plant == "" {
@@ -51,12 +54,35 @@ func Conflict(ctx context.Context, tx pgx.Tx, rec Record, actor Actor, in Confli
 	if err != nil {
 		return Reject(ReasonHandlerError, err.Error())
 	}
+	if err := auditConflictOpen(ctx, tx, actor, id, "conflict", rec, serverJSON, in.ServerVersion, in.Reason); err != nil {
+		return Reject(ReasonHandlerError, err.Error())
+	}
 	reason := in.Reason
 	if reason == "" {
 		reason = i18n.T(actor.Lang, "sync.conflict_default")
 	}
 	return Result{Status: Conflicted, ReasonCode: ReasonConflict, Reason: reason, ServerVersion: in.ServerVersion, ConflictID: id,
 		Flags: []string{}, PlantID: plant, Entity: in.Entity, EntityID: in.EntityID}
+}
+
+// auditConflictOpen writes both versions of a new conflict / review item into the immutable audit trail (SRS §5.5
+// "both versions of any conflict are kept in the audit trail"): Before = the server version, After = the device
+// version. sync_conflict itself is a working table (its status changes on resolution); the audit row is the record.
+func auditConflictOpen(ctx context.Context, tx pgx.Tx, actor Actor, id, kind string, rec Record, server []byte, serverVersion int64, reason string) error {
+	var sv any
+	if server != nil {
+		sv = json.RawMessage(server)
+	}
+	before := map[string]any{"serverData": sv, "serverVersion": nilIf64(serverVersion)}
+	after := map[string]any{"clientPayload": json.RawMessage(payloadOrEmpty(rec.Payload)), "recordUuid": rec.UUID, "revision": rec.Revision,
+		"type": rec.Type, "deviceId": rec.DeviceID, "capturedAt": rec.CapturedAt, "reason": nilIf(reason)}
+	return audit.Log(ctx, tx, actor.Audit(), audit.Input{Action: "sync.conflict_open", Entity: "SyncConflict", EntityID: id,
+		Summary: kind + " " + rec.Type + " held for review", Before: before, After: after})
+}
+
+// AuditReviewOpen is auditConflictOpen for review items created by the push pipeline (negative stock).
+func AuditReviewOpen(ctx context.Context, tx pgx.Tx, actor Actor, id, kind string, rec Record, reason string) error {
+	return auditConflictOpen(ctx, tx, actor, id, kind, rec, nil, 0, reason)
 }
 
 // ConflictRow is the JSON shape of a conflict / review item.
@@ -251,9 +277,18 @@ func (m *module) resolveConflict(c *fiber.Ctx) error {
 				return nil, err
 			}
 		}
+		// both versions go into the immutable audit row (§5.5), with what was kept
+		after := map[string]any{"status": "resolved", "resolution": resolution, "note": note, "recordUuid": r.RecordUUID}
+		if merged != nil {
+			after["mergedPayload"] = merged
+		}
+		if applied != nil {
+			after["appliedServerId"] = nilIf(applied.ServerID)
+			after["appliedServerVersion"] = nilIf64(applied.ServerVersion)
+		}
+		before := map[string]any{"status": "open", "kind": r.Kind, "clientPayload": r.ClientPayload, "serverData": r.ServerData, "serverVersion": r.ServerVersion}
 		if err := audit.Record(c, tx, audit.Input{Action: "sync.conflict_resolve", Entity: "SyncConflict", EntityID: r.ID,
-			Summary: r.Kind + " " + r.Type + " resolved: " + resolution, Before: map[string]any{"status": "open"},
-			After: map[string]any{"resolution": resolution, "note": note, "recordUuid": r.RecordUUID}}); err != nil {
+			Summary: r.Kind + " " + r.Type + " resolved: " + resolution, Before: before, After: after}); err != nil {
 			return nil, err
 		}
 		return m.conflictFor(ctx, tx, u, r.ID, false)
