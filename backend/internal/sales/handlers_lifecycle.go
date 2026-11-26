@@ -544,8 +544,8 @@ func (h *handler) closeH(c *fiber.Ctx) error {
 	return h.respondSale(c, r, c.Params("id"), 200, nil)
 }
 
-// cancel: a draft is cancelled with its reason; a quotation or confirmed order opens a CANCEL approval
-// (the reason travels with it) and is cancelled when the last level approves.
+// cancel opens a CANCEL approval for a draft, quotation or confirmed order (ORD-04: reason and approval); the
+// reason travels with it and the order is cancelled when the last level approves.
 func (h *handler) cancel(c *fiber.Ctx) error {
 	r := newRq(c)
 	v, err := httpx.Body(c)

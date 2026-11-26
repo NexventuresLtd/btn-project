@@ -62,7 +62,7 @@ func TestStatePredicatesAndLegacy(t *testing.T) {
 	if payable(StClosed) || !payable(StDelivered) || !dispatchable(StReady) || !dispatchable(StDispatched) || dispatchable(StConfirmed) {
 		t.Fatal("payable / dispatchable")
 	}
-	if !cancelNeedsApproval(StConfirmed) || !cancelNeedsApproval(StQuoted) || cancelNeedsApproval(StDraft) {
+	if !cancelNeedsApproval(StConfirmed) || !cancelNeedsApproval(StQuoted) || !cancelNeedsApproval(StDraft) || cancelNeedsApproval(StReady) {
 		t.Fatal("cancel approval rule")
 	}
 	if amendable(StDraft) || amendable(StClosed) || !amendable(StDispatched) {
@@ -228,7 +228,7 @@ func TestDuplicateScoring(t *testing.T) {
 }
 
 func TestApprovalLevels(t *testing.T) {
-	gm := string(auth.RoleGeneralManager)
+	gm := string(auth.RoleProductionManager) // discount / role-bound level: the Production Manager (SRS §8)
 	th := []approvals.Level{{Level: 1, Permission: "sales.approve", Label: "SM"}, {Level: 2, Permission: "sales.approve", Role: &gm, Label: "GM"}}
 	if l := requiredLevels(ApprConfirm, nil, false); len(l) != 0 {
 		t.Fatal("no thresholds, no discount → no approval")
@@ -253,15 +253,18 @@ func TestApprovalLevels(t *testing.T) {
 		t.Fatal("all decided")
 	}
 	sm := &auth.User{ID: "sm", Role: auth.RoleSalesManager}
-	gmU := &auth.User{ID: "gm", Role: auth.RoleGeneralManager}
-	md := &auth.User{ID: "md", Role: auth.RoleManagingDirector}
+	gmU := &auth.User{ID: "pm", Role: auth.RoleProductionManager}
+	md := &auth.User{ID: "sm2", Role: auth.RoleSalesManager}
 	if mayDecide(sm, th[0], "sm", nil) {
 		t.Fatal("own request")
 	}
 	if !mayDecide(md, th[0], "sm", nil) || mayDecide(md, th[1], "sm", nil) || !mayDecide(gmU, th[1], "sm", nil) {
 		t.Fatal("role-bound level")
 	}
-	if mayDecide(gmU, th[1], "sm", map[string]bool{"gm": true}) {
+	if mayDecide(&auth.User{ID: "gm", Role: auth.RoleGeneralManager}, th[0], "sm", nil) {
+		t.Fatal("top management reads orders only (SRS §8)")
+	}
+	if mayDecide(gmU, th[1], "sm", map[string]bool{"pm": true}) {
 		t.Fatal("one person per request")
 	}
 	if mayDecide(&auth.User{ID: "x", Role: auth.RoleSupervisor}, th[0], "sm", nil) {

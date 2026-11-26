@@ -3,7 +3,7 @@ package sales
 // Order lifecycle (SRS ORD-04, Figure 3). Pure: no database access, so every rule is unit-tested.
 //
 //	DRAFT → QUOTED → CONFIRMED → IN_PRODUCTION / FROM_STOCK → READY → DISPATCHED (partial keeps it open) → DELIVERED → CLOSED
-//	CANCELLED is reachable from DRAFT, QUOTED or CONFIRMED (reason; QUOTED/CONFIRMED also need approval).
+//	CANCELLED is reachable from DRAFT, QUOTED or CONFIRMED, always with a reason and an approval (Figure 3).
 //
 // "Sale".orderStatus holds this state; the legacy "Sale".status (DRAFT | CONFIRMED | CANCELLED, read by the dashboard,
 // receivables, privacy and the importer) is kept in step by a trigger (legacyStatus mirrors it).
@@ -85,8 +85,10 @@ func payable(s string) bool {
 // cancellable: Figure 3 allows cancellation from Draft, Quoted or Confirmed.
 func cancellable(s string) bool { return s == StDraft || s == StQuoted || s == StConfirmed }
 
-// cancelNeedsApproval: a draft is cancelled with a reason; a quotation or a confirmed order also needs approval.
-func cancelNeedsApproval(s string) bool { return s == StQuoted || s == StConfirmed }
+// cancelNeedsApproval: Figure 3 — "Cancelled is reachable from Draft, Quoted or Confirmed (with reason and approval)".
+// Every cancellation, a draft included, goes through a CANCEL approval (value thresholds + a sales.cancel level,
+// decided by someone other than the requester).
+func cancelNeedsApproval(s string) bool { return cancellable(s) }
 
 // amendable: commercial terms of a confirmed order change only through an approved amendment, until it is closed.
 func amendable(s string) bool {

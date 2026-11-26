@@ -213,7 +213,7 @@ function SaleView({ sale }: { sale: SaleDetail }) {
             {canReturn ? <Button variant="secondary" icon={<RotateCcw className="size-4" />} onClick={() => setModal("return")}>{tt("sales.detail.return")}</Button> : null}
             {canAmend ? <Button variant="secondary" icon={<FilePenLine className="size-4" />} onClick={() => setModal("amend")}>{tt("orders.detail.amend")}</Button> : null}
             {can("sales.view") ? <Button variant="ghost" icon={<MessageSquarePlus className="size-4" />} onClick={() => setModal("comm")}>{tt("orders.comm.log")}</Button> : null}
-            {canCancel ? <Button variant="ghost" className="text-red-600 hover:bg-red-50 hover:text-red-700" icon={<Ban className="size-4" />} onClick={() => setModal("cancel")}>{st === "DRAFT" ? tt("sales.detail.cancelSale") : tt("orders.detail.requestCancel")}</Button> : null}
+            {canCancel ? <Button onlineOnly variant="ghost" className="text-red-600 hover:bg-red-50 hover:text-red-700" icon={<Ban className="size-4" />} onClick={() => setModal("cancel")}>{tt("orders.detail.requestCancel")}</Button> : null}
           </>
         }
       />
@@ -426,14 +426,14 @@ function SaleView({ sale }: { sale: SaleDetail }) {
         open={modal === "cancel"}
         onClose={close}
         title={tt("sales.detail.cancelTitle", { no: sale.number })}
-        confirmLabel={st === "DRAFT" ? tt("sales.detail.cancelSale") : tt("orders.detail.requestCancel")}
+        confirmLabel={tt("orders.detail.requestCancel")}
         loading={cancel.isPending}
         error={cancel.error}
         onSubmit={(r) => cancel.mutate(r)}
         description={
           cancelBlocked ? (
             <Alert tone="amber">{tt("sales.detail.cancelBlocked", { items: [activeDeliveries.length ? tt("sales.detail.activeDns", { count: activeDeliveries.length }) : "", sale.payments.length ? tt("sales.detail.paymentsCount", { count: sale.payments.length }) : ""].filter(Boolean).join(tt("sales.detail.and")) })}</Alert>
-          ) : st === "DRAFT" ? tt("sales.detail.cancelStays") : tt("orders.detail.cancelApprovalNote")
+          ) : tt("orders.detail.cancelApprovalNote")
         }
       />
       <ReasonModal
