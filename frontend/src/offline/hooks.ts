@@ -92,11 +92,9 @@ export function useOfflineMutation<P>(recordType: string) {
       }
       setStatus("saving");
       setError(null);
-      const out: SubmitResult[] = [];
-      for (const p of payloads) {
-        const item = await s.capture({ type: recordType, payload: p, uuid: payloads.length === 1 ? opts.uuid : undefined });
-        out.push({ uuid: item.uuid, seq: item.seq, status: "pending" });
-      }
+      // one transaction for the whole action (all-or-nothing, one screen refresh)
+      const items = await s.captureMany(payloads.map((p) => ({ type: recordType, payload: p, uuid: payloads.length === 1 ? opts.uuid : undefined })));
+      const out: SubmitResult[] = items.map((item) => ({ uuid: item.uuid, seq: item.seq, status: "pending" }));
       opts.optimisticUpdate?.(qc);
       setStatus("saved");
       const online = connectivity.get().status !== "offline";

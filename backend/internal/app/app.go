@@ -135,6 +135,8 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 	d.Auth.AccountRoutes(api.Group("/account/passkeys"))
 	platform.Register(api, d) // F1: /api/notifications, /api/ops/jobs, /api/ops/monitoring (each route checks auth itself)
 	branding.Register(api, d) // /api/public/* (no auth) and /api/admin/* (SUPER_ADMIN)
+	// F3/T-08: final upload of a device revoked while offline (signed-in requests fall through to /sync/push)
+	syncsvc.RegisterFinalUpload(api, d)
 
 	// ── everything below requires a signed-in user who has set their own password ──
 	api.Use(auth.RequireAuth())

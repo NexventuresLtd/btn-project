@@ -449,12 +449,16 @@ export async function afterSignOut() {
 
 /* ───────── revoked device (OFF-12) ───────── */
 
-/** Device revoked by an administrator (sync 403 or lib/api DEVICE_REVOKED_EVENT). */
+/**
+ * Device revoked by an administrator (sync 403, the final upload's answer, or lib/api DEVICE_REVOKED_EVENT).
+ * Nothing left to deliver → the user's data is erased at once (purged after upload); otherwise the dialog offers
+ * export, then erase.
+ */
 export async function handleRevoked() {
   set({ revoked: true });
   if (store) {
     await refreshCounts();
-    if (state.counts.pending === 0 && state.userId) await wipeUser(state.userId).then(() => set({ revoked: true }));
+    if (state.counts.pending + state.counts.issues === 0 && state.userId) await wipeUser(state.userId).then(() => set({ revoked: true }));
   }
 }
 

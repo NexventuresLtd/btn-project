@@ -44,6 +44,7 @@ const (
 	FlagSeqGap        = "SEQ_GAP"
 	FlagSeqLate       = "SEQ_LATE"
 	FlagNegativeStock = "NEGATIVE_STOCK"
+	FlagRevokedDevice = "REVOKED_DEVICE" // accepted in the final upload of a device revoked while offline (T-08)
 )
 
 // Reason codes of rejected / conflict / duplicate results.
@@ -60,6 +61,7 @@ const (
 	ReasonStaleRevision     = "stale_revision"
 	ReasonAlreadyAccepted   = "already_accepted"
 	ReasonHandlerError      = "handler_error"
+	ReasonDeviceRevoked     = "device_revoked" // captured after an administrator revoked the device
 )
 
 // Record is one client record as received (OFF-06).
@@ -117,6 +119,8 @@ type Actor struct {
 	Lang        i18n.Lang
 	// DB is the pull transaction (repeatable read, read only) for pull functions; nil in handlers (use tx).
 	DB db.DBTX
+
+	finalUpload bool // the device was revoked; this is its last upload (records are flagged REVOKED_DEVICE)
 }
 
 // User returns the current identity as an *auth.User (for auth.PlantFilter / AssertPlantAccess helpers).

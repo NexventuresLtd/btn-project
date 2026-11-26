@@ -92,29 +92,56 @@ export class OfflineStore {
   /* ───────── capture ───────── */
 
   /** Save a captured event locally. Resolves only after IndexedDB committed it. */
-  async capture({ type, payload, uuid = globalThis.crypto.randomUUID(), capturedAt = new Date().toISOString() }: CaptureInput): Promise<OutboxItem> {
-    const def = getRecordType(type);
-    const key = def?.key ? def.key(payload) : uuid;
-    const date = def?.date ? def.date(payload) : null;
-    const existing = await this.db.records.get([type, key]);
-    const prevLocal = existing ? await this.vault.decrypt<unknown>(existing.box, `records|${type}|${key}`) : null;
-    const local = def?.toLocal ? def.toLocal(payload, prevLocal) : payload;
-    const secret: OutboxSecret = { payload };
-    const [box, recBox] = await Promise.all([this.vault.encrypt(secret, `outbox|${uuid}`), this.vault.encrypt(local, `records|${type}|${key}`)]);
-    let row!: OutboxRow;
+  async capture(input: CaptureInput): Promise<OutboxItem> {
+    return (await this.captureMany([input]))[0]!;
+  }
+
+  /**
+   * Save several events of one user action (e.g. a day's attendance) in ONE transaction with consecutive seqs:
+   * all or nothing on a power cut, one change notification — the screen refreshes once, not once per record (NFR-P3).
+   */
+  async captureMany(inputs: CaptureInput[]): Promise<OutboxItem[]> {
+    if (!inputs.length) return [];
+    const now = new Date().toISOString();
+    const items = inputs.map(({ type, payload, uuid = globalThis.crypto.randomUUID(), capturedAt = now }) => {
+      const def = getRecordType(type);
+      return { type, payload, uuid, capturedAt, def, key: def?.key ? def.key(payload) : uuid, date: def?.date ? def.date(payload) : null };
+    });
+    // local copies: toLocal merges into the previous local record (an earlier one of the same batch wins over the stored one)
+    const merged = new Map<string, unknown>();
+    const locals: unknown[] = [];
+    for (const it of items) {
+      if (!it.def?.toLocal) {
+        locals.push(it.payload);
+        continue;
+      }
+      const k = `${it.type}|${it.key}`;
+      let prev = merged.get(k);
+      if (prev === undefined) {
+        const existing = await this.db.records.get([it.type, it.key]);
+        prev = existing ? await this.vault.decrypt<unknown>(existing.box, `records|${it.type}|${it.key}`) : null;
+      }
+      const local = it.def.toLocal(it.payload, prev);
+      merged.set(k, local);
+      locals.push(local);
+    }
+    const boxes = await Promise.all(items.map((it, i) => Promise.all([
+      this.vault.encrypt({ payload: it.payload } satisfies OutboxSecret, `outbox|${it.uuid}`),
+      this.vault.encrypt(locals[i], `records|${it.type}|${it.key}`),
+    ])));
+    const rows: OutboxRow[] = [];
     await this.db.transaction("rw", this.db.outbox, this.db.records, this.db.meta, async () => {
-      const seq = (((await this.db.meta.get("seq"))?.value as number | undefined) ?? 0) + 1;
-      await this.db.meta.put({ key: "seq", value: seq });
-      row = {
-        uuid, seq, revision: 1, type, schemaVersion: def?.schemaVersion ?? 1, userId: this.userId, deviceId: this.deviceId,
-        capturedAt, status: "pending", key, attempts: 0, lastAttemptAt: null, syncedAt: null, reasonCode: null, box,
-      };
-      await this.db.outbox.add(row);
-      await this.db.records.put({ type, key, uuid, status: "pending", date, updatedAt: capturedAt, box: recBox });
+      const first = (((await this.db.meta.get("seq"))?.value as number | undefined) ?? 0) + 1;
+      await this.db.meta.put({ key: "seq", value: first + items.length - 1 });
+      items.forEach((it, i) => rows.push({
+        uuid: it.uuid, seq: first + i, revision: 1, type: it.type, schemaVersion: it.def?.schemaVersion ?? 1, userId: this.userId, deviceId: this.deviceId,
+        capturedAt: it.capturedAt, status: "pending", key: it.key, attempts: 0, lastAttemptAt: null, syncedAt: null, reasonCode: null, box: boxes[i]![0],
+      }));
+      await this.db.outbox.bulkAdd(rows);
+      await this.db.records.bulkPut(items.map((it, i) => ({ type: it.type, key: it.key, uuid: it.uuid, status: "pending" as const, date: it.date, updatedAt: it.capturedAt, box: boxes[i]![1] })));
     });
     this.emit();
-    const { box: _b, ...rest } = row; // eslint-disable-line @typescript-eslint/no-unused-vars
-    return { ...rest, secret };
+    return rows.map(({ box: _b, ...rest }, i) => ({ ...rest, secret: { payload: items[i]!.payload } })); // eslint-disable-line @typescript-eslint/no-unused-vars
   }
 
   /** Correct a rejected/conflict record and queue it again: same uuid, revision+1, new seq (OFF-17). */
@@ -266,8 +293,13 @@ export class OfflineStore {
     await this.db.transaction("rw", [this.db.records, this.db.ref, this.db.balances], async () => {
       for (const w of recordWrites) {
         const cur = await this.db.records.get([w.type, w.key]);
-        if (cur && cur.status === "pending") continue; // local unsynced edit stays visible until its own result arrives
-        await this.db.records.put(w);
+        // local unsynced edit stays visible until its own result arrives; a Conflict / Rejected one until it is
+        // resolved, corrected or dismissed (same rule as putServerRecords) — its badge must not vanish on the next pull
+        if (cur && (cur.status === "pending" || cur.status === "conflict" || cur.status === "rejected")) continue;
+        // a record this device captured keeps its uuid + "synced" status (badge) with the server's current data,
+        // as in putServerRecords — the pull right after the upload brings back the very records just accepted
+        if (cur?.status === "synced") await this.db.records.put({ ...w, uuid: cur.uuid, status: "synced", updatedAt: cur.updatedAt });
+        else await this.db.records.put(w);
       }
       for (const k of recordDeletes) {
         const cur = await this.db.records.get(k);

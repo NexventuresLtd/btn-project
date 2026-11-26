@@ -29,5 +29,6 @@
   "sync.notify.conflict_title": "Conflit de synchronisation : {type}",
   "sync.notify.conflict_body": "Motif : {reason}",
   "sync.notify.negative_title": "Stock négatif après synchronisation : {type}",
-  "sync.notify.negative_body": "Motif : {reason}"
+  "sync.notify.negative_body": "Motif : {reason}",
+  "sync.captured_after_revoke": "Saisi après le retrait de l'accès de cet appareil par un administrateur — il ne peut pas être accepté depuis cet appareil."
 }

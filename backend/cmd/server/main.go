@@ -19,6 +19,7 @@ import (
 	"btn-ops/internal/deps"
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/mail"
+	"btn-ops/internal/ratelimit"
 	"btn-ops/internal/settings"
 )
 
@@ -58,6 +59,8 @@ func main() {
 		fmt.Println("ok")
 		return
 	}
+	// RATE_LIMIT_AUTH_PER_MIN (README): per-IP limit on /api/auth/*; the default 30/min equals the built-in rule.
+	ratelimit.Configure("auth", ratelimit.Rule{PerMinute: cfg.AuthRateLimit, Burst: max(1, cfg.AuthRateLimit/3)})
 	a := app.New(d)
 	jobsDone := startJobs(ctx, d) // F1: background job scheduler (advisory-lock leader), stops with ctx
 

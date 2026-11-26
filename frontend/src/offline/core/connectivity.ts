@@ -18,7 +18,7 @@ type Listener = () => void;
 
 const PROBE_TIMEOUT_MS = 4_000;
 
-class Connectivity {
+export class Connectivity {
   private snap: ConnectivitySnapshot = { status: "unknown", since: Date.now(), lastProbeAt: null, latencyMs: null };
   private listeners = new Set<Listener>();
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -42,31 +42,38 @@ class Connectivity {
   /** One real reachability check. */
   probe = (): Promise<boolean> => {
     if (this.probing) return this.probing;
-    this.probing = (async () => {
-      if (typeof navigator !== "undefined" && navigator.onLine === false) {
-        this.set("offline", null);
-        return false;
-      }
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
-      const t0 = performance.now();
-      try {
-        const res = await fetch(`${this.probeUrl}?t=${Date.now()}`, { cache: "no-store", credentials: "omit", signal: ctrl.signal, headers: { Accept: "application/json" } });
-        // any HTTP answer from our API means the network path works; 5xx from a proxy with no API counts as offline
-        const ok = res.status < 500 && (res.headers.get("content-type") ?? "").includes("json");
-        this.set(ok ? "online" : "offline", Math.round(performance.now() - t0));
-        return ok;
-      } catch {
-        this.set("offline", null);
-        return false;
-      } finally {
-        clearTimeout(timer);
-        this.probing = null;
-        this.schedule();
-      }
-    })();
+    // clear the in-flight marker in a chained step, never inside the async body: when the body finishes without
+    // awaiting (navigator.onLine === false) it completes synchronously — before `this.probing` is even assigned —
+    // and a marker cleared there would be overwritten by an already settled promise, wedging every later probe.
+    const run = this.check().catch(() => false);
+    this.probing = run.finally(() => {
+      this.probing = null;
+      this.schedule();
+    });
     return this.probing;
   };
+
+  private async check(): Promise<boolean> {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      this.set("offline", null);
+      return false;
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+    const t0 = performance.now();
+    try {
+      const res = await fetch(`${this.probeUrl}?t=${Date.now()}`, { cache: "no-store", credentials: "omit", signal: ctrl.signal, headers: { Accept: "application/json" } });
+      // any HTTP answer from our API means the network path works; 5xx from a proxy with no API counts as offline
+      const ok = res.status < 500 && (res.headers.get("content-type") ?? "").includes("json");
+      this.set(ok ? "online" : "offline", Math.round(performance.now() - t0));
+      return ok;
+    } catch {
+      this.set("offline", null);
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   /** Callers that saw a network failure report it, triggering an immediate re-check. */
   reportFailure = () => void this.probe();

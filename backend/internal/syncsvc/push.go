@@ -62,11 +62,18 @@ type PushOutcome struct {
 	Results          []RecordResult `json:"results"`
 	ServerTime       time.Time      `json:"serverTime"`
 	ClockSkewSeconds int            `json:"clockSkewSeconds"`
+	// DeviceStatus "revoked" = this was the device's final upload (T-08): the device must lock out and purge its data.
+	DeviceStatus string `json:"deviceStatus,omitempty"`
+}
+
+// pushOpts: a final upload of a revoked device accepts only records captured before revokedAt.
+type pushOpts struct {
+	revokedAt *time.Time
 }
 
 // resolveDevice finds the device row for a push/status: bound sessions use their device (the body/header id must
 // match); device-less sessions (devtools/tests) get a row created for (deviceId, user).
-func (m *module) resolveDevice(c *fiber.Ctx, ctx context.Context, q db.DBTX, u *auth.User, bodyDevice string) (rowID, deviceID string, snap auth.PermSnapshot, err error) {
+func (m *module) resolveDevice(c *fiber.Ctx, ctx context.Context, q db.DBTX, u *auth.User, bodyDevice string, allowRevoked ...bool) (rowID, deviceID string, snap auth.PermSnapshot, err error) {
 	hdr := auth.RequestDeviceID(c)
 	if bodyDevice != "" {
 		if _, perr := uuid.Parse(bodyDevice); perr != nil {
@@ -111,7 +118,7 @@ func (m *module) resolveDevice(c *fiber.Ctx, ctx context.Context, q db.DBTX, u *
 	if err := q.QueryRow(ctx, `SELECT status, perm_snapshot FROM device WHERE id=$1`, rowID).Scan(&status, &raw); err != nil {
 		return "", "", snap, err
 	}
-	if status != auth.DeviceActive {
+	if status != auth.DeviceActive && !(len(allowRevoked) > 0 && allowRevoked[0] && status == auth.DeviceRevoked) {
 		return "", "", snap, httpx.NewKey(403, auth.CodeDeviceRevoked, "auth.device_revoked")
 	}
 	if len(raw) > 0 {
@@ -197,6 +204,10 @@ type work struct {
 
 // Push processes one batch for user u (exported for benchmarks and tools).
 func (m *module) Push(c *fiber.Ctx, ctx context.Context, u *auth.User, body pushBody, lang i18n.Lang) (*PushOutcome, error) {
+	return m.pushWith(c, ctx, u, body, lang, pushOpts{})
+}
+
+func (m *module) pushWith(c *fiber.Ctx, ctx context.Context, u *auth.User, body pushBody, lang i18n.Lang, opts pushOpts) (*PushOutcome, error) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	maxSkew := m.maxSkew(ctx)
 	out := &PushOutcome{Results: make([]RecordResult, len(body.Records)), ServerTime: now}
@@ -249,6 +260,9 @@ func (m *module) Push(c *fiber.Ctx, ctx context.Context, u *auth.User, body push
 		}
 		if cerr == nil {
 			w.rec.CapturedAt = ca.UTC().Truncate(time.Millisecond)
+			if w.err == nil && opts.revokedAt != nil && w.rec.CapturedAt.After(*opts.revokedAt) {
+				fail(ReasonDeviceRevoked, "sync.captured_after_revoke")
+			}
 		}
 		items[i] = w
 	}
@@ -256,11 +270,12 @@ func (m *module) Push(c *fiber.Ctx, ctx context.Context, u *auth.User, body push
 	var reviews []ReviewItem
 	var counts = map[Status]int{}
 	err := db.Tx(ctx, m.d.Pool, func(tx pgx.Tx) error {
-		rowID, deviceID, snap, err := m.resolveDevice(c, ctx, tx, u, body.DeviceID)
+		rowID, deviceID, snap, err := m.resolveDevice(c, ctx, tx, u, body.DeviceID, opts.revokedAt != nil)
 		if err != nil {
 			return err
 		}
 		actor := m.actorFor(c, u, rowID, deviceID, snap)
+		actor.finalUpload = opts.revokedAt != nil
 		// One push per device at a time: ordering and duplicate detection are then race-free.
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 7))`, deviceID); err != nil {
 			return err
@@ -400,6 +415,9 @@ func (m *module) processOne(ctx context.Context, tx pgx.Tx, w *work, actor Actor
 		}
 		if rec.Seq > *lastSeq {
 			*lastSeq = rec.Seq
+		}
+		if actor.finalUpload {
+			flags = append(flags, FlagRevokedDevice)
 		}
 	}
 	rec.Flags = flags

@@ -29,5 +29,6 @@
   "sync.notify.conflict_title": "Sync conflict: {type}",
   "sync.notify.conflict_body": "Reason: {reason}",
   "sync.notify.negative_title": "Negative stock after sync: {type}",
-  "sync.notify.negative_body": "Reason: {reason}"
+  "sync.notify.negative_body": "Reason: {reason}",
+  "sync.captured_after_revoke": "Recorded after this device's access was removed by an administrator — it cannot be accepted from this device."
 }

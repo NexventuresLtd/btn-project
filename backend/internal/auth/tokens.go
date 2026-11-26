@@ -69,6 +69,16 @@ type sessionEntry struct {
 
 var errNoSession = errors.New("no session")
 
+const revokedUserKey = "revokedDeviceUser"
+
+// RevokedDeviceUser is the owner of a still-unexpired session on a device an administrator revoked. The request is
+// NOT signed in (FromCtx is nil, RequireAuth answers 403 device_revoked); only the sync service's final upload
+// (SRS §12.2 T-08: "locked out; local data purged after upload") may accept records captured before the revocation.
+func RevokedDeviceUser(c *fiber.Ctx) *User {
+	u, _ := c.Locals(revokedUserKey).(*User)
+	return u
+}
+
 // unauthenticated is the 401/403 for a request without a usable user (token_expired / device_revoked / unauthorized).
 func unauthenticated(c *fiber.Ctx) error {
 	switch c.Locals("authError") {
@@ -264,6 +274,10 @@ func (s *Service) LoadSession() fiber.Handler {
 		}
 		if e.deviceRevoked || (e.revokedReason != nil && *e.revokedReason == ReasonDeviceRevoked) {
 			c.Locals("authError", CodeDeviceRevoked)
+			if e.user.DeviceRowID != "" && e.sessionExpires.After(time.Now()) {
+				u := e.user // only the final upload of a revoked device reads it (RevokedDeviceUser); everything else is 403
+				c.Locals(revokedUserKey, &u)
+			}
 			return c.Next()
 		}
 		if e.revokedReason != nil {

@@ -262,6 +262,11 @@ Small derived sets (e.g. balances) use `syncsvc.RegisterSnapshot(entity, func(ct
 Core F3 entities: `sites`, `products`, `materials`, `customers`, `workers` (minimised, own site), `refdata`, snapshots `scope`, `balances`, `refdata`
 (until `refdata_item` is versioned). Admin monitor: `/admin/sync-monitor` (`GET /api/sync/monitor`, `/monitor/ledger[/:id]`, `admin.monitor`).
 Limits: 200 records/batch, 1 MB body, 64 KB/record; push 60/min (burst 20) and reads 240/min per user+device (`syncsvc.PushRule`, `ReadRule`).
+**Revoked while offline (T-08):** `syncsvc.RegisterFinalUpload` (mounted before `RequireAuth`) lets a device whose session was alive when an
+administrator revoked it make one final `POST /sync/push` within `auth.offlineUnlockDays` of the revocation: records captured before
+`revoked_at` are processed normally and flagged `REVOKED_DEVICE`, later ones are rejected `device_revoked`; the reply carries
+`"deviceStatus":"revoked"` and the client then locks out and erases its data. A batch with nothing captured before the revocation, pulls and
+every other call stay `403 device_revoked`.
 
 ## Shared services — F1 (notify / jobs / monitoring)
 

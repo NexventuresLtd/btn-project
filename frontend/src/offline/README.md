@@ -7,7 +7,7 @@ attendance (`modules/attendance/offline.ts` + `DailyTab.tsx`; server handler `ba
 | SRS | Where |
 |---|---|
 | OFF-01, OFF-21 installable PWA, app shell offline, safe updates | `vite.config.ts` (VitePWA, injectManifest), `src-sw/sw.ts`, `pwa.ts`, `public/pwa/*` |
-| OFF-02, OFF-03 survive power loss, save before confirming | `core/store.ts` `capture()` — outbox row + local record + seq in one IndexedDB transaction |
+| OFF-02, OFF-03 survive power loss, save before confirming | `core/store.ts` `capture()` / `captureMany()` — outbox rows + local records + seqs of one user action in one IndexedDB transaction |
 | OFF-04, OFF-05 connectivity + indicator | `core/connectivity.ts` (real `/api/health` probe, ≤ 5 s), `ui/ConnectionIndicator.tsx` |
 | OFF-06 uuid / device / seq | `core/deviceId.ts` (`X-Device-Id` on every request), `core/store.ts` |
 | OFF-07, OFF-08, OFF-22 auto sync, ordered resumable batches, back-off, slow links | `core/engine.ts`, `core/backoff.ts` |
@@ -51,7 +51,7 @@ const { uuid } = await submit(payload);                 // resolves after the re
 await submitMany(rows, { optimisticUpdate: (qc) => qc.setQueryData(["production", "today"], …) });
 ```
 
-It validates, writes outbox + local record in one transaction, then toasts *"Saved — syncing"* (online) or
+It validates, writes outbox + local records in one transaction (`submitMany` = one transaction and one screen refresh for the whole action), then toasts *"Saved — syncing"* (online) or
 *"Saved on this device — will sync when online"* (offline) and triggers the engine. Throws `OfflineValidationError`
 (invalid) or `OfflineLockedError` (vault locked — the unlock dialog opens; online forms may fall back to a direct
 `post()`, see `DailyTab.tsx`).
@@ -109,8 +109,10 @@ Correct & resubmit = same uuid, `revision + 1`, new seq (idempotency key = uuid 
   is a non-extractable WebCrypto key in IndexedDB, so a copied database cannot be opened elsewhere.
 * The key lives in memory only while unlocked. Offline unlock is refused after the package expiry (default 14 days) or a
   clock rollback; pending data is kept and syncs after an online sign-in.
-* Sign-out with an empty outbox (or after confirming the data-loss warning) deletes the user's database. A revoked device
-  is locked out; if nothing is pending its data is erased at once, otherwise the user can export, then erase.
+* Sign-out with an empty outbox (or after confirming the data-loss warning) deletes the user's database. A device revoked
+  while offline makes one **final upload** at its next sync (the server accepts records captured before the revocation,
+  flagged `REVOKED_DEVICE`, and answers `deviceStatus:"revoked"`), then it is locked out; with nothing left pending or in
+  sync issues its data is erased at once (T-08), otherwise the user can export, then erase.
 
 ## Rate limits (auth endpoints)
 
@@ -142,6 +144,10 @@ are handled per record type (`schemaVersion` + `migrate`) when the record is sen
 * `pnpm test` — `core/*.test.ts`: crypto round-trip and wrong PIN / other device, PIN lock-out, export format,
   outbox seq/order + encryption, batches ≤ 200, resumable upload with lost acks, back-off schedule, bisecting a bad
   record, revoked / expired session, rejected → resubmit, conflict → dismiss, pending edit vs. pulled delta, pruning, quota.
+* `pnpm test:e2e:acceptance` — `e2e/offline-acceptance.mjs`: the SRS §12.2 offline acceptance scenarios T-01…T-10 and
+  NFR-P3 in real browsers (several devices, power cut by killing the browser, connection drop mid-batch via CDP Fetch,
+  device clock moved, admin revoke, conflict resolution) with server/DB checks; throw-away `acc-*@btn.test` accounts and
+  all created data are deleted afterwards. See the file header for env vars.
 * `pnpm test:e2e:offline` — `e2e/offline-attendance.mjs` (puppeteer-core + system Chrome) against a running API and a
   `vite preview` build: installability, offline capture, reload with no network, PIN unlock, encryption at rest,
   reconnect ≤ 5 s, automatic sync, server-side exactly-once, sign-out guard and wipe. See the file header for env vars.

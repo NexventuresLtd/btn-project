@@ -130,6 +130,7 @@ type PushResponse struct {
 	Results          []SyncResult `json:"results"`
 	ServerTime       time.Time    `json:"serverTime"`
 	ClockSkewSeconds int          `json:"clockSkewSeconds"`
+	DeviceStatus     string       `json:"deviceStatus"` // "revoked" = final upload of a revoked device
 }
 
 // SyncRecord builds a record (new uuid, capturedAt now, revision 1); seq 0 = assigned by Push.

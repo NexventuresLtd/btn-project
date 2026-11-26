@@ -28,6 +28,8 @@ export class TransportError extends Error {
 export interface PushResponse {
   results: PushResult[];
   serverTime?: string;
+  /** "revoked": the device's final upload after an administrator revoked it (T-08) — lock out once it is done */
+  deviceStatus?: string;
 }
 
 export interface PullResponse {
@@ -166,7 +168,7 @@ export function httpTransport(opts: { base?: string; fetch?: FetchLike; headers?
   return {
     async push(deviceId, records, timeoutMs) {
       const r = await call<PushResponse & { results?: PushResult[] }>("/sync/push", { body: { deviceId, clientTime: new Date().toISOString(), records }, timeoutMs });
-      return { results: (r?.results ?? []).map(normaliseResult), serverTime: r?.serverTime };
+      return { results: (r?.results ?? []).map(normaliseResult), serverTime: r?.serverTime, deviceStatus: r?.deviceStatus };
     },
     async pull(cursor, limit, timeoutMs) {
       const q = new URLSearchParams({ limit: String(limit) });

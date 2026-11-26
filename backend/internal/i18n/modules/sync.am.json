@@ -29,5 +29,6 @@
   "sync.notify.conflict_title": "የማመሳሰል ግጭት፦ {type}",
   "sync.notify.conflict_body": "ምክንያት፦ {reason}",
   "sync.notify.negative_title": "ከማመሳሰል በኋላ አሉታዊ ክምችት፦ {type}",
-  "sync.notify.negative_body": "ምክንያት፦ {reason}"
+  "sync.notify.negative_body": "ምክንያት፦ {reason}",
+  "sync.captured_after_revoke": "ይህ መዝገብ አስተዳዳሪ የዚህን መሣሪያ መዳረሻ ካስወገደ በኋላ የተመዘገበ ነው — ከዚህ መሣሪያ ሊቀበል አይችልም።"
 }

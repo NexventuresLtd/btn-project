@@ -249,7 +249,9 @@ a new request or any password change voids it) **and** the 6-digit code. `POST /
 "serverTime","clockSkewSeconds"}` in request order. Δ4: idempotency on (uuid, revision): same pair → `duplicate` + `originalStatus` + the original
 fields; a later revision of an **accepted** uuid → `duplicate`/`already_accepted`; lower than a stored revision → `rejected`/`stale_revision`.
 reasonCodes `unknown_type invalid_record payload_too_large validation permission_denied permission_revoked site_scope not_found conflict
-stale_revision handler_error`; flags `CLOCK_SKEW SEQ_GAP SEQ_LATE NEGATIVE_STOCK`. `403 device_mismatch|device_revoked`, `429` + Retry-After.
+stale_revision handler_error device_revoked`; flags `CLOCK_SKEW SEQ_GAP SEQ_LATE NEGATIVE_STOCK REVOKED_DEVICE`. `403 device_mismatch|device_revoked`, `429` + Retry-After.
+A device revoked while offline gets one final push (records captured before the revocation, flagged `REVOKED_DEVICE`; reply `deviceStatus:"revoked"`),
+then everything is `403 device_revoked` (T-08; `backend/README.md` § F3).
 `GET /api/sync/records?uuids=a,b` → `{"items":[{"uuid","revision","status","reasonCode","reason","serverId","serverVersion","flags","conflictId",
 "conflictStatus","resolution"}]}` — latest state per uuid of the caller (badges after a manager resolves a conflict).
 

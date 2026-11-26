@@ -25,7 +25,7 @@ function mockServer() {
   let pullReset = false;
   const log: WireRecord[] = [];
   const batches: number[] = [];
-  let script: ("ok" | "network" | "500" | "400" | "revoked" | "401")[] = [];
+  let script: ("ok" | "network" | "500" | "400" | "revoked" | "401" | "final")[] = [];
   const rules: { reject?: (r: WireRecord) => string | null; conflict?: (r: WireRecord) => boolean } = {};
   const fetch = async (url: string, init: RequestInit): Promise<Response> => {
     const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -54,7 +54,7 @@ function mockServer() {
       applied.set(r.uuid, r.revision);
       return { uuid: r.uuid, status: "accepted", serverId: `s-${r.uuid.slice(0, 4)}`, serverVersion: 1 };
     });
-    return json(200, { results, serverTime: new Date().toISOString() });
+    return json(200, { results, serverTime: new Date().toISOString(), ...(step === "final" ? { deviceStatus: "revoked" } : {}) });
   };
   return { fetch, applied, log, batches, rules, firstOutcome, resolved, setReset: (v: boolean) => (pullReset = v), setScript: (s: typeof script) => (script = s) };
 }
@@ -209,11 +209,55 @@ describe("sync engine", () => {
     expect(await store.counts()).toMatchObject({ pending: 0 });
   });
 
+  it("revoked while offline: delivers the final upload, then locks out (no pull)", async () => {
+    const srv = mockServer();
+    for (let i = 0; i < 3; i++) await capture(i);
+    srv.setScript(["final"]);
+    let revoked = 0;
+    const e = engineFor(srv, { onRevoked: () => revoked++ });
+    const out = await e.sync();
+    expect(srv.applied.size).toBe(3); // uploaded first
+    expect(await store.counts()).toMatchObject({ pending: 0 });
+    expect(out).toMatchObject({ ok: false, pushed: 3 });
+    expect(e.state.blocked).toBe("revoked");
+    expect(revoked).toBe(1);
+    expect(await store.listRef("workers")).toHaveLength(0); // no pull after the lock-out
+  });
+
   it("keeps a local pending edit when the server's delta for the same record arrives first", async () => {
     await store.capture({ type: "test_mark", payload: { worker: "w9", status: "ABSENT", date: "2026-11-20" } });
     await store.applyChanges([{ entity: "test_marks", id: "x", op: "upsert", data: { date: "2026-11-20", worker: "w9", status: "PRESENT" } }], () => ({ type: "test_mark", key: (d) => `${d.date}|${d.worker}` }));
     const [rec] = await store.listRecords<{ status: string }>("test_mark");
     expect(rec).toMatchObject({ status: "ABSENT", _status: "pending" });
+  });
+
+  it("captureMany saves one action's records in one transaction with consecutive seqs and one change notification", async () => {
+    await capture(0);
+    let notified = 0;
+    store.subscribe(() => notified++);
+    const items = await store.captureMany([0, 1, 2].map((i) => ({ type: "test_mark", payload: { worker: `m${i}`, status: "PRESENT", date: "2026-11-21" } })));
+    expect(items.map((x) => x.seq)).toEqual([2, 3, 4]);
+    expect(notified).toBe(1);
+    expect(await store.counts()).toMatchObject({ pending: 4 });
+    expect((await store.listRecords("test_mark")).filter((r) => r._status === "pending")).toHaveLength(4);
+    const next = await capture(9);
+    expect(next.seq).toBe(5);
+  });
+
+  it("keeps a Conflict record's device version and badge when the server's delta arrives (until resolved)", async () => {
+    const srv = mockServer();
+    srv.rules.conflict = () => true;
+    const c = await store.capture({ type: "test_mark", payload: { worker: "w9", status: "ABSENT", date: "2026-11-20" } });
+    await engineFor(srv).sync(); // push → conflict, then the pull returns the server's PRESENT for the same worker-day
+    const [rec] = await store.listRecords<{ status: string }>("test_mark");
+    expect(rec).toMatchObject({ status: "ABSENT", _status: "conflict", _uuid: c.uuid });
+  });
+
+  it("keeps the Synced state of a device-captured record when the pull right after the upload returns it", async () => {
+    const own = await store.capture({ type: "test_mark", payload: { worker: "w9", status: "ABSENT", date: "2026-11-20" } });
+    await engineFor(mockServer()).sync(); // push accepted, then the pull returns the same worker-day (srv1)
+    const [rec] = await store.listRecords<{ status: string }>("test_mark");
+    expect(rec).toMatchObject({ status: "PRESENT", _status: "synced", _uuid: own.uuid }); // server data, device badge
   });
 
   it("prunes synced data outside the 60-day scope but never pending records", async () => {

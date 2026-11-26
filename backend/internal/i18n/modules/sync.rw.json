@@ -29,5 +29,6 @@
   "sync.notify.conflict_title": "Ukutumvikana mu guhuza: {type}",
   "sync.notify.conflict_body": "Impamvu: {reason}",
   "sync.notify.negative_title": "Ububiko munsi ya zeru nyuma yo guhuza: {type}",
-  "sync.notify.negative_body": "Impamvu: {reason}"
+  "sync.notify.negative_body": "Impamvu: {reason}",
+  "sync.captured_after_revoke": "Byanditswe nyuma y'uko umuyobozi akuraho uburenganzira bw'iki gikoresho — ntibishobora kwemerwa biturutse kuri iki gikoresho."
 }

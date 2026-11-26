@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -481,6 +482,66 @@ func TestDeviceRevokeStopsSyncAndRefresh(t *testing.T) {
 	if revoked != 1 || len(mon["sites"].([]any)) == 0 {
 		t.Fatalf("monitor: %v", mon)
 	}
+}
+
+// T-08: a device revoked while offline delivers what it captured before the revocation, then is locked out.
+func TestRevokedDeviceFinalUpload(t *testing.T) {
+	f := setup(t)
+	before := note(0, f.plant, "captured offline before the revocation")
+	before["capturedAt"] = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)
+	other := f.e.SignInDevice(f.sup, "")
+	var rowID string
+	_ = f.e.Pool.QueryRow(t.Context(), `SELECT id FROM device WHERE device_id=$1`, f.dc.DeviceID).Scan(&rowID)
+	if r := other.Do("POST", "/api/account/devices/"+rowID+"/revoke", nil); r.StatusCode != 200 {
+		t.Fatalf("revoke: %d", r.StatusCode)
+	}
+	after := note(0, f.plant, "captured after the revocation")
+	after["capturedAt"] = time.Now().Add(time.Second).UTC().Format(time.RFC3339Nano)
+
+	r := f.dc.Push(before, after)
+	if r.Status != 200 || r.DeviceStatus != "revoked" || len(r.Results) != 2 {
+		t.Fatalf("final upload: %+v", r)
+	}
+	if a := r.Results[0]; a.Status != "accepted" || !slices.Contains(a.Flags, syncsvc.FlagRevokedDevice) {
+		t.Fatalf("captured before: %+v", a)
+	}
+	if b := r.Results[1]; b.Status != "rejected" || b.ReasonCode != syncsvc.ReasonDeviceRevoked {
+		t.Fatalf("captured after: %+v", b)
+	}
+	if n := count(t, f.e, `SELECT count(*) FROM t_sync_note WHERE body='captured offline before the revocation'`); n != 1 {
+		t.Fatalf("applied %d times", n)
+	}
+	// re-sent (lost answer): absorbed, never applied twice
+	if r := f.dc.Push(before); r.Status != 200 || r.Results[0].Status != "duplicate" || r.Results[0].OriginalStatus != "accepted" {
+		t.Fatalf("re-send: %+v", r)
+	}
+	// nothing captured before the revocation, any other call, or a pull → locked out
+	if r := f.dc.Push(note(0, f.plant, "later")); r.Status != 403 {
+		t.Fatalf("push of later records: %d", r.Status)
+	}
+	for _, path := range []string{"/api/sync/pull", "/api/sync/status", "/api/lookups"} {
+		if st, code := statusCode(f.e, f.dc.Do("GET", path, nil)); st != 403 || code != "device_revoked" {
+			t.Fatalf("%s after revoke: %d %s", path, st, code)
+		}
+	}
+	// only within the offline window after the revocation
+	if _, err := f.e.Pool.Exec(t.Context(), `UPDATE device SET revoked_at = now() - interval '15 days' WHERE id=$1`, rowID); err != nil {
+		t.Fatal(err)
+	}
+	old := note(0, f.plant, "too late")
+	old["capturedAt"] = time.Now().Add(-16 * 24 * time.Hour).UTC().Format(time.RFC3339Nano)
+	if r := f.dc.Push(old); r.Status != 403 {
+		t.Fatalf("outside the window: %d", r.Status)
+	}
+	// a device-less or signed-out caller gets nothing from the final route
+	if r := f.e.Do("POST", "/api/sync/push", map[string]any{"records": []any{}}, nil); r.StatusCode != 401 {
+		t.Fatalf("anonymous push: %d", r.StatusCode)
+	}
+}
+
+func statusCode(e *apptest.Env, resp *http.Response) (int, string) {
+	code, _, _ := e.ErrorOf(resp)
+	return resp.StatusCode, code
 }
 
 func TestPushHTTPDenialsAndLimits(t *testing.T) {

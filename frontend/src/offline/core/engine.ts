@@ -122,6 +122,7 @@ export class SyncEngine {
     const { store, transport } = this.o;
     let pushed = 0;
     let pulled = 0;
+    let revoked = false; // revoked while offline: the server takes this final upload, then the device is locked out
     this.set({ lastAttemptAt: new Date(this.o.now()).toISOString(), nextRetryAt: null });
     try {
       // ── push ──
@@ -153,8 +154,10 @@ export class SyncEngine {
         if (!mine.length) throw new TransportError("server", 200, "empty_results");
         await store.applyResults(mine);
         pushed += mine.length;
+        if (res.deviceStatus === "revoked") revoked = true;
         this.set({ batchSize: nextBatchSize(this.state.batchSize, "ok", this.o.now() - t0, { min: 5, max: this.o.maxBatch }) });
       }
+      if (revoked) throw new TransportError("revoked", 403, "device_revoked"); // everything deliverable was delivered
       // ── pull ──
       if (this.o.pull !== false) {
         this.set({ phase: "pulling" });
