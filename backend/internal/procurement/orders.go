@@ -411,7 +411,7 @@ func (h *handler) createOrder(c *fiber.Ctx) error {
 		if err != nil {
 			return err
 		}
-		number, err := seq.NextNumber(ctx, tx, "PO-"+strconv.Itoa(time.Now().In(dates.Kigali()).Year()), 4)
+		number, err := seq.NextNumber(ctx, tx, "PO-"+strconv.Itoa(dates.Year()), 4)
 		if err != nil {
 			return err
 		}

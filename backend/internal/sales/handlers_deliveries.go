@@ -129,7 +129,7 @@ func (h *handler) delivered(c *fiber.Ctx) error {
 		if in.DeliveredAt != nil {
 			at = *in.DeliveredAt
 		}
-		if at.After(time.Now().Add(5 * time.Minute)) {
+		if at.After(dates.Now().Add(5 * time.Minute)) {
 			return r.fieldErr("deliveredAt", "sales.v.future")
 		}
 		if dates.ToISO(at.Add(2*time.Hour)) < dates.ToISO(d.Date) {

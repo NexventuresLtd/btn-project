@@ -176,7 +176,7 @@ func pullEntries(ctx context.Context, a syncsvc.Actor, since syncsvc.Cursor) ([]
 		'momoCharge', e."momoCharge", 'invoiceRef', e."invoiceRef", 'department', e.department, 'status', e.status, 'createdById', e."createdById",
 		'reviewComment', e."reviewComment", 'version', e.server_version), e.server_version, e.server_xid
 		FROM "PettyCashEntry" e
-		WHERE e.date >= current_date - 60 AND ($1 OR e."floatId" IN (SELECT id FROM petty_cash_float WHERE custodian_id = $2))
+		WHERE e.date >= `+dates.SQLToday+` - 60 AND ($1 OR e."floatId" IN (SELECT id FROM petty_cash_float WHERE custodian_id = $2))
 			AND ($3 = '' OR e."plantId" = $3 OR NOT $1)`, all, a.UserID, a.ScopedPlantID())
 }
 

@@ -68,7 +68,7 @@ var SenderFor = func(d *deps.Deps) mail.AttachmentSender {
 
 func registerJob(d *deps.Deps) {
 	jobs.Register(jobs.Job{Name: JobName, Schedule: "* * * * *", Timeout: 15 * time.Minute, DescriptionKey: "reports.job.scheduled",
-		Run: func(ctx context.Context) error { return RunDue(ctx, d, time.Now()) }})
+		Run: func(ctx context.Context) error { return RunDue(ctx, d, dates.Now()) }})
 }
 
 // RunDue dispatches due schedules and processes queued runs (the job body; tests call it directly).

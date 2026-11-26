@@ -343,7 +343,7 @@ func TestExpenseApprovalPaymentAndReceipts(t *testing.T) {
 	}
 	csv := e.Do("GET", "/api/expenses?format=csv", nil, e.fm)
 	cb, _ := io.ReadAll(csv.Body)
-	if csv.StatusCode != 200 || !strings.Contains(string(cb), "Payment method") || !strings.Contains(string(cb), dates.FormatDate(time.Now().In(dates.Kigali()))) {
+	if csv.StatusCode != 200 || !strings.Contains(string(cb), "Payment method") || !strings.Contains(string(cb), dates.FormatISO(dates.TodayISO())) {
 		t.Errorf("csv: %d %s", csv.StatusCode, cb)
 	}
 	x := e.Do("GET", "/api/expenses/summary?format=xlsx", nil, e.fm)

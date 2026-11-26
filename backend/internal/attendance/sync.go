@@ -232,14 +232,14 @@ func pullMarks(ctx context.Context, a syncsvc.Actor, since syncsvc.Cursor) ([]sy
 	return syncsvc.Rows(ctx, a, since, "attendance", `SELECT a.id, jsonb_build_object('id', a.id, 'plantId', a."plantId", 'date', to_char(a.date, 'YYYY-MM-DD'),
 		'workerId', a."workerId", 'status', a.status, 'note', a.note, 'overtimeHours', a."overtimeHours"::float8, 'exception', a.exception,
 		'exceptionReason', a."exceptionReason", 'version', a.server_version), a.server_version, a.server_xid
-		FROM "Attendance" a WHERE ($1 = '' OR a."plantId" = $1) AND a.date >= current_date - 60`, a.ScopedPlantID())
+		FROM "Attendance" a WHERE ($1 = '' OR a."plantId" = $1) AND a.date >= `+dates.SQLToday+` - 60`, a.ScopedPlantID())
 }
 
 // pullDays: approval state of each site's days (locked days are read-only on the device).
 func pullDays(ctx context.Context, a syncsvc.Actor, since syncsvc.Cursor) ([]syncsvc.Change, error) {
 	return syncsvc.Rows(ctx, a, since, "attendance_days", `SELECT d.id, jsonb_build_object('id', d.id, 'plantId', d.plant_id, 'date', to_char(d.date, 'YYYY-MM-DD'),
 		'status', d.status), d.server_version, d.server_xid
-		FROM attendance_day d WHERE ($1 = '' OR d.plant_id = $1) AND d.date >= current_date - 60`, a.ScopedPlantID())
+		FROM attendance_day d WHERE ($1 = '' OR d.plant_id = $1) AND d.date >= `+dates.SQLToday+` - 60`, a.ScopedPlantID())
 }
 
 func withPlant(r syncsvc.Result, plantID string) syncsvc.Result {

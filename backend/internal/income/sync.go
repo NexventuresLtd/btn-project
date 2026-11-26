@@ -109,6 +109,6 @@ func pullIncome(ctx context.Context, a syncsvc.Actor, since syncsvc.Cursor) ([]s
 		'reference', i.reference, 'paymentKind', i.payment_kind, 'status', i.status, 'budgetLineId', i.budget_line_id,
 		'voidReason', i.void_reason, 'createdById', i.created_by_id, 'version', i.server_version),
 		i.server_version, i.server_xid
-		FROM income i WHERE i.date >= current_date - 60 AND ($1 OR i.created_by_id = $2) AND ($3 = '' OR i.plant_id = $3)`,
+		FROM income i WHERE i.date >= `+dates.SQLToday+` - 60 AND ($1 OR i.created_by_id = $2) AND ($3 = '' OR i.plant_id = $3)`,
 		all, a.UserID, a.ScopedPlantID())
 }

@@ -245,7 +245,7 @@ func saveRequest(ctx context.Context, tx pgx.Tx, id string, existing bool, in re
 		}
 	} else {
 		var err error
-		if number, err = seq.NextNumber(ctx, tx, "PR-"+strconv.Itoa(time.Now().In(dates.Kigali()).Year()), 4); err != nil {
+		if number, err = seq.NextNumber(ctx, tx, "PR-"+strconv.Itoa(dates.Year()), 4); err != nil {
 			return "", err
 		}
 		src := in.Source

@@ -671,7 +671,7 @@ func (h *handler) reviewReconciliation(c *fiber.Ctx) error {
 			} else {
 				refCode = ptr("OTHER")
 			}
-			number, err := seq.NextNumber(ctx, tx, fmt.Sprintf("PC-%d", time.Now().Year()))
+			number, err := seq.NextNumber(ctx, tx, fmt.Sprintf("PC-%d", dates.Year()))
 			if err != nil {
 				return err
 			}

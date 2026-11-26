@@ -115,7 +115,7 @@ func pullExpenses(ctx context.Context, a syncsvc.Actor, since syncsvc.Cursor) ([
 		'paymentMethod', e.payment_method, 'amount', e.amount, 'description', e.description, 'reference', e.reference, 'status', e.status,
 		'overrunStatus', e.overrun_status, 'createdById', e.created_by_id, 'decisionComment', e.decision_comment, 'version', e.server_version),
 		e.server_version, e.server_xid
-		FROM expense e WHERE e.date >= current_date - 60 AND ($1 OR e.created_by_id = $2) AND ($3 = '' OR e.plant_id = $3 OR e.created_by_id = $2)`,
+		FROM expense e WHERE e.date >= `+dates.SQLToday+` - 60 AND ($1 OR e.created_by_id = $2) AND ($3 = '' OR e.plant_id = $3 OR e.created_by_id = $2)`,
 		all, a.UserID, a.ScopedPlantID())
 }
 

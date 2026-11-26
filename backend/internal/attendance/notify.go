@@ -47,7 +47,7 @@ func registerJobs(d *deps.Deps) {
 			if d.Auth != nil {
 				hour = d.Auth.SettingInt(ctx, SettingCutoffHour, DefaultCutoffHour)
 			}
-			_, err := RunCutoff(ctx, d.Pool, time.Now(), hour)
+			_, err := RunCutoff(ctx, d.Pool, dates.Now(), hour)
 			return err
 		}})
 }

@@ -345,7 +345,7 @@ func stream(ctx context.Context, pool *pgxpool.Pool, w *bufio.Writer, t *Table, 
 	return n, nil
 }
 
-func stamp() string { return time.Now().In(dates.Kigali()).Format("2006-01-02_1504") }
+func stamp() string { return dates.Now().In(dates.Kigali()).Format("2006-01-02_1504") }
 
 func recordExport(c *fiber.Ctx, d *deps.Deps, tables []string, p params, personal bool) error {
 	after := map[string]any{"tables": tables, "format": p.format}

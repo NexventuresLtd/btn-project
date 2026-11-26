@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,13 +26,61 @@ func loadKigali() *time.Location {
 // Kigali returns the Africa/Kigali location.
 func Kigali() *time.Location { return kigali }
 
+// ── clock ───────────────────────────────────────────────────────────────────
+//
+// Every business date on the server ("today", default report periods, due dates, numbering years, day close,
+// attendance day, schedules) is the Africa/Kigali calendar date of Now(), never the UTC date: between 22:00 and
+// 24:00 UTC the two differ. SQL never uses CURRENT_DATE for a business date; it takes Today() as a parameter
+// (or (now() AT TIME ZONE 'Africa/Kigali')::date where a parameter is impractical).
+
+var clock atomic.Pointer[func() time.Time]
+
+// Now is the server clock (time.Now unless a test installed a fake one with SetClock).
+func Now() time.Time {
+	if f := clock.Load(); f != nil {
+		return (*f)()
+	}
+	return time.Now()
+}
+
+// SetClock installs a fake clock (tests) and returns the function that restores the real one.
+func SetClock(f func() time.Time) (restore func()) {
+	prev := clock.Swap(&f)
+	return func() { clock.Store(prev) }
+}
+
+// FixedClock is a SetClock helper: the clock starts at t and advances with real time.
+func FixedClock(t time.Time) func() time.Time {
+	start := time.Now()
+	return func() time.Time { return t.Add(time.Since(start)) }
+}
+
+// DateOf is the Kigali calendar date of instant t, as the UTC-midnight business date.
+func DateOf(t time.Time) time.Time {
+	k := t.In(kigali)
+	return time.Date(k.Year(), k.Month(), k.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// ISOOf is DateOf rendered YYYY-MM-DD.
+func ISOOf(t time.Time) string { return t.In(kigali).Format("2006-01-02") }
+
+// SQLToday is today's Kigali business date in SQL, for queries where passing Today() as a parameter is impractical
+// (sync windows, overdue counters). Never use CURRENT_DATE: the database session runs in UTC.
+const SQLToday = "(now() AT TIME ZONE 'Africa/Kigali')::date"
+
+// Today is today's Kigali business date (UTC midnight).
+func Today() time.Time { return DateOf(Now()) }
+
+// Year is the current Kigali calendar year (document numbering: EXP-2026-…).
+func Year() int { return Now().In(kigali).Year() }
+
 // TodayISO is today's Kigali calendar date as YYYY-MM-DD.
 func TodayISO(now ...time.Time) string {
-	t := time.Now()
+	t := Now()
 	if len(now) > 0 {
 		t = now[0]
 	}
-	return t.In(kigali).Format("2006-01-02")
+	return ISOOf(t)
 }
 
 var isoRe = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})$`)
@@ -141,7 +190,7 @@ type Range struct {
 
 // ResolveRange resolves ?from=&to= defaulting to the current month to date (swaps if reversed).
 func ResolveRange(from, to string, now ...time.Time) Range {
-	n := time.Now()
+	n := Now()
 	if len(now) > 0 {
 		n = now[0]
 	}
@@ -157,4 +206,15 @@ func ResolveRange(from, to string, now ...time.Time) Range {
 		f, t = t, f
 	}
 	return Range{From: f, To: t, FromISO: ToISO(f), ToISO: ToISO(t)}
+}
+
+// LateUTCEvening is the latest 23:30 UTC instant not after now: a moment when the Kigali date is already the next
+// day. Tests install FixedClock(LateUTCEvening(time.Now())) to prove business dates follow Kigali.
+func LateUTCEvening(now time.Time) time.Time {
+	u := now.UTC()
+	t := time.Date(u.Year(), u.Month(), u.Day(), 23, 30, 0, 0, time.UTC)
+	if t.After(u) {
+		t = t.AddDate(0, 0, -1)
+	}
+	return t
 }

@@ -92,7 +92,7 @@ func (h *handler) scheduleOut(ctx context.Context, s Schedule, lang i18n.Lang, l
 	for _, p := range def.Perms {
 		o.Permissions = append(o.Permissions, string(p))
 	}
-	if n := NextSlot(s, time.Now()); s.Enabled && !n.IsZero() {
+	if n := NextSlot(s, dates.Now()); s.Enabled && !n.IsZero() {
 		v := n.UTC().Format(time.RFC3339)
 		o.NextRunAt = &v
 	}
@@ -227,10 +227,10 @@ func (h *handler) updateSchedule(c *fiber.Ctx) error {
 		next.RecipientUserIDs, next.RecipientRoles, next.RecipientEmails = userIDs, roles, emails
 		// (re)enabling or re-timing starts from the next slot — never sends an old slot immediately
 		var lastSlot *time.Time
-		if slot := LatestSlot(next, time.Now()); !slot.IsZero() {
+		if slot := LatestSlot(next, dates.Now()); !slot.IsZero() {
 			lastSlot = &slot
 		} else if next.Frequency == FreqWagePeriod {
-			now := time.Now().UTC()
+			now := dates.Now().UTC()
 			lastSlot = &now
 		}
 		if before.Enabled && next.Frequency == before.Frequency && next.SendTime == before.SendTime && next.DayOfWeek == before.DayOfWeek &&
@@ -301,7 +301,7 @@ func (h *handler) sendNow(c *fiber.Ctx) error {
 	if len(s.RecipientUserIDs)+len(s.RecipientRoles)+len(s.RecipientEmails) == 0 {
 		return httpx.BadRequest("reports.err.no_recipients", map[string]string{"recipientRoles": i18n.T(lang, "reports.err.no_recipients")})
 	}
-	from, to := defaultPeriod(s, time.Now())
+	from, to := defaultPeriod(s, dates.Now())
 	if body.From != "" {
 		from = dates.MustParseISO(body.From)
 	}

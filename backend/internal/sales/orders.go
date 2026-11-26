@@ -292,7 +292,7 @@ func (o *op) applyTerms(saleID string) error {
 	deposit := depositFor(t, h.Total)
 	var due *time.Time
 	if committed(h.Status) && h.ConfirmedAt != nil {
-		conf := dates.MustParseISO(dates.ToISO(h.ConfirmedAt.In(dates.Kigali())))
+		conf := dates.DateOf(*h.ConfirmedAt)
 		var delivered *time.Time
 		if inSet(h.Status, StDelivered, StClosed) {
 			var at *time.Time
@@ -300,7 +300,7 @@ func (o *op) applyTerms(saleID string) error {
 				return err
 			}
 			if at != nil {
-				d := dates.MustParseISO(dates.ToISO(at.In(dates.Kigali())))
+				d := dates.DateOf(*at)
 				delivered = &d
 			}
 		}

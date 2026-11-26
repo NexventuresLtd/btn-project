@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"btn-ops/internal/dates"
 	"btn-ops/internal/db"
 )
 
@@ -107,7 +108,7 @@ func budgetActuals(ctx context.Context, q db.DBTX, ids []string) (map[string]map
 		return out, nil
 	}
 	var from, to time.Time
-	if err := q.QueryRow(ctx, `SELECT COALESCE(min(period_start), current_date), COALESCE(max(period_end), current_date) FROM budget WHERE id = ANY($1)`, ids).Scan(&from, &to); err != nil {
+	if err := q.QueryRow(ctx, `SELECT COALESCE(min(period_start), `+dates.SQLToday+`), COALESCE(max(period_end), `+dates.SQLToday+`) FROM budget WHERE id = ANY($1)`, ids).Scan(&from, &to); err != nil {
 		return nil, err
 	}
 	put := func(id, key string, f func(*Actual)) {

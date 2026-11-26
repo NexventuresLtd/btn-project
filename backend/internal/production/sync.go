@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-	"time"
 
 	"btn-ops/internal/audit"
 	"btn-ops/internal/dates"
@@ -443,7 +442,7 @@ func pullRecipes(ctx context.Context, a syncsvc.Actor) ([]syncsvc.Change, error)
 	out := []syncsvc.Change{}
 	for pid, versions := range all {
 		// the version in force today and any upcoming ones (entries are dated today or earlier: send the last 60 days' versions too)
-		cut := dates.ToISO(time.Now().AddDate(0, 0, -syncPullDays))
+		cut := dates.ToISO(dates.AddDays(dates.Today(), -syncPullDays))
 		for i, r := range versions {
 			if r.EffectiveFrom > today || r.EffectiveFrom >= cut || i == indexInForce(versions, cut) {
 				out = append(out, syncsvc.Change{Entity: PullRecipes, ID: r.ID, Op: "upsert", Version: 0,

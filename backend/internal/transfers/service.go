@@ -176,7 +176,7 @@ func create(ctx context.Context, tx pgx.Tx, lang i18n.Lang, a stock.Actor, in Cr
 	if err != nil {
 		return Transfer{}, err
 	}
-	number, err := seq.NextNumber(ctx, tx, "TR-"+strconv.Itoa(time.Now().In(dates.Kigali()).Year()))
+	number, err := seq.NextNumber(ctx, tx, "TR-"+strconv.Itoa(dates.Year()))
 	if err != nil {
 		return Transfer{}, err
 	}

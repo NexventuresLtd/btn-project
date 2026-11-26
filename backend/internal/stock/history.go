@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"btn-ops/internal/dates"
 	"btn-ops/internal/db"
 	"btn-ops/internal/i18n"
 )
@@ -167,8 +168,8 @@ type HistoryUser struct {
 // HistoryUsers lists users who recorded movements in scope in the last two years.
 func HistoryUsers(ctx context.Context, q db.DBTX, plantIDs []string) ([]HistoryUser, error) {
 	rows, err := q.Query(ctx, `SELECT u.id, u.name FROM "User" u WHERE u.id IN (
-			SELECT "createdById" FROM "StockMovement" WHERE ($1::text[] IS NULL OR "plantId" = ANY($1::text[])) AND date > current_date - 730
-			UNION SELECT "createdById" FROM "MaterialMovement" WHERE ($1::text[] IS NULL OR "plantId" = ANY($1::text[])) AND date > current_date - 730)
+			SELECT "createdById" FROM "StockMovement" WHERE ($1::text[] IS NULL OR "plantId" = ANY($1::text[])) AND date > `+dates.SQLToday+` - 730
+			UNION SELECT "createdById" FROM "MaterialMovement" WHERE ($1::text[] IS NULL OR "plantId" = ANY($1::text[])) AND date > `+dates.SQLToday+` - 730)
 		ORDER BY u.name`, nilSlice(plantIDs))
 	if err != nil {
 		return nil, err

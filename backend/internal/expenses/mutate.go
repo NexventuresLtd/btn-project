@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"btn-ops/internal/approvals"
 	"btn-ops/internal/audit"
@@ -616,7 +617,8 @@ func (h *handler) recordPayment(c *fiber.Ctx) error {
 			}
 		}
 		now := db.Now()
-		paidAt := d.Add(now.Sub(dates.MustParseISO(dates.ToISO(now))))
+		k := now.In(dates.Kigali()) // the recorded day (Kigali calendar) at the current Kigali wall-clock time
+		paidAt := time.Date(d.Year(), d.Month(), d.Day(), k.Hour(), k.Minute(), k.Second(), k.Nanosecond(), dates.Kigali()).UTC().Truncate(time.Millisecond)
 		if _, err := tx.Exec(ctx, `UPDATE expense SET status='PAID', paid_at=$2, paid_by_id=$3, payment_reference=$4, updated_at=$5 WHERE id=$1`,
 			r.ID, paidAt, u.ID, ref, now); err != nil {
 			return "", err

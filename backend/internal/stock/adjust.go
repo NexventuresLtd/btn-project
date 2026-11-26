@@ -110,7 +110,7 @@ func CreateAdjustment(ctx context.Context, tx pgx.Tx, lang i18n.Lang, a Actor, i
 	if err != nil {
 		return out, err
 	}
-	number, err := seq.NextNumber(ctx, tx, "ADJ-"+strconv.Itoa(time.Now().In(dates.Kigali()).Year()))
+	number, err := seq.NextNumber(ctx, tx, "ADJ-"+strconv.Itoa(dates.Year()))
 	if err != nil {
 		return out, err
 	}

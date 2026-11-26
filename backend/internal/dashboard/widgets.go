@@ -1405,9 +1405,9 @@ func wAlerts(ctx context.Context, e *env, w *Widget) error {
 		{"lowMaterials", "/materials", "warn", "materials.view", `SELECT COUNT(*) FROM (` + lowSQL + `) x WHERE x.q > 0`},
 		{"openConflicts", "/sync/conflicts", "warn", "sync.resolve", `SELECT COUNT(*) FROM sync_conflict WHERE status='open'` + pc("plant_id")},
 		{"overrunsPending", "/expenses?overrun=PENDING", "bad", "budgets.view", `SELECT COUNT(*) FROM expense WHERE overrun_status='PENDING'` + pc("plant_id")},
-		{"overduePurchaseOrders", "/procurement/orders", "warn", "procurement.view", `SELECT COUNT(*) FROM purchase_order WHERE status IN ('ORDERED','PARTIALLY_RECEIVED') AND expected_date < current_date` + pc("delivery_plant_id")},
+		{"overduePurchaseOrders", "/procurement/orders", "warn", "procurement.view", `SELECT COUNT(*) FROM purchase_order WHERE status IN ('ORDERED','PARTIALLY_RECEIVED') AND expected_date < ` + dates.SQLToday + pc("delivery_plant_id")},
 		{"transferShortfalls", "/transfers", "warn", "transfers.view", `SELECT COUNT(*) FROM stock_transfer WHERE has_shortfall AND received_at >= now() - interval '30 days' AND ($1 = '' OR from_plant_id = $1 OR to_plant_id = $1)`},
-		{"overdueOrders", "/sales", "warn", "sales.view", `SELECT COUNT(*) FROM "Sale" WHERE "orderStatus" IN ` + openOrderStatuses + ` AND COALESCE("requestedDate", date) < current_date` + pc(`"plantId"`)},
+		{"overdueOrders", "/sales", "warn", "sales.view", `SELECT COUNT(*) FROM "Sale" WHERE "orderStatus" IN ` + openOrderStatuses + ` AND COALESCE("requestedDate", date) < ` + dates.SQLToday + pc(`"plantId"`)},
 		{"failedJobs", "/admin/jobs", "bad", "admin.monitor", `SELECT COUNT(DISTINCT job) FROM job_run WHERE status IN ('failed','timeout') AND created_at >= now() - interval '24 hours' AND $1 = $1`},
 		{"varianceFlagged", "/production", "warn", "production.approve", `SELECT COUNT(*) FROM "ProductionReport" WHERE "varianceFlagged" AND status = 'SUBMITTED'` + pc(`"plantId"`)},
 	}

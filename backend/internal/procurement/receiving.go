@@ -194,7 +194,7 @@ func (h *handler) receive(c *fiber.Ctx) error {
 		if len(evals) == 0 {
 			return badField(lang, "lines", "procurement.v.receive_nothing")
 		}
-		number, err := seq.NextNumber(ctx, tx, "GRN-"+strconv.Itoa(time.Now().In(dates.Kigali()).Year()), 4)
+		number, err := seq.NextNumber(ctx, tx, "GRN-"+strconv.Itoa(dates.Year()), 4)
 		if err != nil {
 			return err
 		}

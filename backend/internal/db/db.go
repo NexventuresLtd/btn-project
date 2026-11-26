@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"btn-ops/internal/dates"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -95,7 +97,7 @@ func TxVal[T any](ctx context.Context, pool *pgxpool.Pool, fn func(tx pgx.Tx) (T
 }
 
 // Now returns the current time in UTC. Always pass UTC times to "timestamp(3)" columns.
-func Now() time.Time { return time.Now().UTC().Truncate(time.Millisecond) }
+func Now() time.Time { return dates.Now().UTC().Truncate(time.Millisecond) } // dates.Now: fakeable server clock
 
 const b36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 

@@ -82,7 +82,7 @@ func Register(r fiber.Router, d *deps.Deps) {
 
 	registerSync()
 	jobs.Register(jobs.Job{Name: "production.day_close", Schedule: "5 * * * *", Timeout: 2 * time.Minute, Retries: 1, DescriptionKey: "production.job.day_close",
-		Run: func(ctx context.Context) error { _, _, err := AutoClose(ctx, d, time.Now()); return err }})
+		Run: func(ctx context.Context) error { _, _, err := AutoClose(ctx, d, dates.Now()); return err }})
 }
 
 type handler struct{ d *deps.Deps }

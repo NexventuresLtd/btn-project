@@ -59,7 +59,7 @@ func Invalidate() { infoCache.InvalidatePrefix("") }
 
 // Load computes the cut-off for plantID ("" = every site) at now. The device query is cached 15 s per plant.
 func Load(ctx context.Context, q db.DBTX, plantID string, lang i18n.Lang) (Info, error) {
-	now := time.Now().UTC().Truncate(time.Second)
+	now := dates.Now().UTC().Truncate(time.Second)
 	base, err := infoCache.GetOrLoad(ctx, "p:"+plantID, func(ctx context.Context) (Info, error) { return load(ctx, q, plantID) })
 	if err != nil {
 		return Info{}, err

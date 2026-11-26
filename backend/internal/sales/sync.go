@@ -228,7 +228,7 @@ func pullOrders(ctx context.Context, a syncsvc.Actor, since syncsvc.Cursor) ([]s
 		    ORDER BY sl.id) FROM "SaleLine" sl WHERE sl."saleId" = s.id), '[]'::jsonb)),
 		s.server_version, s.server_xid
 		FROM "Sale" s JOIN "Customer" c ON c.id = s."customerId"
-		WHERE ($1 = '' OR s."plantId" = $1) AND (s.date >= current_date - 60 OR s."orderStatus" NOT IN ('CLOSED', 'CANCELLED'))`, a.ScopedPlantID())
+		WHERE ($1 = '' OR s."plantId" = $1) AND (s.date >= `+dates.SQLToday+` - 60 OR s."orderStatus" NOT IN ('CLOSED', 'CANCELLED'))`, a.ScopedPlantID())
 }
 
 func pullDispatches(ctx context.Context, a syncsvc.Actor, since syncsvc.Cursor) ([]syncsvc.Change, error) {
@@ -239,7 +239,7 @@ func pullDispatches(ctx context.Context, a syncsvc.Actor, since syncsvc.Cursor) 
 		  'lines', COALESCE((SELECT jsonb_agg(jsonb_build_object('saleLineId', dl."saleLineId", 'productId', dl."productId", 'quantity', dl.quantity) ORDER BY dl.id)
 		    FROM "DeliveryLine" dl WHERE dl."deliveryId" = d.id), '[]'::jsonb)),
 		d.server_version, d.server_xid
-		FROM "Delivery" d WHERE ($1 = '' OR d."plantId" = $1) AND d.date >= current_date - 60`, a.ScopedPlantID())
+		FROM "Delivery" d WHERE ($1 = '' OR d."plantId" = $1) AND d.date >= `+dates.SQLToday+` - 60`, a.ScopedPlantID())
 }
 
 var _ = time.Now

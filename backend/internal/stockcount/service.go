@@ -261,7 +261,7 @@ func create(ctx context.Context, tx pgx.Tx, lang i18n.Lang, a stock.Actor, in Cr
 		return Count{}, httpx.BadRequest("stockcount.err.no_items", map[string]string{"category": i18n.T(lang, "stockcount.err.no_items")})
 	}
 	sortItems(list, func(x itm) (string, string, string) { return string(x.kind), x.it.Category, x.it.Code })
-	number, err := seq.NextNumber(ctx, tx, "SC-"+strconv.Itoa(time.Now().In(dates.Kigali()).Year()))
+	number, err := seq.NextNumber(ctx, tx, "SC-"+strconv.Itoa(dates.Year()))
 	if err != nil {
 		return Count{}, err
 	}

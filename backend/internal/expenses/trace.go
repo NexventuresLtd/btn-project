@@ -98,7 +98,7 @@ func BuildTrace(ctx context.Context, q db.DBTX, lang i18n.Lang, key TraceKey, ex
 		if paidAt != nil {
 			pa := *paidAt
 			t.Steps = append(t.Steps, TraceStep{Kind: "payment", ID: r.ID, Number: deref(ref), Status: StatusPaid, StatusLabel: i18n.T(lang, "expenses.status.PAID"),
-				Title: i18n.T(lang, "expenses.trace.payment"), Date: dates.ToISO(pa.In(dates.Kigali())), At: &pa, Amount: &a, Actor: payBy,
+				Title: i18n.T(lang, "expenses.trace.payment"), Date: dates.ISOOf(pa), At: &pa, Amount: &a, Actor: payBy,
 				Link: "/expenses/" + r.ID, PlantCode: plant})
 		}
 	}
@@ -118,7 +118,7 @@ func BuildTrace(ctx context.Context, q db.DBTX, lang i18n.Lang, key TraceKey, ex
 				kind = "overrun_approval"
 			}
 			t.Steps = append(t.Steps, TraceStep{Kind: kind, ID: d.ID, Number: r.Number, Status: d.Decision,
-				StatusLabel: i18n.T(lang, "expenses.decision."+d.Decision), Title: d.Label, Date: dates.ToISO(at.In(dates.Kigali())), At: &at,
+				StatusLabel: i18n.T(lang, "expenses.decision."+d.Decision), Title: d.Label, Date: dates.ISOOf(at), At: &at,
 				Actor: d.UserName, Link: "/expenses/" + r.ID})
 		}
 	}

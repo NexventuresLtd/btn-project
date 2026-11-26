@@ -421,7 +421,7 @@ func (s *service) customerProfile(ctx context.Context, q db.DBTX, lang i18n.Lang
 		SELECT COUNT(*), COUNT(*) FILTER (WHERE "orderStatus" NOT IN ('CLOSED','CANCELLED')),
 		  COALESCE(SUM(l.a) FILTER (WHERE legacy = 'CONFIRMED'), 0)::bigint, COALESCE(SUM(p.a) FILTER (WHERE legacy = 'CONFIRMED'), 0)::bigint,
 		  COALESCE(SUM(GREATEST(COALESCE(l.a,0) - COALESCE(p.a,0), 0)) FILTER (WHERE legacy = 'CONFIRMED'), 0)::bigint,
-		  COALESCE(SUM(GREATEST(COALESCE(l.a,0) - COALESCE(p.a,0), 0)) FILTER (WHERE legacy = 'CONFIRMED' AND "dueDate" < current_date), 0)::bigint,
+		  COALESCE(SUM(GREATEST(COALESCE(l.a,0) - COALESCE(p.a,0), 0)) FILTER (WHERE legacy = 'CONFIRMED' AND "dueDate" < `+dates.SQLToday+`), 0)::bigint,
 		  MAX(date), (SELECT COUNT(*) FROM customer_communication WHERE customer_id = $1)
 		FROM s LEFT JOIN l ON l."saleId" = s.id LEFT JOIN p ON p."saleId" = s.id`, id).
 		Scan(&p.Summary.Orders, &p.Summary.OpenOrders, &p.Summary.TotalSales, &p.Summary.Paid, &p.Summary.Outstanding, &p.Summary.Overdue, &last, &p.Summary.Comms)
@@ -556,12 +556,12 @@ func (h *handler) addComm(c *fiber.Ctx) error {
 	body := x.optText("body", 4000)
 	contact := x.optText("contactName", 120)
 	saleID := x.optID("saleId")
-	occurred := time.Now().UTC().Truncate(time.Millisecond)
+	occurred := db.Now()
 	if raw, ok := v.Raw("occurredAt").(string); ok && raw != "" {
 		t, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
 			v.Fail("occurredAt", "sales.v.valid_datetime")
-		} else if t.After(time.Now().Add(5 * time.Minute)) {
+		} else if t.After(dates.Now().Add(5 * time.Minute)) {
 			v.Fail("occurredAt", "sales.v.future")
 		} else {
 			occurred = t.UTC().Truncate(time.Millisecond)
