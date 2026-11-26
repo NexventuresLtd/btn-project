@@ -1,0 +1,9 @@
+{
+  "approvals.max_gt_min": "ከፍተኛው ገደብ ከዝቅተኛው ገደብ መብለጥ አለበት",
+  "approvals.unknown_permission": "ያልታወቀ ፈቃድ",
+  "approvals.unknown_role": "ያልታወቀ ሚና",
+  "masterdata.location_kind": "ሳይት፣ ዋና መሥሪያ ቤት ወይም መጋዘን ይምረጡ",
+  "refdata.code_format": "ከ1–40 አቢይ የላቲን ፊደላት፣ አሃዞች፣ _ ወይም - ይጠቀሙ (ለምሳሌ BROKEN_MACHINE)",
+  "refdata.code_immutable": "ኮዱ ሊቀየር አይችልም፤ አዲስ ይፍጠሩና ይህን ያቦዝኑ",
+  "refdata.metadata_object": "ተጨማሪ መረጃው የJSON ነገር መሆን አለበት (ቢበዛ 4 000 ቁምፊዎች)"
+}

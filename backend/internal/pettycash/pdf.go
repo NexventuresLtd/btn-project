@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"btn-ops/internal/auth"
@@ -35,6 +36,9 @@ func months(lang i18n.Lang) []string {
 }
 
 func categoryLabel(lang i18n.Lang, c string) string {
+	if c == "" {
+		return ""
+	}
 	if k := "pettycash.category." + c; i18n.Has(k) {
 		return i18n.T(lang, k)
 	}
@@ -66,8 +70,25 @@ func statusLabel(lang i18n.Lang, e *Entry) string {
 func (h *handler) statementPDF(c *fiber.Ctx) error {
 	ctx, lang, u := httpx.Ctx(c), httpx.Lang(c), auth.MustUser(c)
 	rg := dates.ResolveRange(c.Query("from"), c.Query("to"))
-	plantID := auth.PlantFilter(u, c.Query("plantId"))
-	f := filter{from: rg.From, to: rg.To, plantID: plantID, statuses: []string{StatusApproved, StatusSubmitted}}
+	sc, err := scopeOf(ctx, h.d.Pool, u)
+	if err != nil {
+		return err
+	}
+	floatID := c.Query("floatId")
+	if floatID != "" && !sc.has(floatID) {
+		return httpx.Forbidden("pettycash.err.not_your_float")
+	}
+	plantID := ""
+	if sc.all {
+		plantID = auth.PlantFilter(u, c.Query("plantId"))
+	}
+	f := filter{from: rg.From, to: rg.To, plantID: plantID, floatID: floatID, floats: sc.restrict(), statuses: []string{StatusApproved, StatusSubmitted}}
+	var floatLabel string
+	if floatID != "" {
+		if fr, err := loadFloat(ctx, h.d.Pool, floatID); err == nil && fr != nil {
+			floatLabel = fr.Code + " · " + fr.Name
+		}
+	}
 
 	var (
 		rows                 []entryRow
@@ -84,7 +105,10 @@ func (h *handler) statementPDF(c *fiber.Ctx) error {
 		cond, args := rf.where()
 		return h.d.Pool.QueryRow(gctx, `SELECT count(*)::int FROM "PettyCashEntry" e WHERE `+cond, args...).Scan(&rejected)
 	})
-	g.Go(func() (err error) { opening, closed, err = ledgerTotals(gctx, h.d.Pool, rg.From, rg.To); return })
+	g.Go(func() (err error) {
+		opening, closed, err = ledgerTotals(gctx, h.d.Pool, rg.From, rg.To, floatID, sc.restrict())
+		return
+	})
 	if plantID != "" {
 		g.Go(func() error {
 			err := h.d.Pool.QueryRow(gctx, `SELECT code, name FROM "Plant" WHERE id = $1`, plantID).Scan(&plantCode, &plantName)
@@ -118,8 +142,12 @@ func (h *handler) statementPDF(c *fiber.Ctx) error {
 		subtitle = t("pettycash.pdf.subtitle_plant", "code", plantCode, "name", plantName)
 		plantMeta = plantCode
 	}
-	rep, err := pdf.New(c, h.d, pdf.Options{Title: t("pettycash.pdf.statement_title", "range", rangeLabel), Subtitle: subtitle, Landscape: true,
-		Meta: []pdf.Meta{{Label: t("pettycash.pdf.period"), Value: rangeLabel}, {Label: t("pettycash.pdf.plant"), Value: plantMeta}}})
+	meta := []pdf.Meta{{Label: t("pettycash.pdf.period"), Value: rangeLabel}, {Label: t("pettycash.pdf.plant"), Value: plantMeta}}
+	if floatLabel != "" {
+		meta = append(meta, pdf.Meta{Label: t("pettycash.pdf.float"), Value: floatLabel})
+		subtitle = floatLabel
+	}
+	rep, err := pdf.New(c, h.d, pdf.Options{Title: t("pettycash.pdf.statement_title", "range", rangeLabel), Subtitle: subtitle, Landscape: true, Meta: meta})
 	if err != nil {
 		return err
 	}
@@ -265,6 +293,9 @@ func (h *handler) statementPDF(c *fiber.Ctx) error {
 	if plantID != "" {
 		name = plantCode + "_" + name
 	}
+	if floatLabel != "" {
+		name = strings.SplitN(floatLabel, " ", 2)[0] + "_" + name
+	}
 	return pdf.Send(c, rep, name, c.Query("download") == "1")
 }
 
@@ -274,15 +305,9 @@ type trailStep struct{ step, who, when, note string }
 
 func (h *handler) voucherPDF(c *fiber.Ctx) error {
 	ctx, lang, u := httpx.Ctx(c), httpx.Lang(c), auth.MustUser(c)
-	row, err := getRow(ctx, h.d.Pool, c.Params("id"))
+	row, _, err := h.loadVisible(ctx, u, h.d.Pool, c.Params("id"))
 	if err != nil {
 		return err
-	}
-	if row == nil {
-		return httpx.NotFound("entity.petty_entry")
-	}
-	if !canSee(u, row.PlantID) {
-		return httpx.Forbidden("error.plant_scope")
 	}
 	e := toEntry(row, lang, nil)
 	t := func(k string, a ...any) string { return i18n.T(lang, k, a...) }

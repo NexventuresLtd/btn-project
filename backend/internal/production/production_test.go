@@ -178,11 +178,11 @@ func TestWorkflowApprovePostsLedgersAtomically(t *testing.T) {
 	if n := f.count(t, `SELECT count(*) FROM "ProductionLine" WHERE "reportId"=$1`, rep.ID); n != 1 {
 		t.Fatalf("lines stored: %d", n)
 	}
-	// same slot again -> 409 with field
+	// same site + product + batch + date again -> 409 duplicate batch (PRD-06)
 	r = e.Do("POST", "/api/production/reports", f.payload(f.plant1, d, "DAY", false), pm)
-	_, msg, fl := e.ErrorOf(r)
-	if r.StatusCode != 409 || !strings.Contains(msg, "already has a day shift report") || !strings.Contains(fl["shift"], rep.Number) {
-		t.Fatalf("slot: %d %s %v", r.StatusCode, msg, fl)
+	code, msg, fl := e.ErrorOf(r)
+	if r.StatusCode != 409 || code != "duplicate_batch" || !strings.Contains(msg, "additional batch") || !strings.Contains(fl["lines.0.batchRef"], rep.Number) {
+		t.Fatalf("batch: %d %s %s %v", r.StatusCode, code, msg, fl)
 	}
 	// cannot approve a draft
 	if r := e.Do("POST", "/api/production/reports/"+rep.ID+"/approve", nil, gm); r.StatusCode != 409 {
@@ -205,15 +205,12 @@ func TestWorkflowApprovePostsLedgersAtomically(t *testing.T) {
 	if r := e.Do("POST", "/api/production/reports/"+rep.ID+"/reject", map[string]any{"comment": "Recount the damage"}, pm); r.StatusCode != 403 {
 		t.Fatalf("self reject: %d", r.StatusCode)
 	}
-	if n := f.count(t, `SELECT count(*) FROM "StockMovement" WHERE "sourceId"=$1`, rep.ID); n != 0 {
-		t.Fatalf("posted before approval: %d", n)
-	}
-	// a submitted report is locked for editing
-	if r := e.Do("PATCH", "/api/production/reports/"+rep.ID, f.payload(f.plant1, d, "DAY", false), pm); r.StatusCode != 409 {
-		t.Fatalf("edit submitted: %d", r.StatusCode)
+	// PRD-04: stock is posted on submit
+	if n := f.count(t, `SELECT count(*) FROM "StockMovement" WHERE "sourceId"=$1`, rep.ID); n != 4 {
+		t.Fatalf("posted on submit: %d", n)
 	}
 
-	// approval by another approver posts everything in one go and warns about the missing cement receipt
+	// approval by another approver confirms (posts nothing new) and warns about the missing cement receipt
 	r = e.Do("POST", "/api/production/reports/"+rep.ID+"/approve", map[string]any{"comment": "Checked against the tally sheet"}, gm)
 	if r.StatusCode != 200 {
 		t.Fatalf("approve: %d %s", r.StatusCode, e.Text(r))
@@ -251,6 +248,9 @@ func TestWorkflowApprovePostsLedgersAtomically(t *testing.T) {
 	var cons float64
 	if err := e.Pool.QueryRow(context.Background(), `SELECT quantity::float8 FROM "MaterialMovement" WHERE "sourceId"=$1 AND type='CONSUMPTION'`, rep.ID).Scan(&cons); err != nil || cons != -45.5 {
 		t.Fatalf("material posting: %v %v", cons, err)
+	}
+	if n := f.count(t, `SELECT count(*) FROM "StockMovement" WHERE "sourceId"=$1`, rep.ID); n != 4 {
+		t.Fatalf("approval re-posted: %d", n)
 	}
 	if n := f.count(t, `SELECT count(*) FROM "AuditLog" WHERE action='production.approve' AND "entityId"=$1 AND "userId"=$2`, rep.ID, gm.ID); n != 1 {
 		t.Fatalf("approve audit: %d", n)
@@ -329,9 +329,15 @@ func TestRejectAndResubmit(t *testing.T) {
 	if r.StatusCode != 200 || out.Status != "REJECTED" || out.ReviewComment != "Cement figure looks wrong" || !out.Actions.CanEdit {
 		t.Fatalf("reject: %d %+v", r.StatusCode, out)
 	}
-	// nothing was posted
-	if n := f.count(t, `SELECT count(*) FROM "StockMovement" WHERE "sourceId"=$1`, rep.ID); n != 0 {
-		t.Fatalf("posted: %d", n)
+	// PRD-04: posted on submit, reversed on rejection — rows are added, never deleted
+	if n := f.count(t, `SELECT count(*) FROM "StockMovement" WHERE "sourceId"=$1`, rep.ID); n != 8 {
+		t.Fatalf("ledger rows after reject: %d", n)
+	}
+	if n := f.count(t, `SELECT COALESCE(SUM(quantity),0)::int FROM "StockMovement" WHERE "sourceId"=$1`, rep.ID); n != 0 {
+		t.Fatalf("net after reject: %d", n)
+	}
+	if n := f.count(t, `SELECT (COALESCE(SUM(quantity),0)*1000)::int FROM "MaterialMovement" WHERE "sourceId"=$1`, rep.ID); n != 0 {
+		t.Fatalf("material net after reject: %d", n)
 	}
 	// the recorder edits and resubmits; the previous review is cleared
 	p := f.payload(f.plant1, day(-1), "NIGHT", true)
@@ -348,6 +354,10 @@ func TestRejectAndResubmit(t *testing.T) {
 	e.Decode(r, &after)
 	if after.Status != "SUBMITTED" || after.ReviewComment != nil || after.MaterialUsage[0].Quantity != 30 {
 		t.Fatalf("%+v", after)
+	}
+	var cons float64
+	if err := e.Pool.QueryRow(context.Background(), `SELECT SUM(quantity)::float8 FROM "MaterialMovement" WHERE "sourceId"=$1`, rep.ID).Scan(&cons); err != nil || cons != -30 {
+		t.Fatalf("material after resubmit: %v %v", cons, err)
 	}
 	// another supervisor of the same plant may not edit (not owner, no approve permission) but PM may
 	sup2 := e.User(auth.RoleSupervisor)

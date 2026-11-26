@@ -333,16 +333,21 @@ func (h *handler) pdfDeliveryNote(c *fiber.Ctx) error {
 	var (
 		dnNumber, status, plantID, plantCode, plantName, saleNo, invType, custName string
 		vehicle, driver, receivedBy, ebmInv, ebmRec, addr, phone, tin              *string
+		destination, rnote                                                         *string
+		transport                                                                  string
+		hasPhoto                                                                   bool
 		date, saleDate                                                             time.Time
 		deliveredAt                                                                *time.Time
 		creator                                                                    string
 	)
 	err := h.d.Pool.QueryRow(r.ctx, `
 		SELECT d."dnNumber", d.status::text, d."plantId", pl.code, pl.name, sa.number, sa."invoiceType", sa."ebmInvoiceNo", sa."ebmReceiptNo", sa.date,
-		  c.name, c.address, c.phone, c.tin, d.vehicle, d.driver, d."receivedBy", d."deliveredAt", d.date, COALESCE(u.name, '')
+		  c.name, c.address, c.phone, c.tin, d.vehicle, d.driver, d."receivedBy", d."deliveredAt", d.date, COALESCE(u.name, ''),
+		  d.destination, d."transportMode", d."deliveryNote", EXISTS (SELECT 1 FROM delivery_photo ph WHERE ph.delivery_id = d.id)
 		FROM "Delivery" d JOIN "Plant" pl ON pl.id = d."plantId" JOIN "Sale" sa ON sa.id = d."saleId" JOIN "Customer" c ON c.id = sa."customerId"
 		LEFT JOIN "User" u ON u.id = d."createdById" WHERE d.id = $1`, c.Params("deliveryId")).
-		Scan(&dnNumber, &status, &plantID, &plantCode, &plantName, &saleNo, &invType, &ebmInv, &ebmRec, &saleDate, &custName, &addr, &phone, &tin, &vehicle, &driver, &receivedBy, &deliveredAt, &date, &creator)
+		Scan(&dnNumber, &status, &plantID, &plantCode, &plantName, &saleNo, &invType, &ebmInv, &ebmRec, &saleDate, &custName, &addr, &phone, &tin, &vehicle, &driver, &receivedBy, &deliveredAt, &date, &creator,
+			&destination, &transport, &rnote, &hasPhoto)
 	if err != nil {
 		if db.IsNoRows(err) {
 			return r.notFoundDelivery()
@@ -387,11 +392,15 @@ func (h *handler) pdfDeliveryNote(c *fiber.Ctx) error {
 		rep.Badge(T("sales.dstatus.CANCELLED"), pdf.Red).Note(T("sales.pdf.dn.cancelled_banner"))
 	}
 	blank := "________________"
-	transport := []string{T("sales.pdf.dn.from", "plant", plantCode), T("sales.pdf.dn.vehicle", "v", orBlank(vehicle, blank)), T("sales.pdf.dn.driver", "v", orBlank(driver, blank))}
+	trans := []string{T("sales.transport." + transport), T("sales.pdf.dn.from", "plant", plantCode), T("sales.pdf.dn.vehicle", "v", orBlank(vehicle, blank)), T("sales.pdf.dn.driver", "v", orBlank(driver, blank))}
+	dest := deref(addr)
+	if destination != nil && *destination != "" {
+		dest = T("sales.pdf.dn.destination", "v", *destination)
+	}
 	boxTable(rep, []string{T("sales.pdf.dn.deliver_to"), T("sales.pdf.references"), T("sales.pdf.dn.transport")},
-		nonEmpty(custName, deref(addr), telLine(r, phone), tinLine(r, tin)),
+		nonEmpty(custName, dest, telLine(r, phone), tinLine(r, tin)),
 		[]string{saleNo, T("sales.pdf.inv_no", "type", invType, "no", dash(ebmInv)), T("sales.pdf.ebm_receipt", "no", dash(ebmRec)), T("sales.pdf.sale_date", "date", dates.FormatDate(saleDate))},
-		transport)
+		trans)
 	if status == "DELIVERED" {
 		when := ""
 		if deliveredAt != nil {
@@ -409,6 +418,12 @@ func (h *handler) pdfDeliveryNote(c *fiber.Ctx) error {
 			note = T("sales.pdf.dn.received_by_on", "name", *receivedBy, "when", dates.FormatDateTime(*deliveredAt))
 		}
 		rep.Note(note)
+		if rnote != nil && *rnote != "" {
+			rep.Note(T("sales.pdf.dn.receipt_note", "v", *rnote))
+		}
+		if hasPhoto {
+			rep.Note(T("sales.pdf.dn.photo_on_file"))
+		}
 	}
 	rep.Note(T("sales.pdf.dn.terms", "company", company.LegalName))
 	rep.Signatures([]pdf.Signatory{
@@ -438,111 +453,6 @@ func tinLine(r rq, s *string) string {
 		return ""
 	}
 	return r.t("sales.pdf.tin", "v", *s)
-}
-
-// ───────────────────────────── order / pro-forma ─────────────────────────────
-
-func (h *handler) pdfOrder(c *fiber.Ctx) error {
-	r := newRq(c)
-	T := func(k string, a ...any) string { return r.t(k, a...) }
-	pct, err := h.approvals(r.ctx)
-	if err != nil {
-		return err
-	}
-	sale, err := h.s.loadSale(r.ctx, h.d.Pool, r.lang, c.Params("saleId"), pct)
-	if err != nil {
-		return err
-	}
-	if sale == nil {
-		return r.notFoundSale()
-	}
-	if err := assertSaleAccess(r.ctx, h.d.Pool, r.u, sale.ID, sale.Plant.ID); err != nil {
-		return err
-	}
-	company, err := h.d.Settings.Company(r.ctx)
-	if err != nil {
-		return err
-	}
-	cu := sale.Customer
-	title := T("sales.pdf.order.title_order")
-	if sale.Status == "DRAFT" {
-		title = T("sales.pdf.order.title_proforma")
-	}
-	rep, err := pdf.New(c, h.d, pdf.Options{Title: title, Subtitle: fmt.Sprintf("%s (%s)", sale.Plant.Name, sale.Plant.Code), DocumentNo: sale.Number,
-		Meta: []pdf.Meta{{Label: T("sales.pdf.date"), Value: dates.FormatDate(mustDate(sale.Date))}, {Label: T("sales.pdf.status"), Value: T("sales.status." + sale.Status)}}})
-	if err != nil {
-		return err
-	}
-	if sale.Status == "CANCELLED" {
-		txt := T("sales.pdf.order.cancelled_banner")
-		if sale.CancelReason != nil && *sale.CancelReason != "" {
-			txt = T("sales.pdf.order.cancelled_banner_reason", "reason", *sale.CancelReason)
-		}
-		rep.Badge(T("sales.status.CANCELLED"), pdf.Red).Note(txt)
-	} else {
-		rep.Badge(T("sales.pdf.order.not_fiscal_badge"), pdf.Amber).Note(T("sales.pdf.order.not_fiscal"))
-	}
-	var activeDNs []string
-	for _, d := range sale.Deliveries {
-		if d.Status != "CANCELLED" {
-			activeDNs = append(activeDNs, d.DNNumber)
-		}
-	}
-	dns := "—"
-	if len(activeDNs) > 0 {
-		dns = strings.Join(activeDNs, ", ")
-	}
-	boxTable(rep, []string{T("sales.pdf.customer"), T("sales.pdf.references")},
-		nonEmpty(cu.Name, deref(cu.Address), telLine(r, cu.Phone), deref(cu.Email), tinLine(r, cu.TIN)),
-		[]string{sale.Number, T("sales.pdf.inv_no", "type", sale.InvoiceType, "no", dash(sale.EbmInvoiceNo)), T("sales.pdf.ebm_receipt", "no", dash(sale.EbmReceiptNo)), T("sales.pdf.order.delivery_notes", "dns", dns)})
-	rep.Section(T("sales.pdf.order.items"))
-	var data [][]any
-	for i, l := range sale.Lines {
-		desc := l.Product.Name
-		if l.Product.Dimensions != nil && *l.Product.Dimensions != "" {
-			desc += " (" + *l.Product.Dimensions + ")"
-		}
-		data = append(data, []any{i + 1, desc, fmtI(l.Quantity), fmtI(l.UnitPrice), fmtI(l.Amount), fmtI(l.Delivered)})
-	}
-	rep.Table([]pdf.Column{{Header: "#", Width: 0.35}, {Header: T("sales.pdf.description"), Width: 3}, {Header: T("sales.pdf.quantity"), Width: 1, Align: pdf.Right}, {Header: T("sales.pdf.unit_price"), Width: 1, Align: pdf.Right},
-		{Header: T("sales.pdf.amount_rwf"), Width: 1.3, Align: pdf.Right}, {Header: T("sales.pdf.delivered"), Width: 0.9, Align: pdf.Right}},
-		data, []any{"", T("sales.pdf.total"), fmtI(sale.Totals.Quantity), "", fmtI(sale.Totals.Amount), fmtI(sale.Totals.Delivered)})
-	balance := sale.Totals.Amount - sale.Totals.Paid
-	if sale.Status == "CONFIRMED" {
-		balance = sale.Totals.Balance
-	}
-	rep.KpiRow([]pdf.Kpi{{Label: T("sales.pdf.order.total"), Value: format.RWF(float64(sale.Totals.Amount))}, {Label: T("sales.pdf.order.paid_to_date"), Value: format.RWF(float64(sale.Totals.Paid))},
-		{Label: T("sales.pdf.order.balance_due"), Value: format.RWF(float64(balance))}})
-	if len(sale.Payments) > 0 {
-		rep.Section(T("sales.pdf.order.payments"))
-		var prow [][]any
-		for _, p := range sale.Payments {
-			prow = append(prow, []any{dates.FormatDate(mustDate(p.Date)), p.MethodLabel, deref(p.Reference), fmtI(p.Amount)})
-		}
-		rep.Table([]pdf.Column{{Header: T("sales.pdf.date")}, {Header: T("sales.pdf.method")}, {Header: T("sales.pdf.reference"), Width: 1.5}, {Header: T("sales.pdf.amount_rwf"), Align: pdf.Right}}, prow, nil)
-	}
-	if sale.Notes != nil && *sale.Notes != "" {
-		rep.Note(T("sales.pdf.order.notes", "v", *sale.Notes))
-	}
-	rep.Note(T("sales.pdf.order.payment_note", "company", company.LegalName, "number", sale.Number))
-	prepared := pdf.Signatory{Role: T("sales.pdf.order.sig_prepared")}
-	if sale.CreatedBy != nil {
-		prepared.Name = sale.CreatedBy.Name
-	}
-	confirmed := pdf.Signatory{Role: T("sales.pdf.order.sig_confirmed"), Verb: T("sales.pdf.order.verb_confirmed")}
-	if sale.ConfirmedBy != nil {
-		confirmed.Name = sale.ConfirmedBy.Name
-	}
-	if sale.ConfirmedAt != nil {
-		t := sale.ConfirmedAt.Time
-		confirmed.At = &t
-	}
-	rep.Signatures([]pdf.Signatory{prepared, confirmed, {Role: T("sales.pdf.order.sig_customer")}})
-	kind := "Sales-Order"
-	if sale.Status == "DRAFT" {
-		kind = "Pro-forma"
-	}
-	return pdf.Send(c, rep, fmt.Sprintf("%s_%s_%s.pdf", sale.Plant.Code, kind, sale.Number), download(c))
 }
 
 func mustDate(iso string) time.Time { return dates.MustParseISO(iso) }

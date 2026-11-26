@@ -24,6 +24,8 @@ type entryInput struct {
 	Amount      int64
 	MomoCharge  int64
 	InvoiceRef  *string
+	FloatID     *string
+	Department  *string
 }
 
 func inList(list []string, s string) bool {
@@ -120,12 +122,12 @@ func validateEntry(v *httpx.V, lang i18n.Lang, today string) entryInput {
 	} else {
 		in.Type = s
 	}
-	// category (optional)
+	// category (optional): a reference-data expense category code (or a legacy enum value); checked against the DB later
 	if raw := v.Raw("category"); raw != nil {
-		if s, ok := raw.(string); !ok || !inList(categories, s) {
+		if s, ok := raw.(string); !ok || strings.TrimSpace(s) == "" || len(s) > 40 {
 			v.Fail("category", "pettycash.v.choose_category")
 		} else {
-			in.Category = s
+			in.Category = strings.TrimSpace(s)
 		}
 	}
 	// description
@@ -172,6 +174,8 @@ func validateEntry(v *httpx.V, lang i18n.Lang, today string) entryInput {
 		in.MomoCharge = c
 	}
 	in.InvoiceRef = optionalText(v, lang, "invoiceRef", 60)
+	in.FloatID = v.NullStr("floatId").Trim().Max(60).NilIfEmpty()
+	in.Department = v.NullStr("department").Trim().Max(40).NilIfEmpty()
 
 	if v.Failed() {
 		return in
@@ -189,8 +193,11 @@ func validateEntry(v *httpx.V, lang i18n.Lang, today string) entryInput {
 		if in.MomoCharge > in.Amount {
 			v.Fail("momoCharge", "pettycash.v.charge_exceeds")
 		}
+		if in.InvoiceRef == nil { // SRS §7.3: every expenditure carries a receipt reference
+			v.Fail("invoiceRef", "pettycash.v.receipt_required")
+		}
 	} else {
-		in.Category, in.MomoCharge = "FLOAT_DEPOSIT", 0
+		in.Category, in.MomoCharge, in.Department = "FLOAT_DEPOSIT", 0, nil
 	}
 	return in
 }

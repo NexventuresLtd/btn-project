@@ -5,7 +5,8 @@ import type { Tone } from "@/components/ui";
 export interface Position {
   date: string;
   plants: { id: string; code: string; name: string }[];
-  products: { id: string; code: string; name: string; unit: string; isActive: boolean; byPlant: Record<string, number>; total: number }[];
+  products: { id: string; code: string; name: string; unit: string; isActive: boolean; byPlant: Record<string, number>; total: number;
+    reorderLevel?: number; levels?: Record<string, number>; low?: Record<string, boolean> }[];
   plantTotals: Record<string, number>;
   total: number;
 }
@@ -19,6 +20,10 @@ export interface DailyFigures {
   sample: number;
   damage2: number;
   adjustment: number;
+  received: number;
+  issued: number;
+  transferIn: number;
+  transferOut: number;
   closing: number;
 }
 
@@ -30,7 +35,8 @@ export interface DailyReport {
   days: { date: string; totals: DailyFigures; rows: (DailyFigures & { productId: string; code: string; name: string; unit: string })[] }[];
 }
 
-export type MovementType = "OPENING" | "PRODUCTION" | "DAMAGE_PRODUCTION" | "DAMAGE_HANDLING" | "SAMPLE" | "SALE_ISSUE" | "RETURN" | "ADJUSTMENT";
+export type MovementType = "OPENING" | "PRODUCTION" | "DAMAGE_PRODUCTION" | "DAMAGE_HANDLING" | "SAMPLE" | "SALE_ISSUE" | "RETURN" | "ADJUSTMENT"
+  | "RECEIPT" | "ISSUE" | "TRANSFER_OUT" | "TRANSFER_IN";
 
 export interface Movement {
   id: string;
@@ -47,6 +53,10 @@ export interface Movement {
   sourceLabel: string | null;
   note: string | null;
   createdBy: string | null;
+  createdById?: string | null;
+  lotRef?: string | null;
+  reference?: string | null;
+  deviceId?: string | null;
   createdAt: string;
 }
 
@@ -67,6 +77,10 @@ export const MOVEMENT_TYPES: { value: MovementType; label: string; tone: Tone }[
   { value: "SALE_ISSUE", label: "Issue / sold", tone: "blue" },
   { value: "RETURN", label: "Returned", tone: "purple" },
   { value: "ADJUSTMENT", label: "Adjustment", tone: "slate" },
+  { value: "RECEIPT", label: "Receipt", tone: "green" },
+  { value: "ISSUE", label: "Issue", tone: "amber" },
+  { value: "TRANSFER_OUT", label: "Transfer out", tone: "purple" },
+  { value: "TRANSFER_IN", label: "Transfer in", tone: "blue" },
 ];
 
 export function usePosition(params: { date?: string; plantId?: string }, enabled = true) {
@@ -86,7 +100,7 @@ export function useDaily(params: { from: string; to: string; plantId: string }) 
   });
 }
 
-export function useMovements(params: { from: string; to: string; plantId: string; productId: string; type: string; page: number }) {
+export function useMovements(params: { from: string; to: string; plantId: string; productId: string; type: string; page: number; userId?: string; lotRef?: string }) {
   return useQuery({
     queryKey: ["stock", "movements", params],
     queryFn: ({ signal }) => get<MovementList>(`/stock/movements${qs(params)}`, signal),

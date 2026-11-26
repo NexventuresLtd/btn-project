@@ -1,6 +1,6 @@
 import { useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useAuth } from "@/auth/AuthProvider";
-import { Alert, Button, Field, Input, Modal, Select, Spinner, Textarea } from "@/components/ui";
+import { Alert, Button, Field, Input, Modal, Select, Spinner, Textarea, DateInput } from "@/components/ui";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { ApiError } from "@/lib/api";
 import { useT } from "@/i18n";
@@ -11,7 +11,6 @@ import {
   recordConsumption,
   recordOpening,
   recordReceipt,
-  recordTransfer,
   useBalances,
   useMaterialOptions,
   useOpenings,
@@ -19,16 +18,16 @@ import {
   type PlantRef,
 } from "./api";
 import { fmtQty } from "./components";
+import { pinnedPlantId } from "@/lib/scope";
 
-export type MaterialAction = "receive" | "transfer" | "usage" | "adjust" | "opening";
+export type MaterialAction = "receive" | "usage" | "adjust" | "opening";
 
-const SCOPED = ["SUPERVISOR", "LEAD_OPERATOR", "OPERATOR"];
 const INVALIDATE = [["materials"], ["dashboard"]];
 
 /** The plant a plant-scoped user is pinned to, else null. */
 function usePinnedPlant() {
   const { user } = useAuth();
-  return user?.plant && SCOPED.includes(user.role) ? user.plant.id : null;
+  return pinnedPlantId(user);
 }
 
 function useForm<T extends object>(initial: T) {
@@ -87,7 +86,7 @@ function DateField({ id, value, onChange, error }: { id: string; value: string; 
   const { t } = useT();
   return (
     <Field label={t("common.date")} htmlFor={id} required error={error}>
-      <Input id={id} type="date" value={value} max={todayISO()} onChange={(e) => onChange(e.target.value)} invalid={!!error} />
+      <DateInput id={id} value={value} max={todayISO()} onChange={(v) => onChange(v)} invalid={!!error} />
     </Field>
   );
 }
@@ -164,7 +163,7 @@ function useDefaults(defaultPlantId?: string) {
 export function ReceiveModal({ onClose, defaultPlantId }: { onClose: () => void; defaultPlantId?: string }) {
   const { t } = useT();
   const { pinned, opts, plantId } = useDefaults(defaultPlantId);
-  const f = useForm({ plantId, date: todayISO(), materialId: "", quantity: "", unitCost: "", supplier: "", reference: "", note: "" });
+  const f = useForm({ plantId, date: todayISO(), materialId: "", quantity: "", unitCost: "", supplier: "", reference: "", lotRef: "", note: "" });
   const m = useMutate(recordReceipt, { success: t("materials.toast.receipt"), invalidate: INVALIDATE, onSuccess: onClose });
   const err = (k: string) => fieldError(m.error, k);
   const mat = opts.data?.materials.find((x) => x.id === f.values.materialId);
@@ -186,6 +185,9 @@ export function ReceiveModal({ onClose, defaultPlantId }: { onClose: () => void;
         <Field label={t("materials.refLabel")} htmlFor="rc-ref" error={err("reference")}>
           <Input id="rc-ref" value={f.values.reference} onChange={(e) => f.set("reference", e.target.value)} maxLength={80} invalid={!!err("reference")} />
         </Field>
+        <Field label={t("materials.lotRef")} htmlFor="rc-lot" error={err("lotRef")} hint={t("materials.lotHint")}>
+          <Input id="rc-lot" value={f.values.lotRef} onChange={(e) => f.set("lotRef", e.target.value)} maxLength={60} invalid={!!err("lotRef")} autoComplete="off" />
+        </Field>
         <Field
           label={t("materials.unitCost")}
           htmlFor="rc-cost"
@@ -203,41 +205,12 @@ export function ReceiveModal({ onClose, defaultPlantId }: { onClose: () => void;
   );
 }
 
-// ───────────────────────────── Transfer ─────────────────────────────
-
-export function TransferModal({ onClose, defaultPlantId }: { onClose: () => void; defaultPlantId?: string }) {
-  const { t } = useT();
-  const { pinned, opts, plantId } = useDefaults(defaultPlantId);
-  const f = useForm({ fromPlantId: plantId, toPlantId: "", date: todayISO(), materialId: "", quantity: "", note: "" });
-  const m = useMutate(recordTransfer, { success: t("materials.toast.transfer"), invalidate: INVALIDATE, onSuccess: onClose });
-  const err = (k: string) => fieldError(m.error, k);
-  const mat = opts.data?.materials.find((x) => x.id === f.values.materialId);
-  return (
-    <ActionModal open onClose={onClose} title={t("materials.transferTitle")} description={t("materials.transferDesc")} onSubmit={() => m.mutate(f.values)} loading={m.isPending} submitLabel={t("materials.recordTransfer")}>
-      <FormError error={m.error} />
-      <div className="grid gap-4 sm:grid-cols-2">
-        <PlantSelect id="tr-from" label={t("materials.fromPlant")} value={f.values.fromPlantId} onChange={(v) => f.setValues((s) => ({ ...s, fromPlantId: v, toPlantId: s.toPlantId === v ? "" : s.toPlantId }))} plants={opts.data?.plants ?? []} disabled={!!pinned} error={err("fromPlantId")} />
-        <PlantSelect id="tr-to" label={t("materials.toPlantLabel")} value={f.values.toPlantId} onChange={(v) => f.set("toPlantId", v)} plants={opts.data?.plants ?? []} exclude={f.values.fromPlantId} error={err("toPlantId")} />
-        <DateField id="tr-date" value={f.values.date} onChange={(v) => f.set("date", v)} error={err("date")} />
-        <MaterialSelect id="tr-mat" value={f.values.materialId} onChange={(v) => f.set("materialId", v)} materials={opts.data?.materials ?? []} error={err("materialId")} />
-        <Field label={`${t("common.quantity")}${mat ? ` (${mat.unit})` : ""}`} htmlFor="tr-qty" required error={err("quantity")} className="sm:col-span-2">
-          <Input id="tr-qty" type="number" inputMode="decimal" min="0" step="any" value={f.values.quantity} onChange={(e) => f.set("quantity", e.target.value)} invalid={!!err("quantity")} className="tabular text-right" />
-        </Field>
-      </div>
-      <OnHand plantId={f.values.fromPlantId} materialId={f.values.materialId} date={f.values.date} label={t("materials.available")} />
-      <Field label={t("common.notes")} htmlFor="tr-note" error={err("note")}>
-        <Textarea id="tr-note" rows={2} value={f.values.note} onChange={(e) => f.set("note", e.target.value)} maxLength={500} placeholder={t("materials.transferNote")} invalid={!!err("note")} />
-      </Field>
-    </ActionModal>
-  );
-}
-
 // ───────────────────────────── Usage ─────────────────────────────
 
 export function UsageModal({ onClose, defaultPlantId }: { onClose: () => void; defaultPlantId?: string }) {
   const { t } = useT();
   const { pinned, opts, plantId } = useDefaults(defaultPlantId);
-  const f = useForm({ plantId, date: todayISO(), materialId: "", quantity: "", note: "" });
+  const f = useForm({ plantId, date: todayISO(), materialId: "", quantity: "", lotRef: "", note: "" });
   const m = useMutate(recordConsumption, { success: t("materials.toast.usage"), invalidate: INVALIDATE, onSuccess: onClose });
   const err = (k: string) => fieldError(m.error, k);
   const mat = opts.data?.materials.find((x) => x.id === f.values.materialId);
@@ -250,6 +223,9 @@ export function UsageModal({ onClose, defaultPlantId }: { onClose: () => void; d
         <MaterialSelect id="us-mat" value={f.values.materialId} onChange={(v) => f.set("materialId", v)} materials={opts.data?.materials ?? []} error={err("materialId")} />
         <Field label={`${t("materials.quantityUsed")}${mat ? ` (${mat.unit})` : ""}`} htmlFor="us-qty" required error={err("quantity")}>
           <Input id="us-qty" type="number" inputMode="decimal" min="0" step="any" value={f.values.quantity} onChange={(e) => f.set("quantity", e.target.value)} invalid={!!err("quantity")} className="tabular text-right" />
+        </Field>
+        <Field label={t("materials.lotRef")} htmlFor="us-lot" error={err("lotRef")} hint={t("materials.lotUseHint")}>
+          <Input id="us-lot" value={f.values.lotRef} onChange={(e) => f.set("lotRef", e.target.value)} maxLength={60} invalid={!!err("lotRef")} autoComplete="off" />
         </Field>
       </div>
       <OnHand plantId={f.values.plantId} materialId={f.values.materialId} date={f.values.date} label={t("materials.available")} />
@@ -336,7 +312,7 @@ export function OpeningModal({ onClose, defaultPlantId }: { onClose: () => void;
       <div className="grid gap-4 sm:grid-cols-2">
         <PlantSelect id="op-plant" value={form.plantId} onChange={(v) => { setForm((s) => ({ ...s, plantId: v })); setSubmitted([]); }} plants={opts.data?.plants ?? []} disabled={!!pinned} error={err("plantId")} />
         <Field label={t("materials.openingDate")} htmlFor="op-date" required error={err("date")} hint={t("materials.openingDateHint")}>
-          <Input id="op-date" type="date" value={form.date} max={todayISO()} onChange={(e) => setForm((s) => ({ ...s, date: e.target.value }))} invalid={!!err("date")} />
+          <DateInput id="op-date" value={form.date} max={todayISO()} onChange={(v) => setForm((s) => ({ ...s, date: v }))} invalid={!!err("date")} />
         </Field>
       </div>
       {err("lines") ? <p className="text-xs font-medium text-red-600">{err("lines")}</p> : null}
@@ -402,8 +378,6 @@ export function MaterialActionModal({ action, onClose, defaultPlantId }: { actio
   switch (action) {
     case "receive":
       return <ReceiveModal onClose={onClose} defaultPlantId={defaultPlantId} />;
-    case "transfer":
-      return <TransferModal onClose={onClose} defaultPlantId={defaultPlantId} />;
     case "usage":
       return <UsageModal onClose={onClose} defaultPlantId={defaultPlantId} />;
     case "adjust":

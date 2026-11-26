@@ -1,3 +1,8 @@
-import { NAMESPACES as N } from "./ns";
-export const en = { ...N.common.en, ...N.enums.en, ...N.layout.en, ...N.auth.en, ...N.superadmin.en, ...N.security.en, ...N.dashboard.en, ...N.reports.en, ...N.production.en, ...N.stock.en, ...N.materials.en, ...N.sales.en, ...N.pettycash.en, ...N.payroll.en, ...N.attendance.en, ...N.admin.en, ...N.guide.en };
-export type MessageKey = keyof typeof en;
+import { NAMESPACES as N, type Namespaces } from "./ns";
+
+type UnionToIntersection<U> = (U extends unknown ? (x: U) => void : never) extends (x: infer I) => void ? I : never;
+/** Every namespace's English block merged (built generically: registering a namespace in ns/index.ts is enough). */
+type AllEn = UnionToIntersection<Namespaces[keyof Namespaces]["en"]>;
+
+export const en = Object.assign({}, ...Object.values(N).map((ns) => ns.en)) as AllEn;
+export type MessageKey = keyof AllEn & string;

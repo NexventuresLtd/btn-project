@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { useT } from "@/i18n";
 import { useSearchParams } from "react-router";
-import { CalendarDays, ChevronDown, Download, ExternalLink, FileDown } from "lucide-react";
-import { useLookups } from "@/hooks/useLookups";
+import { ChevronDown, Download, ExternalLink, FileDown } from "lucide-react";
+import { sitesOnly, useLookups } from "@/hooks/useLookups";
 import { useAuth } from "@/auth/AuthProvider";
 import { monthStartISO, shiftISO, todayISO } from "@/lib/dates";
 import { downloadPdf, openPdf, qs } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Button } from "./Button";
+import { DateInput } from "./DateInput";
 import { Select } from "./Field";
 import { ShapeToggle, usePdfShape } from "./PdfShape";
+import { pinnedPlantId } from "@/lib/scope";
+import { DataCutoff } from "@/components/DataCutoff"; // P7 RPT-06: data cut-off on every report screen
 
 export interface Filters {
   from: string;
@@ -25,7 +28,7 @@ export interface Filters {
 export function useFilters(defaults?: Partial<Filters>) {
   const [params, setParams] = useSearchParams();
   const { user } = useAuth();
-  const pinnedPlant = user?.plant && ["SUPERVISOR", "LEAD_OPERATOR", "OPERATOR"].includes(user.role) ? user.plant.id : null;
+  const pinnedPlant = pinnedPlantId(user);
   const filters: Filters = {
     from: params.get("from") ?? defaults?.from ?? monthStartISO(),
     to: params.get("to") ?? defaults?.to ?? todayISO(),
@@ -40,11 +43,13 @@ export function useFilters(defaults?: Partial<Filters>) {
   return { filters, set, pinnedPlant, query: qs({ from: filters.from, to: filters.to, plantId: filters.plantId }) };
 }
 
-export function FilterBar({ filters, onChange, showPlant = true, showRange = true, pinnedPlant, className, children }: {
+export function FilterBar({ filters, onChange, showPlant = true, showRange = true, onlySites = false, pinnedPlant, className, children }: {
   filters: Filters;
   onChange: (patch: Partial<Filters>) => void;
   showPlant?: boolean;
   showRange?: boolean;
+  /** Offer production SITEs only (production / attendance screens; STK-01). */
+  onlySites?: boolean;
   pinnedPlant?: string | null;
   className?: string;
   children?: React.ReactNode;
@@ -62,10 +67,9 @@ export function FilterBar({ filters, onChange, showPlant = true, showRange = tru
       {showRange ? (
         <>
           <div className="flex items-center gap-1 rounded-xl border border-line bg-white px-2 shadow-[0_1px_0_rgb(12_35_75/0.02)]">
-            <CalendarDays className="ml-1 size-4 text-slate-400" />
-            <input type="date" value={filters.from} max={filters.to} onChange={(e) => e.target.value && onChange({ from: e.target.value })} className="h-9 bg-transparent px-1 text-sm text-slate-700 outline-none" aria-label={t("common.fromDate")} />
+            <DateInput variant="bare" value={filters.from} max={filters.to} onChange={(v) => v && onChange({ from: v })} aria-label={t("common.fromDate")} />
             <span className="text-slate-300">–</span>
-            <input type="date" value={filters.to} min={filters.from} onChange={(e) => e.target.value && onChange({ to: e.target.value })} className="h-9 bg-transparent px-1 text-sm text-slate-700 outline-none" aria-label={t("common.toDate")} />
+            <DateInput variant="bare" value={filters.to} min={filters.from} onChange={(v) => v && onChange({ to: v })} aria-label={t("common.toDate")} />
           </div>
           <div className="hidden gap-1 sm:flex">
             {presets.map((p) => (
@@ -83,10 +87,11 @@ export function FilterBar({ filters, onChange, showPlant = true, showRange = tru
       {showPlant ? (
         <Select value={filters.plantId} onChange={(e) => onChange({ plantId: e.target.value })} disabled={!!pinnedPlant} className="h-10 w-40" aria-label={t("common.plant")}>
           {!pinnedPlant ? <option value="">{t("common.allPlants")}</option> : null}
-          {lookups?.plants.map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}
+          {(onlySites ? sitesOnly(lookups?.plants) : lookups?.plants ?? []).map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}
         </Select>
       ) : null}
       {children}
+      <DataCutoff plantId={pinnedPlant ?? filters.plantId} compact className="basis-full sm:ml-auto sm:basis-auto" />
     </div>
   );
 }

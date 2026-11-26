@@ -1,6 +1,6 @@
-// Package i18n holds the server-side message catalogs (en, am, rw) and language resolution.
+// Package i18n holds the server-side message catalogs (en, am, rw, fr) and language resolution.
 //
-// Core catalogs live in en.json / am.json / rw.json. Each module may add its own keys in
+// Core catalogs live in en.json / am.json / rw.json / fr.json. Each module may add its own keys in
 // modules/<module>.<lang>.json (e.g. modules/sales.am.json) so agents never edit the same file.
 // All catalogs must contain identical key sets (enforced by a test).
 package i18n
@@ -22,14 +22,24 @@ const (
 	EN Lang = "en"
 	AM Lang = "am"
 	RW Lang = "rw"
+	FR Lang = "fr"
 
 	Default = EN
 )
 
 // All is the list of supported languages.
-var All = []Lang{EN, AM, RW}
+var All = []Lang{EN, AM, RW, FR}
 
-//go:embed en.json am.json rw.json modules/*.json
+// Codes returns the supported language codes as strings (for validators: OneOf(i18n.Codes())).
+func Codes() []string {
+	out := make([]string, len(All))
+	for i, l := range All {
+		out[i] = string(l)
+	}
+	return out
+}
+
+//go:embed en.json am.json rw.json fr.json modules/*.json
 var files embed.FS
 
 var catalogs = map[Lang]map[string]string{}
@@ -85,6 +95,9 @@ func Normalize(s string) (Lang, bool) {
 	}
 	if s == "amh" {
 		s = "am"
+	}
+	if s == "fra" || s == "fre" {
+		s = "fr"
 	}
 	l := Lang(s)
 	_, ok := catalogs[l]

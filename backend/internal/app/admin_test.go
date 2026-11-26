@@ -289,7 +289,7 @@ func TestI18nOverrides(t *testing.T) {
 	if r.StatusCode != 200 || len(m["messages"].(map[string]any)) != 0 {
 		t.Fatalf("empty overrides: %d %v", r.StatusCode, m)
 	}
-	if r := e.Do("GET", "/api/public/i18n/fr", nil, nil); r.StatusCode != 404 {
+	if r := e.Do("GET", "/api/public/i18n/de", nil, nil); r.StatusCode != 404 {
 		t.Fatalf("unknown lang: %d", r.StatusCode)
 	}
 	r = e.Do("PUT", "/api/admin/i18n", map[string]any{"items": []map[string]any{
@@ -340,7 +340,7 @@ func TestMasterdataLookupsSettingsAudit(t *testing.T) {
 	r := e.Do("GET", "/api/lookups", nil, gm)
 	etag := r.Header.Get("ETag")
 	lk := e.Map(r)
-	if r.StatusCode != 200 || len(lk["plants"].([]any)) != 3 || len(lk["products"].([]any)) != 11 || len(lk["materials"].([]any)) != 6 || len(lk["roles"].([]any)) != 10 {
+	if r.StatusCode != 200 || len(lk["plants"].([]any)) != 4 || len(lk["products"].([]any)) != 11 || len(lk["materials"].([]any)) != 6 || len(lk["roles"].([]any)) != 12 {
 		t.Fatalf("lookups: %d %v", r.StatusCode, lk)
 	}
 	if r := e.Do("GET", "/api/lookups", nil, gm, "If-None-Match", etag); r.StatusCode != 304 {
@@ -349,8 +349,8 @@ func TestMasterdataLookupsSettingsAudit(t *testing.T) {
 	if pl := e.Map(e.Do("GET", "/api/lookups", nil, sup))["plants"].([]any); len(pl) != 1 || pl[0].(map[string]any)["code"] != "BTN-1" {
 		t.Fatalf("scoped plants: %v", pl)
 	}
-	if rl := e.Map(e.Do("GET", "/api/lookups", nil, e.User(auth.RoleSuperAdmin)))["roles"].([]any); len(rl) != 11 {
-		t.Fatalf("super sees 11 roles: %d", len(rl))
+	if rl := e.Map(e.Do("GET", "/api/lookups", nil, e.User(auth.RoleSuperAdmin)))["roles"].([]any); len(rl) != 13 { // 11 + STOCK_OFFICER, PROCUREMENT_OFFICER
+		t.Fatalf("super sees 13 roles: %d", len(rl))
 	}
 
 	// masterdata permissions: everyone reads, only masterdata.manage writes

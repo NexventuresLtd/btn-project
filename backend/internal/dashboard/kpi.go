@@ -3,9 +3,7 @@
 package dashboard
 
 import (
-	"fmt"
 	"math"
-	"strconv"
 	"time"
 
 	"btn-ops/internal/dates"
@@ -257,19 +255,8 @@ var KpiDefinitions = map[string]KpiDefinition{
 
 func todayKey() string { return dates.TodayISO() }
 
-// RangeLabel renders "1-21 Nov 2026", "28 Oct - 21 Nov 2026", "15 Dec 2025 - 10 Jan 2026" or "14 Nov 2026"
-// with month names in the requested language.
+// RangeLabel renders "01/11/2026 – 21/11/2026" or "14/11/2026" (NFR-L1 DD/MM/YYYY in every language).
 func RangeLabel(lang i18n.Lang, from, to time.Time) string {
-	mon := func(t time.Time) string { return i18n.T(lang, "dashboard.month."+strconv.Itoa(int(t.Month()))) }
-	fd, td := from.Day(), to.Day()
-	switch {
-	case from.Year() == to.Year() && from.Month() == to.Month():
-		if fd == td {
-			return fmt.Sprintf("%d %s %d", fd, mon(from), from.Year())
-		}
-		return fmt.Sprintf("%d–%d %s %d", fd, td, mon(from), from.Year())
-	case from.Year() == to.Year():
-		return fmt.Sprintf("%d %s – %d %s %d", fd, mon(from), td, mon(to), to.Year())
-	}
-	return fmt.Sprintf("%d %s %d – %d %s %d", fd, mon(from), from.Year(), td, mon(to), to.Year())
+	_ = lang
+	return dates.FormatRange(from, to)
 }

@@ -92,8 +92,9 @@ export interface Dashboard {
   activity: null | { id: string; at: string; action: string; entity: string; entityId: string | null; summary: string | null; user: { id: string; name: string } | null }[];
 }
 
-export function useDashboard(query: string) {
+export function useDashboard(query: string, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: ["dashboard", query],
     queryFn: ({ signal }) => get<Dashboard>(`/dashboard${query}`, signal),
     placeholderData: keepPreviousData,

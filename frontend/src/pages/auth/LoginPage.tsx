@@ -7,6 +7,7 @@ import { ApiError, post } from "@/lib/api";
 import { tr, useT } from "@/i18n";
 import { PasskeyError, passkeyAvailability, signInWithPasskey } from "@/lib/passkeys";
 import { useAuth } from "@/auth/AuthProvider";
+import { markFreshSignIn, rememberLoginPassword } from "@/offline/runtime";
 
 export function LoginPage() {
   const { t } = useT();
@@ -29,6 +30,7 @@ export function LoginPage() {
     setError(null);
     try {
       const r = await post<{ email: string; expiresInSeconds: number }>("/auth/login", { email, password });
+      rememberLoginPassword(password);
       navigate(`/login/verify?${new URLSearchParams({ email: r.email, next: params.get("next") ?? "" })}`, { state: { expiresIn: r.expiresInSeconds } });
     } catch (err) {
       setError(err instanceof ApiError ? err : new ApiError(0, "network", tr("common.networkError")));
@@ -45,6 +47,7 @@ export function LoginPage() {
     setPasskeyBusy(true);
     try {
       const u = await signInWithPasskey();
+      markFreshSignIn(); // a real sign-in: the offline package may be (re)issued
       setUser(u);
       navigate(u.mustChangePassword ? "/account/password" : params.get("next") || "/", { replace: true });
     } catch (err) {

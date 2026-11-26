@@ -26,7 +26,8 @@ type Challenge struct {
 
 // IssueOTP emails a one-time code and binds it to this browser with the httpOnly ticket cookie.
 // Only the ticket hash and an HMAC of the code are stored.
-func (s *Service) IssueOTP(c *fiber.Ctx, user struct{ ID, Email, Name, Language string }, purpose string) error {
+// For PASSWORD_RESET an optional reset link is included in the same email.
+func (s *Service) IssueOTP(c *fiber.Ctx, user struct{ ID, Email, Name, Language string }, purpose string, link ...string) error {
 	ctx := c.UserContext()
 	sends, err := CountAttempts(ctx, s.Pool, user.ID, KindOTPSend, time.Hour, false)
 	if err != nil {
@@ -56,7 +57,7 @@ func (s *Service) IssueOTP(c *fiber.Ctx, user struct{ ID, Email, Name, Language 
 	mailCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
 	defer cancel()
 	if err := s.Mail.SendOTP(mailCtx, mail.OTP{To: user.Email, Name: user.Name, Code: code, Purpose: purpose,
-		Minutes: int(Limits.OTPTTL.Minutes()), IP: c.IP(), Lang: lang}); err != nil {
+		Minutes: int(Limits.OTPTTL.Minutes()), IP: c.IP(), Lang: lang, Link: firstOr(link), LinkMinutes: int(ResetLinkTTL.Minutes())}); err != nil {
 		if !s.Cfg.AuthDevLogOTP {
 			return err
 		}
@@ -151,3 +152,10 @@ func isDigits(s string) bool {
 func (s *Service) ClearOTPCookie(c *fiber.Ctx) { s.clearCookie(c, OTPCookie, "/api/auth") }
 
 var _ = i18n.EN
+
+func firstOr(v []string) string {
+	if len(v) > 0 {
+		return v[0]
+	}
+	return ""
+}

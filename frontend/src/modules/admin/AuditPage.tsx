@@ -1,11 +1,11 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { ChevronRight, ScrollText, X } from "lucide-react";
-import { Badge, Card, EmptyState, ErrorState, FilterBar, PageHeader, Pagination, Select, Spinner, useFilters, Checkbox } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, ErrorState, ExportMenu, FilterBar, PageHeader, Pagination, Select, Spinner, useFilters, Checkbox } from "@/components/ui";
 import { useT, type T } from "@/i18n";
 import { formatDateTime } from "@/lib/dates";
 import { cn } from "@/lib/cn";
-import { useAudit, type AuditEntry } from "./api";
+import { useAudit, useAuditFacets, type AuditEntry } from "./api";
 import { SearchInput, useDebounced } from "./components";
 
 const ENTITIES: string[] = ["User", "Setting", "Plant", "Product", "Material", "Customer", "ProductionReport", "StockMovement", "MaterialMovement", "MaterialTransfer", "Sale", "Delivery", "Payment", "PettyCashEntry", "Worker", "PayrollPeriod", "Import"];
@@ -26,6 +26,12 @@ export function AuditPage() {
   const [params, setParams] = useSearchParams();
   const entity = params.get("entity") ?? "";
   const entityId = params.get("entityId") ?? "";
+  const userId = params.get("userId") ?? "";
+  const action = params.get("action") ?? "";
+  const deviceId = params.get("deviceId") ?? "";
+  const facets = useAuditFacets();
+  const modules = [...new Set((facets.data?.actions ?? []).map((a) => a.split(".")[0]))].sort();
+  const filtered = !!(entity || entityId || userId || action || deviceId || params.get("q"));
   const page = Math.max(1, Number(params.get("page")) || 1);
   const [search, setSearch] = useState(params.get("q") ?? "");
   const q = useDebounced(search.trim());
@@ -34,7 +40,8 @@ export function AuditPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
-  const audit = useAudit({ from: filters.from, to: filters.to, entity, entityId, q: params.get("q") ?? "", page });
+  const audit = useAudit({ from: filters.from, to: filters.to, entity, entityId, q: params.get("q") ?? "", page, userId, action, deviceId });
+  const exportParams = { from: filters.from, to: filters.to, entity, entityId, userId, action, deviceId, q: params.get("q") ?? "" };
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (id: string) => setOpen((s) => {
     const n = new Set(s);
@@ -55,6 +62,7 @@ export function AuditPage() {
         title={t("admin.audit.title")}
         description={t("admin.audit.description")}
         breadcrumbs={[{ label: t("admin.breadcrumb") }, { label: t("admin.audit.title") }]}
+        actions={<ExportMenu path="/audit" params={exportParams} />}
       />
       <Card>
         <div className="space-y-3 px-5 py-4">
@@ -63,7 +71,27 @@ export function AuditPage() {
               <option value="">{t("admin.audit.allTypes")}</option>
               {ENTITIES.map((e) => <option key={e} value={e}>{tx(`admin.audit.entityPlural.${e}`)}</option>)}
             </Select>
+            <Select value={userId} onChange={(e) => set({ userId: e.target.value || undefined })} className="h-10 w-48" aria-label={t("exports.audit.user")}>
+              <option value="">{t("exports.audit.allUsers")}</option>
+              {facets.data?.users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </Select>
+            <Select value={action} onChange={(e) => set({ action: e.target.value || undefined })} className="h-10 w-56" aria-label={t("exports.audit.action")}>
+              <option value="">{t("exports.audit.allActions")}</option>
+              {modules.map((m) => (
+                <optgroup key={m} label={m}>
+                  <option value={`${m}.`}>{t("exports.audit.module", { module: m })}</option>
+                  {facets.data!.actions.filter((a) => a.startsWith(`${m}.`)).map((a) => <option key={a} value={a}>{tx(`admin.audit.action.${a}`, undefined, a)}</option>)}
+                </optgroup>
+              ))}
+            </Select>
+            {facets.data?.devices.length ? (
+              <Select value={deviceId} onChange={(e) => set({ deviceId: e.target.value || undefined })} className="h-10 w-44" aria-label={t("exports.audit.device")}>
+                <option value="">{t("exports.audit.allDevices")}</option>
+                {facets.data.devices.map((d) => <option key={d} value={d}>{d.length > 18 ? `${d.slice(0, 16)}…` : d}</option>)}
+              </Select>
+            ) : null}
             <SearchInput value={search} onChange={setSearch} placeholder={t("admin.audit.search")} className="w-full sm:w-64" />
+            {filtered ? <Button variant="ghost" size="sm" onClick={() => { setSearch(""); set({ entity: undefined, entityId: undefined, userId: undefined, action: undefined, deviceId: undefined, q: undefined }); }}>{t("exports.audit.clear")}</Button> : null}
           </FilterBar>
           {entityId ? (
             <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
@@ -209,6 +237,8 @@ function AuditDetail({ entry }: { entry: AuditEntry }) {
         {entry.user ? <div><dt className="inline font-medium text-slate-600">{t("admin.audit.by")} </dt><dd className="inline">{entry.user.name} ({entry.user.email})</dd></div> : null}
         {entry.entityId ? <div><dt className="inline font-medium text-slate-600">{t("admin.audit.recordId")} </dt><dd className="inline font-mono">{entry.entityId}</dd></div> : null}
         {entry.ip ? <div><dt className="inline font-medium text-slate-600">{t("admin.audit.ip")} </dt><dd className="inline font-mono">{entry.ip}</dd></div> : null}
+        {entry.deviceId ? <div><dt className="inline font-medium text-slate-600">{t("exports.audit.device")} </dt><dd className="inline font-mono">{entry.deviceId}</dd></div> : null}
+        {entry.userAgent ? <div className="basis-full"><dt className="inline font-medium text-slate-600">{t("exports.audit.userAgent")} </dt><dd className="inline break-all">{entry.userAgent}</dd></div> : null}
       </dl>
       {entry.summary ? <p className="text-sm text-slate-700">{entry.summary}</p> : null}
 

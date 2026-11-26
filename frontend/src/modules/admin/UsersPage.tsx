@@ -10,7 +10,7 @@ import { useLookups } from "@/hooks/useLookups";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { formatDateTime } from "@/lib/dates";
 import {
-  ADMIN_KEY, createUser, isLocked, isPlantScoped, resetPassword, revokeSessions, unlockUser, updateUser, useUsers, type AdminUser, type UserPayload,
+  ADMIN_KEY, createUser, isLocked, isOptionallyScoped, isPlantScoped, resetPassword, revokeSessions, unlockUser, updateUser, useUsers, type AdminUser, type UserPayload,
 } from "./api";
 import { CopyBox, RowMenu, SearchInput, useDebounced } from "./components";
 
@@ -229,6 +229,8 @@ function UserModal({ open, user, isSelf, onClose, onCreated }: {
   );
 
   const scoped = isPlantScoped(form.role);
+  const optional = isOptionallyScoped(form.role); // STOCK_OFFICER: site optional (pinned when set)
+  const canPick = scoped || optional;
   const errors: Partial<Record<keyof FormState, string>> = {};
   if (form.name.trim().length < 2) errors.name = t("admin.users.err.name");
   if (!user && !/^\S+@\S+\.\S+$/.test(form.email.trim())) errors.email = t("admin.users.err.email");
@@ -246,7 +248,7 @@ function UserModal({ open, user, isSelf, onClose, onCreated }: {
       email: form.email.trim().toLowerCase(),
       phone: form.phone.trim() || null,
       role: form.role,
-      plantId: scoped ? form.plantId : null,
+      plantId: canPick && form.plantId ? form.plantId : null,
       isActive: form.isActive,
     });
   }
@@ -286,8 +288,8 @@ function UserModal({ open, user, isSelf, onClose, onCreated }: {
             {withSuper.map((r) => <option key={r.value} value={r.value}>{tx(`enums.role.${r.value}`, undefined, r.label)}</option>)}
           </Select>
         </Field>
-        <Field label={t("common.plant")} required={scoped} error={err("plantId")} htmlFor="u-plant" hint={scoped ? t("admin.users.field.plantScoped") : t("admin.users.field.plantAll")}>
-          <Select id="u-plant" value={scoped ? form.plantId : ""} onChange={(e) => set("plantId", e.target.value)} disabled={!scoped} invalid={!!err("plantId")}>
+        <Field label={t("common.plant")} required={scoped} error={err("plantId")} htmlFor="u-plant" hint={scoped ? t("admin.users.field.plantScoped") : optional ? t("admin.users.field.plantOptional") : t("admin.users.field.plantAll")}>
+          <Select id="u-plant" value={canPick ? form.plantId : ""} onChange={(e) => set("plantId", e.target.value)} disabled={!canPick} invalid={!!err("plantId")}>
             <option value="">{scoped ? t("admin.users.field.plantChoose") : t("common.allPlants")}</option>
             {lookups?.plants.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
           </Select>

@@ -1,13 +1,15 @@
-import { useCallback, useState } from "react";
+import { Fragment, useCallback, useState } from "react";
 import { Link, useParams } from "react-router";
-import { BadgeCheck, Banknote, CalendarDays, CircleSlash, HandCoins, Info, RotateCcw, ShieldCheck, TriangleAlert, Users, Wallet } from "lucide-react";
-import { Alert, Button, Card, CardHeader, ConfirmDialog, ErrorState, PageHeader, PageLoader, PdfButton, StatCard, StatusBadge } from "@/components/ui";
+import { BadgeCheck, Banknote, CalendarDays, ChevronDown, ChevronRight, CircleSlash, HandCoins, Info, RotateCcw, ShieldCheck, TriangleAlert, Users, Wallet } from "lucide-react";
+import { Alert, Button, Card, CardHeader, ConfirmDialog, ErrorState, PageHeader, PageLoader, ExportMenu, PdfButton, StatCard, StatusBadge } from "@/components/ui";
 import { useT } from "@/i18n";
 import { useAuth } from "@/auth/AuthProvider";
 import { useMutate } from "@/hooks/useMutate";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatInt, formatQty, formatRWF } from "@/lib/format";
+import { formatDateTime } from "@/lib/dates";
+import { CalcDetails, CalcSummary, LineFlags } from "./CalcDetails";
 import { advance, PAYROLL_KEY, STEPS, usePeriod, type PayrollStep, type PeriodDetail } from "./api";
 import { ApprovalStepper } from "./ApprovalStepper";
 import { WageGrid } from "./WageGrid";
@@ -71,7 +73,7 @@ export function PeriodDetailPage() {
         description={t("payroll.detail.desc", { plant: p.plant.code, name: p.plant.name, days: t("payroll.daysCount", { count: p.periodDays }), number: p.number })}
         actions={
           <>
-            <PdfButton path={`/payroll/pdf/period/${p.id}`} label={t("payroll.detail.pdf")} />
+            <div className="flex flex-wrap items-center gap-2"><PdfButton path={`/payroll/pdf/period/${p.id}`} label={t("payroll.detail.pdf")} /><ExportMenu path={`/payroll/periods/${p.id}`} /></div>
             {a.return.visible ? (
               <Button variant="secondary" icon={<RotateCcw className="size-4" />} onClick={() => setReturning(true)}>{t("payroll.return.title")}</Button>
             ) : null}
@@ -137,7 +139,7 @@ export function PeriodDetailPage() {
           value={formatRWF(tot.net)}
           icon={<HandCoins />}
           tone="green"
-          hint={p.pettyCash.entries ? t("payroll.detail.pettyEntries", { count: p.pettyCash.entries }) : undefined}
+          hint={p.payments?.count ? t("payroll.wrk.paymentsHint", { count: p.payments.count, amount: formatRWF(p.payments.amount) }) : p.pettyCash.entries ? t("payroll.detail.pettyEntries", { count: p.pettyCash.entries }) : undefined}
         />
       </div>
 
@@ -187,8 +189,9 @@ export function PeriodDetailPage() {
 }
 
 function ReadOnlySheet({ period: p }: { period: PeriodDetail }) {
-  const { t } = useT();
-  const hasRefs = p.lines.some((l) => l.paymentRef);
+  const { t, tx } = useT();
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const hasRefs = p.lines.some((l) => l.paymentRef || l.paymentMethod);
   if (!p.lines.length) {
     return (
       <div className="flex flex-col items-center px-6 py-12 text-center text-sm text-slate-500">
@@ -198,28 +201,45 @@ function ReadOnlySheet({ period: p }: { period: PeriodDetail }) {
   }
   return (
     <div className="overflow-x-auto">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-y border-line bg-slate-50/60 px-5 py-2.5 text-xs text-slate-600">
+        <span>{p.calculatedAt ? t("payroll.wrk.calculatedAt", { time: formatDateTime(p.calculatedAt) }) : t("payroll.wrk.neverCalculated")}</span>
+        {p.overrides ? <span className="font-semibold text-amber-700">{t("payroll.wrk.overridesCount", { count: p.overrides })}</span> : null}
+        {p.warnings ? <span className="font-semibold text-red-700">{t("payroll.wrk.warningsCount", { count: p.warnings })}</span> : null}
+        <span className="basis-full text-slate-500">{t("payroll.wrk.formula")}</span>
+      </div>
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-y border-line bg-slate-50/70 text-[11px] font-semibold tracking-wide whitespace-nowrap text-slate-500 uppercase">
+          <tr className="border-b border-line bg-slate-50/70 text-[11px] font-semibold tracking-wide whitespace-nowrap text-slate-500 uppercase">
+            <th className="w-8 px-2 py-2.5"><span className="sr-only">{t("payroll.wrk.details")}</span></th>
             <th className="w-10 px-3 py-2.5 text-right">#</th>
             <th className="px-3 py-2.5 text-left">{t("payroll.sheet.worker")}</th>
             <th className="hidden px-3 py-2.5 text-left md:table-cell">{t("payroll.sheet.momo")}</th>
             <th className="px-3 py-2.5 text-right">{t("payroll.sheet.dailyWage")}</th>
             <th className="px-3 py-2.5 text-right">{t("payroll.sheet.days")}</th>
+            <th className="px-3 py-2.5 text-right">{t("payroll.wrk.overtimeHours")}</th>
+            <th className="hidden px-3 py-2.5 text-right lg:table-cell">{t("payroll.wrk.pieceAdj")}</th>
             <th className="hidden px-3 py-2.5 text-right sm:table-cell">{t("payroll.sheet.totalWages")}</th>
             <th className="hidden px-3 py-2.5 text-right sm:table-cell">{t("payroll.sheet.food")}</th>
             <th className="hidden px-3 py-2.5 text-right sm:table-cell">{t("payroll.sheet.other")}</th>
             <th className="px-3 py-2.5 text-right">{t("payroll.sheet.wagesReceived")}</th>
-            {hasRefs ? <th className="px-3 py-2.5 text-left">{t("payroll.sheet.momoRef")}</th> : null}
+            {hasRefs ? <th className="px-3 py-2.5 text-left">{t("payroll.wrk.paymentCol")}</th> : null}
           </tr>
         </thead>
         <tbody className="divide-y divide-line">
           {p.lines.map((l, i) => (
-            <tr key={l.id} className={cn(l.daysWorked === 0 && "text-slate-400")}>
+            <Fragment key={l.id}>
+            <tr className={cn(l.daysWorked === 0 && l.grossAmount === 0 && "text-slate-400", l.isOverride && "bg-amber-50/40")}>
+              <td className="px-2 py-2.5">
+                <button type="button" onClick={() => setOpen((o) => ({ ...o, [l.id]: !o[l.id] }))} aria-expanded={!!open[l.id]} aria-label={t("payroll.wrk.toggleDetails", { name: l.worker.fullName })} className="rounded p-1 text-slate-500 hover:bg-slate-100">
+                  {open[l.id] ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                </button>
+              </td>
               <td className="tabular px-3 py-3 text-right text-slate-400">{i + 1}</td>
               <td className="px-3 py-2.5">
                 <p className={cn("font-medium whitespace-nowrap", l.daysWorked === 0 ? "text-slate-500" : "text-slate-900")}>{l.worker.fullName}</p>
                 <p className="text-xs text-slate-500">{l.worker.jobTitle}{l.worker.nationalId ? ` · ${l.worker.nationalId}` : ""}</p>
+                <CalcSummary line={l} />
+                <LineFlags line={l} />
                 {l.note ? <p className="mt-0.5 text-xs text-slate-600 italic">{t("payroll.sheet.noteLine", { note: l.note })}</p> : null}
               </td>
               <td className="hidden px-3 py-2.5 text-xs md:table-cell">
@@ -229,23 +249,46 @@ function ReadOnlySheet({ period: p }: { period: PeriodDetail }) {
                   {l.worker.momoNameMismatch ? <MismatchBadge /> : null}
                 </div>
               </td>
-              <td className="tabular px-3 py-3 text-right">{formatInt(l.dailyWage)}</td>
+              <td className="tabular px-3 py-3 text-right">
+                {formatInt(l.dailyWage)}
+                <p className="text-xs text-slate-400">½ {formatInt(l.halfDayRate)} · {t("payroll.wrk.perHour", { rate: formatInt(l.overtimeRate) })}</p>
+              </td>
               <td className="tabular px-3 py-3 text-right">{formatQty(l.daysWorked)}</td>
+              <td className="tabular px-3 py-3 text-right">{l.overtimeHours ? formatQty(l.overtimeHours) : "–"}</td>
+              <td className="tabular hidden px-3 py-3 text-right text-xs lg:table-cell">
+                {l.pieceAmount ? <p>{formatInt(l.pieceAmount)}</p> : null}
+                {l.adjustmentAmount ? <p className={l.adjustmentAmount < 0 ? "text-red-600" : "text-emerald-700"}>{l.adjustmentAmount > 0 ? "+" : "−"}{formatInt(Math.abs(l.adjustmentAmount))}</p> : null}
+                {!l.pieceAmount && !l.adjustmentAmount ? "–" : null}
+              </td>
               <td className="tabular hidden px-3 py-3 text-right sm:table-cell">{formatInt(l.grossAmount)}</td>
               <td className="tabular hidden px-3 py-3 text-right sm:table-cell">{l.foodDeduction ? formatInt(l.foodDeduction) : "–"}</td>
               <td className="tabular hidden px-3 py-3 text-right sm:table-cell">{l.otherDeduction ? formatInt(l.otherDeduction) : "–"}</td>
               <td className="tabular px-3 py-3 text-right font-semibold text-slate-900">{formatInt(l.netAmount)}</td>
-              {hasRefs ? <td className="tabular px-3 py-3 text-xs text-slate-600">{l.paymentRef ?? "—"}</td> : null}
+              {hasRefs ? (
+                <td className="tabular px-3 py-3 text-xs text-slate-600">
+                  {l.paymentMethod ? <p className="font-semibold text-slate-700">{tx(`payroll.wrk.method.${l.paymentMethod}`)}</p> : null}
+                  {l.paymentRef ?? "—"}
+                </td>
+              ) : null}
             </tr>
+            {open[l.id] ? (
+              <tr className="bg-slate-50/70">
+                <td />
+                <td colSpan={hasRefs ? 12 : 11} className="px-3 py-3"><CalcDetails line={l} /></td>
+              </tr>
+            ) : null}
+            </Fragment>
           ))}
         </tbody>
         <tfoot className="border-t-2 border-navy-100 bg-navy-50/50 font-semibold text-slate-900">
           <tr>
-            <td />
+            <td colSpan={2} />
             <td className="px-3 py-3">{t("payroll.sheet.total", { workers: t("payroll.workers", { count: p.totals.workers }) })}</td>
             <td className="hidden md:table-cell" />
             <td />
             <td className="tabular px-3 py-3 text-right">{formatQty(p.totals.days)}</td>
+            <td className="tabular px-3 py-3 text-right">{formatQty(p.lines.reduce((a, l) => a + (l.overtimeHours || 0), 0))}</td>
+            <td className="hidden lg:table-cell" />
             <td className="tabular hidden px-3 py-3 text-right sm:table-cell">{formatInt(p.totals.gross)}</td>
             <td className="tabular hidden px-3 py-3 text-right sm:table-cell">{formatInt(p.totals.food)}</td>
             <td className="tabular hidden px-3 py-3 text-right sm:table-cell">{formatInt(p.totals.other)}</td>

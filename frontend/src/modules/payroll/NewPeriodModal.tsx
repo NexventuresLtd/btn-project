@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
-import { Alert, Button, Field, Input, Modal, Select } from "@/components/ui";
+import { Alert, Button, Field, Modal, Select, DateInput } from "@/components/ui";
 import { useT } from "@/i18n";
 import { useLookups } from "@/hooks/useLookups";
 import { fieldError, useMutate } from "@/hooks/useMutate";
@@ -136,10 +136,10 @@ export function NewPeriodModal({ open, onClose, pinnedPlant, defaultPlant }: { o
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label={t("payroll.newPeriod.firstDay")} required error={err("startDate")} htmlFor="np-start">
-            <Input id="np-start" type="date" value={range.start} onChange={(e) => setRange((r) => ({ ...r, start: e.target.value }))} invalid={!!err("startDate")} />
+            <DateInput id="np-start" value={range.start} onChange={(v) => setRange((r) => ({ ...r, start: v }))} invalid={!!err("startDate")} />
           </Field>
           <Field label={t("payroll.newPeriod.lastDay")} required error={err("endDate")} hint={len ? t("payroll.daysCount", { count: len }) : undefined} htmlFor="np-end">
-            <Input id="np-end" type="date" value={range.end} min={range.start} onChange={(e) => setRange((r) => ({ ...r, end: e.target.value }))} invalid={!!err("endDate")} />
+            <DateInput id="np-end" value={range.end} min={range.start} onChange={(v) => setRange((r) => ({ ...r, end: v }))} invalid={!!err("endDate")} />
           </Field>
         </div>
       </form>

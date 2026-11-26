@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"btn-ops/internal/attendance"
 	"btn-ops/internal/audit"
 	"btn-ops/internal/auth"
 	"btn-ops/internal/dates"
@@ -17,6 +18,7 @@ import (
 	"btn-ops/internal/format"
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/i18n"
+	"btn-ops/internal/workforce"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
@@ -239,6 +241,8 @@ type lineWorker struct {
 	PlantID          string  `json:"plantId"`
 	FullName         string  `json:"fullName"`
 	MomoNameMismatch bool    `json:"momoNameMismatch"`
+	RateBasis        string  `json:"rateBasis"`
+	Status           string  `json:"employmentStatus"`
 }
 
 type lineOut struct {
@@ -253,6 +257,23 @@ type lineOut struct {
 	PaymentRef     *string    `json:"paymentRef"`
 	Note           *string    `json:"note"`
 	Worker         lineWorker `json:"worker"`
+	// WRK-03 calculation inputs and result (§7.4)
+	FullDays         int             `json:"fullDays"`
+	HalfDays         int             `json:"halfDays"`
+	HalfDayRate      int             `json:"halfDayRate"`
+	OvertimeHours    float64         `json:"overtimeHours"`
+	OvertimeRate     int             `json:"overtimeRate"`
+	BasicAmount      int             `json:"basicAmount"`
+	OvertimeAmount   int             `json:"overtimeAmount"`
+	PieceUnits       int             `json:"pieceUnits"`
+	PieceAmount      int             `json:"pieceAmount"`
+	AdjustmentAmount int             `json:"adjustmentAmount"`
+	CalculatedGross  *int            `json:"calculatedGross"`
+	CalculatedDays   *float64        `json:"calculatedDays"`
+	Calculation      json.RawMessage `json:"calculation"`
+	IsOverride       bool            `json:"isOverride"`
+	OverrideReason   *string         `json:"overrideReason"`
+	PaymentMethod    *string         `json:"paymentMethod"`
 }
 
 type signoff struct {
@@ -297,14 +318,23 @@ type periodDetail struct {
 		Entries int `json:"entries"`
 		Amount  int `json:"amount"`
 	} `json:"pettyCash"`
-	Actions map[string]actionState `json:"actions"`
+	Actions      map[string]actionState `json:"actions"`
+	CalculatedAt *string                `json:"calculatedAt"`
+	Overrides    int                    `json:"overrides"`
+	Warnings     int                    `json:"warnings"`
+	Payments     struct {
+		Count  int `json:"count"`
+		Amount int `json:"amount"`
+	} `json:"payments"`
 
 	start, end time.Time
 }
 
 func loadLines(ctx context.Context, q db.DBTX, periodID string) ([]lineOut, error) {
 	rows, err := q.Query(ctx, `SELECT l.id, l."workerId", l."dailyWage", l."daysWorked"::float8, l."grossAmount", l."foodDeduction", l."otherDeduction", l."netAmount", l."paymentRef", l.note,
-		w.id, w."firstName", w."lastName", w."nationalId", w."momoNumber", w."momoName", w."jobTitle", w."isActive", w."plantId"
+		w.id, w."firstName", w."lastName", w."nationalId", w."momoNumber", w."momoName", w."jobTitle", w."isActive", w."plantId", w."rateBasis", w."employmentStatus",
+		l."fullDays", l."halfDays", l."halfDayRate", l."overtimeHours"::float8, l."overtimeRate", l."basicAmount", l."overtimeAmount", l."pieceUnits", l."pieceAmount",
+		l."adjustmentAmount", l."calculatedGross", l."calculatedDays"::float8, l.calculation, l."isOverride", l."overrideReason", l."paymentMethod"
 		FROM "PayrollLine" l JOIN "Worker" w ON w.id = l."workerId" WHERE l."periodId" = $1 ORDER BY w."firstName", w."lastName", w.id`, periodID)
 	if err != nil {
 		return nil, err
@@ -315,7 +345,9 @@ func loadLines(ctx context.Context, q db.DBTX, periodID string) ([]lineOut, erro
 		var l lineOut
 		w := &l.Worker
 		if err := rows.Scan(&l.ID, &l.WorkerID, &l.DailyWage, &l.DaysWorked, &l.GrossAmount, &l.FoodDeduction, &l.OtherDeduction, &l.NetAmount, &l.PaymentRef, &l.Note,
-			&w.ID, &w.FirstName, &w.LastName, &w.NationalID, &w.MomoNumber, &w.MomoName, &w.JobTitle, &w.IsActive, &w.PlantID); err != nil {
+			&w.ID, &w.FirstName, &w.LastName, &w.NationalID, &w.MomoNumber, &w.MomoName, &w.JobTitle, &w.IsActive, &w.PlantID, &w.RateBasis, &w.Status,
+			&l.FullDays, &l.HalfDays, &l.HalfDayRate, &l.OvertimeHours, &l.OvertimeRate, &l.BasicAmount, &l.OvertimeAmount, &l.PieceUnits, &l.PieceAmount,
+			&l.AdjustmentAmount, &l.CalculatedGross, &l.CalculatedDays, &l.Calculation, &l.IsOverride, &l.OverrideReason, &l.PaymentMethod); err != nil {
 			return nil, err
 		}
 		w.FullName = fullName(w.FirstName, w.LastName)
@@ -398,6 +430,25 @@ func (h *handler) buildDetail(ctx context.Context, lg i18n.Lang, u *auth.User, p
 		Scan(&d.PettyCash.Entries, &d.PettyCash.Amount); err != nil {
 		return nil, err
 	}
+	var calcAt *time.Time
+	if err := h.d.Pool.QueryRow(ctx, `SELECT p."calculatedAt", (SELECT count(*) FROM wage_payment w WHERE w.period_id = p.id), (SELECT COALESCE(sum(amount), 0) FROM wage_payment w WHERE w.period_id = p.id)
+		FROM "PayrollPeriod" p WHERE p.id = $1`, p.ID).Scan(&calcAt, &d.Payments.Count, &d.Payments.Amount); err != nil {
+		return nil, err
+	}
+	d.CalculatedAt = isoTimePtr(calcAt)
+	for _, l := range lines {
+		if l.IsOverride {
+			d.Overrides++
+		}
+		if len(l.Calculation) > 0 {
+			var cw struct {
+				Warnings []string `json:"warnings"`
+			}
+			if json.Unmarshal(l.Calculation, &cw) == nil && len(cw.Warnings) > 0 {
+				d.Warnings++
+			}
+		}
+	}
 	d.Actions = actionsFor(lg, u, p, d.Totals.Workers)
 	return d, nil
 }
@@ -431,6 +482,7 @@ func actionsFor(lg i18n.Lang, u *auth.User, p *periodHead, worked int) map[strin
 		}
 	}
 	out["edit"] = actionState{Visible: inPlant && p.Status == "DRAFT" && u.Can("payroll.prepare"), Allowed: true}
+	out["calculate"] = out["edit"]
 	out["return"] = actionState{Visible: canReturn, Allowed: canReturn}
 	return out
 }
@@ -519,12 +571,12 @@ func (h *handler) createPeriod(c *fiber.Ctx) error {
 			number, plant.ID, start, end, db.Now()).Scan(&pid); err != nil {
 			return "", err
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO "PayrollLine" ("periodId", "workerId", "dailyWage", "daysWorked", "grossAmount", "netAmount")
-			SELECT $1, id, "dailyWage", 0, 0, 0 FROM "Worker" WHERE "plantId" = $2 AND "isActive"`, pid, plant.ID)
+		// WRK-03: the system calculates the sheet from attendance and rate rules right away
+		lines, err := recalc(ctx, tx, &periodHead{ID: pid, Number: number, Status: "DRAFT", PlantID: plant.ID, Start: start, End: end})
 		if err != nil {
 			return "", err
 		}
-		n := int(tag.RowsAffected())
+		n := len(lines)
 		return pid, audit.Record(c, tx, audit.Input{Action: "payroll.period.create", Entity: "PayrollPeriod", EntityID: pid,
 			Summary: fmt.Sprintf("Created wage sheet %s for %s %s with %d workers", number, plant.Code, FormatPeriodRange(i18n.EN, start, end, false), n),
 			After:   map[string]any{"plantId": plant.ID, "startDate": dates.ToISO(start), "endDate": dates.ToISO(end), "number": number, "workers": n}})
@@ -538,232 +590,6 @@ func (h *handler) createPeriod(c *fiber.Ctx) error {
 		return err
 	}
 	return c.Status(201).JSON(d)
-}
-
-type lineInput struct {
-	WorkerID string
-	Days     float64
-	Food     int
-	Other    int
-	Note     *string
-}
-
-func (h *handler) saveLines(c *fiber.Ctx) error {
-	ctx := reqCtx(c)
-	u := auth.MustUser(c)
-	lg := lang(c)
-	v, err := httpx.Body(c)
-	if err != nil {
-		return err
-	}
-	var in []lineInput
-	arr := v.Arr("lines", true)
-	if len(arr) > 500 {
-		v.Fail("lines", "payroll.v.max_lines")
-	}
-	for _, l := range arr {
-		li := lineInput{}
-		li.WorkerID, _ = lineWorkerID(l)
-		dn := l.Num("daysWorked").Coerce().Min(0, "payroll.v.days_negative")
-		if dn.Present() && !IsHalfDayStep(dn.F()) {
-			l.Fail("daysWorked", "payroll.v.days_half")
-		} else {
-			li.Days = dn.F()
-		}
-		li.Food = int(l.OptNum("foodDeduction").Coerce().Whole("payroll.v.food_whole").Min(0, "payroll.v.food_neg").Max(100_000_000, "payroll.v.money_max").Default(0).I())
-		li.Other = int(l.OptNum("otherDeduction").Coerce().Whole("payroll.v.other_whole").Min(0, "payroll.v.other_neg").Max(100_000_000, "payroll.v.money_max").Default(0).I())
-		li.Note = l.NullStr("note").Trim().Max(200, "payroll.v.max_200").NilIfEmpty()
-		in = append(in, li)
-	}
-	if err := v.Err(); err != nil {
-		return err
-	}
-	p, err := loadHead(ctx, h.d.Pool, c.Params("id"), false)
-	if err != nil {
-		return err
-	}
-	if err := auth.AssertPlantAccess(u, p.PlantID); err != nil {
-		return err
-	}
-	if p.Status != "DRAFT" {
-		return keyed(409, "conflict", "payroll.err.not_draft")
-	}
-	periodDays := PeriodLengthDays(p.Start, p.End)
-
-	var fieldOrder []string
-	fields := map[string]string{}
-	setField := func(k, msg string) {
-		if _, ok := fields[k]; !ok {
-			fieldOrder = append(fieldOrder, k)
-		}
-		fields[k] = msg
-	}
-	seen := map[string]bool{}
-	ids := make([]string, 0, len(in))
-	for i, l := range in {
-		if seen[l.WorkerID] {
-			setField(fmt.Sprintf("lines.%d.workerId", i), t(c, "payroll.err.dup_worker"))
-		}
-		if !seen[l.WorkerID] {
-			ids = append(ids, l.WorkerID)
-		}
-		seen[l.WorkerID] = true
-	}
-	if len(fields) > 0 {
-		return badKey(fields, "payroll.err.once_only")
-	}
-
-	type wrow struct {
-		first, last, plantID string
-		wage                 int
-		active               bool
-	}
-	workers := map[string]wrow{}
-	if len(ids) > 0 {
-		rows, err := h.d.Pool.Query(ctx, `SELECT id, "firstName", "lastName", "plantId", "dailyWage", "isActive" FROM "Worker" WHERE id = ANY($1)`, ids)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var id string
-			var w wrow
-			if err := rows.Scan(&id, &w.first, &w.last, &w.plantID, &w.wage, &w.active); err != nil {
-				rows.Close()
-				return err
-			}
-			workers[id] = w
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
-	}
-	existing := map[string]int{} // workerId -> wage snapshot already on the sheet
-	erows, err := h.d.Pool.Query(ctx, `SELECT "workerId", "dailyWage" FROM "PayrollLine" WHERE "periodId" = $1`, p.ID)
-	if err != nil {
-		return err
-	}
-	for erows.Next() {
-		var wid string
-		var wage int
-		if err := erows.Scan(&wid, &wage); err != nil {
-			erows.Close()
-			return err
-		}
-		existing[wid] = wage
-	}
-	erows.Close()
-	if err := erows.Err(); err != nil {
-		return err
-	}
-
-	type outLine struct {
-		lineInput
-		wage       int
-		gross, net int
-	}
-	var rowsOut []outLine
-	for i, l := range in {
-		w, ok := workers[l.WorkerID]
-		if !ok {
-			setField(fmt.Sprintf("lines.%d.workerId", i), t(c, "payroll.err.unknown_worker"))
-			continue
-		}
-		name := fullName(w.first, w.last)
-		if w.plantID != p.PlantID {
-			setField(fmt.Sprintf("lines.%d.workerId", i), t(c, "payroll.err.not_at_plant", "name", name, "plant", p.Plant.Code))
-			continue
-		}
-		prior, hasPrior := existing[l.WorkerID]
-		if !hasPrior && !w.active {
-			setField(fmt.Sprintf("lines.%d.workerId", i), t(c, "payroll.err.worker_inactive", "name", name))
-			continue
-		}
-		wage := w.wage
-		if hasPrior {
-			wage = prior
-		}
-		li := LineInput{DailyWage: wage, DaysWorked: l.Days, FoodDeduction: l.Food, OtherDeduction: l.Other}
-		prob := ProblemOf(li, periodDays)
-		am := Amounts(li)
-		switch prob {
-		case ProbDaysExceed:
-			setField(fmt.Sprintf("lines.%d.daysWorked", i), t(c, "payroll.err.days_exceed", "name", name, "max", periodDays))
-		case ProbDaysStep, ProbDaysNegative:
-			setField(fmt.Sprintf("lines.%d.daysWorked", i), t(c, "payroll.err.days_step", "name", name))
-		case ProbNetNegative:
-			setField(fmt.Sprintf("lines.%d.foodDeduction", i), t(c, "payroll.err.net_negative", "name", name, "deductions", format.RWF(float64(l.Food+l.Other)), "gross", format.RWF(float64(am.Gross))))
-		case ProbDedNegative:
-			setField(fmt.Sprintf("lines.%d.foodDeduction", i), t(c, "payroll.err.ded_negative", "name", name))
-		}
-		if prob != ProbNone {
-			continue
-		}
-		rowsOut = append(rowsOut, outLine{lineInput: l, wage: wage, gross: am.Gross, net: am.Net})
-	}
-	if len(fields) > 0 {
-		first := fields[fieldOrder[0]]
-		if len(fields) == 1 {
-			return &httpx.Error{Status: 400, Code: "bad_request", Message: first, Fields: fields}
-		}
-		return &httpx.Error{Status: 400, Code: "bad_request", Message: t(c, "payroll.err.and_more", "first", first, "count", len(fields)-1), Fields: fields}
-	}
-
-	before, err := periodTotals(ctx, h.d.Pool, p.ID)
-	if err != nil {
-		return err
-	}
-	tl := make([]TotalsLine, len(rowsOut))
-	wid, wage, days, gross, food, other, net := []string{}, []int32{}, []float64{}, []int32{}, []int32{}, []int32{}, []int32{}
-	notes := []*string{}
-	auditLines := []map[string]any{}
-	for i, r := range rowsOut {
-		tl[i] = TotalsLine{Days: r.Days, Gross: r.gross, Food: r.Food, Other: r.Other, Net: r.net}
-		wid = append(wid, r.WorkerID)
-		wage = append(wage, int32(r.wage))
-		days = append(days, r.Days)
-		gross = append(gross, int32(r.gross))
-		food = append(food, int32(r.Food))
-		other = append(other, int32(r.Other))
-		net = append(net, int32(r.net))
-		notes = append(notes, r.Note)
-		auditLines = append(auditLines, map[string]any{"workerId": r.WorkerID, "days": r.Days, "food": r.Food, "other": r.Other, "net": r.net})
-	}
-	after := SumLines(tl)
-	err = db.Tx(ctx, h.d.Pool, func(tx pgx.Tx) error {
-		// re-check DRAFT under a row lock so a concurrent "prepare" cannot interleave
-		tag, err := tx.Exec(ctx, `UPDATE "PayrollPeriod" SET "updatedAt" = $2 WHERE id = $1 AND status = 'DRAFT'`, p.ID, db.Now())
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return keyed(409, "conflict", "payroll.err.submitted_meanwhile")
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM "PayrollLine" WHERE "periodId" = $1`, p.ID); err != nil {
-			return err
-		}
-		if len(rowsOut) > 0 {
-			if _, err := tx.Exec(ctx, `INSERT INTO "PayrollLine" ("periodId","workerId","dailyWage","daysWorked","grossAmount","foodDeduction","otherDeduction","netAmount","note")
-				SELECT $1, t.w, t.wage, t.days, t.gross, t.food, t.other, t.net, t.note
-				FROM unnest($2::text[], $3::int[], $4::float8[], $5::int[], $6::int[], $7::int[], $8::int[], $9::text[]) AS t(w, wage, days, gross, food, other, net, note)`,
-				p.ID, wid, wage, days, gross, food, other, net, notes); err != nil {
-				return err
-			}
-		}
-		afterJSON := map[string]any{"lines": auditLines, "workers": after.Workers, "days": after.Days, "gross": after.Gross, "food": after.Food, "other": after.Other, "deductions": after.Deductions, "net": after.Net}
-		return audit.Record(c, tx, audit.Input{Action: "payroll.period.lines", Entity: "PayrollPeriod", EntityID: p.ID,
-			Summary: fmt.Sprintf("Saved %d lines on %s: %s days, net %s", len(rowsOut), p.Number, format.Qty(after.Days), format.RWF(float64(after.Net))),
-			Before:  before, After: afterJSON})
-	})
-	if err != nil {
-		return err
-	}
-	invalidate()
-	d, err := h.detail(ctx, lg, u, p.ID)
-	if err != nil {
-		return err
-	}
-	return c.JSON(d)
 }
 
 func lineWorkerID(l *httpx.V) (string, bool) {
@@ -806,7 +632,19 @@ func (h *handler) guardStep(c *fiber.Ctx, u *auth.User, id string, step Step) (*
 	if err != nil {
 		return nil, tot, err
 	}
-	return p, tot, transitionError(c, CheckTransition(p.state(tot.Workers), step, u.ID))
+	if err := transitionError(c, CheckTransition(p.state(tot.Workers), step, u.ID)); err != nil {
+		return p, tot, err
+	}
+	if step == StepPrepare {
+		var neg int
+		if err := h.d.Pool.QueryRow(ctx, `SELECT count(*) FROM "PayrollLine" WHERE "periodId" = $1 AND "netAmount" < 0`, p.ID).Scan(&neg); err != nil {
+			return p, tot, err
+		}
+		if neg > 0 {
+			return p, tot, keyed(400, "bad_request", "payroll.err.negative_lines", "n", neg)
+		}
+	}
+	return p, tot, nil
 }
 
 func transitionError(c *fiber.Ctx, r Result) error {
@@ -856,6 +694,9 @@ func (h *handler) advance(c *fiber.Ctx, step Step) error {
 	}
 	err = db.Tx(ctx, h.d.Pool, func(tx pgx.Tx) error {
 		if _, err := stamp(ctx, tx, p, step, u.ID, step == StepPrepare); err != nil {
+			return err
+		}
+		if err := notifyStep(ctx, tx, p, step, u, totals); err != nil {
 			return err
 		}
 		return audit.Record(c, tx, audit.Input{Action: "payroll.period." + string(step), Entity: "PayrollPeriod", EntityID: p.ID,
@@ -946,10 +787,19 @@ func (h *handler) pay(c *fiber.Ctx) error {
 	if len(arr) > 500 {
 		v.Fail("paymentRefs", "payroll.v.max_lines")
 	}
+	methods := map[string]string{}
 	for _, r := range arr {
 		id, _ := lineWorkerIDKey(r, "lineId")
 		ref := r.Str("ref").Trim().Max(60, "payroll.v.max_60").Get()
 		refsIn = append(refsIn, payRef{id, ref})
+		if m := r.OptStr("method").Trim().Upper().OneOf(append([]string{""}, workforce.PaymentMethods...), "payroll.v.method").Get(); m != "" {
+			methods[id] = m
+		}
+	}
+	method := v.OptStr("method").Trim().Upper().Default("MOMO").OneOf(workforce.PaymentMethods, "payroll.v.method").Get()
+	paidOnS := v.OptStr("paidOn").Trim().Date("payroll.v.date").Get()
+	if paidOnS != "" && paidOnS > dates.TodayISO() {
+		v.Fail("paidOn", "payroll.v.paid_future")
 	}
 	createPetty := v.OptBool("createPettyCash").Default(false).Get()
 	if err := v.Err(); err != nil {
@@ -992,12 +842,16 @@ func (h *handler) pay(c *fiber.Ctx) error {
 	}
 	totals := SumLines(tl)
 	paidOn := dates.MustParseISO(dates.TodayISO())
+	if paidOnS != "" {
+		paidOn = dates.MustParseISO(paidOnS)
+	}
 	rangeShort := FormatPeriodRange(i18n.EN, p.Start, p.End, true)
 
 	type result struct {
 		created int
 		warning string
 	}
+	pettyNo := map[string]string{}
 	res, err := db.TxVal(ctx, h.d.Pool, func(tx pgx.Tx) (result, error) {
 		var r result
 		if _, err := stamp(ctx, tx, p, StepPay, u.ID, false); err != nil {
@@ -1049,6 +903,9 @@ func (h *handler) pay(c *fiber.Ctx) error {
 				return r, err
 			}
 			r.created = n
+			for i, l := range payable {
+				pettyNo[l.ID] = nums[i]
+			}
 			var balance int
 			if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(CASE WHEN type = 'DEPOSIT' THEN amount ELSE -amount END - "momoCharge"), 0) FROM "PettyCashEntry" WHERE status = 'APPROVED'`).Scan(&balance); err != nil {
 				return r, err
@@ -1057,12 +914,48 @@ func (h *handler) pay(c *fiber.Ctx) error {
 				r.warning = t(c, "payroll.warn.petty_overdraw", "balance", format.RWF(float64(balance)))
 			}
 		}
+		// WRK-04: one payment record per worker (date, method, amount, reference, paid by)
+		if len(payable) > 0 {
+			n := len(payable)
+			wids, lids, meths, refsArr, pcs := make([]string, n), make([]string, n), make([]string, n), make([]*string, n), make([]*string, n)
+			amts := make([]int32, n)
+			for i, l := range payable {
+				wids[i], lids[i], amts[i] = l.WorkerID, l.ID, int32(l.NetAmount)
+				meths[i] = method
+				if m, ok := methods[l.ID]; ok {
+					meths[i] = m
+				}
+				if ref, ok := refs[l.ID]; ok {
+					rr := ref
+					refsArr[i] = &rr
+				}
+				if pc, ok := pettyNo[l.ID]; ok {
+					pp := pc
+					pcs[i] = &pp
+				}
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO wage_payment (worker_id, plant_id, period_id, line_id, date, method, amount, reference, paid_by, petty_cash_entry)
+				SELECT x.w, $1, $2, x.l, $3::date, x.m, x.a, x.r, $4, x.pc FROM unnest($5::text[], $6::text[], $7::text[], $8::int[], $9::text[], $10::text[]) AS x(w, l, m, a, r, pc)`,
+				p.PlantID, p.ID, paidOn, u.ID, wids, lids, meths, amts, refsArr, pcs); err != nil {
+				return r, err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE "PayrollLine" AS l SET "paymentMethod" = x.m FROM unnest($1::text[], $2::text[]) AS x(id, m) WHERE l.id = x.id`, lids, meths); err != nil {
+				return r, err
+			}
+		}
+		// WRK-05: a paid period is locked — its attendance days too; later corrections become adjustments (§7.4)
+		if _, err := attendance.LockDays(ctx, tx, p.PlantID, p.Start, p.End, u.ID, "Paid on wage sheet "+p.Number); err != nil {
+			return r, err
+		}
+		if err := notifyPaid(ctx, tx, p, u, len(payable), totals.Net); err != nil {
+			return r, err
+		}
 		summary := fmt.Sprintf("Paid wage sheet %s: %d workers, net %s", p.Number, len(payable), format.RWF(float64(totals.Net)))
 		if r.created > 0 {
 			summary += fmt.Sprintf("; %d petty cash entries recorded", r.created)
 		}
 		return r, audit.Record(c, tx, audit.Input{Action: "payroll.period.pay", Entity: "PayrollPeriod", EntityID: p.ID, Summary: summary,
-			Before: map[string]any{"status": p.Status}, After: map[string]any{"status": "PAID", "totals": totals, "paymentRefs": refs, "pettyCashEntries": r.created}})
+			Before: map[string]any{"status": p.Status}, After: map[string]any{"status": "PAID", "totals": totals, "paymentRefs": refs, "pettyCashEntries": r.created, "method": method, "methods": methods, "paidOn": dates.ToISO(paidOn)}})
 	})
 	if err != nil {
 		return err

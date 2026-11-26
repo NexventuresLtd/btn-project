@@ -1,0 +1,45 @@
+# /etc/systemd/system/btn-ops-backup.service — nightly encrypted database backup (SRS NFR-R1).
+# Started by btn-ops-backup.timer; run by hand with:  systemctl start btn-ops-backup && journalctl -u btn-ops-backup -e
+# A failed run leaves the unit "failed" (non-zero exit), which the monitoring/alerting picks up.
+#
+# Install:
+#   install -d -m 750 -o btnops -g btnops /var/backups/btn-ops
+#   install -d -m 750 -o root -g btnops /etc/btn-ops
+#   install -m 640 -o root -g btnops deploy/backup.env.example /etc/btn-ops/backup.env   # then edit it
+#   cp deploy/btn-ops-backup.service deploy/btn-ops-backup.timer /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now btn-ops-backup.timer
+[Unit]
+Description=BTN Operations nightly database backup
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=btnops
+Group=btnops
+ExecStart=/opt/btn-ops/deploy/backup.sh --env-file /etc/btn-ops/backup.env
+Environment=TZ=Africa/Kigali
+# rclone/gpg need a writable HOME and cache; keep them off /home.
+StateDirectory=btn-ops-backup
+CacheDirectory=btn-ops-backup
+Environment=HOME=/var/lib/btn-ops-backup XDG_CACHE_HOME=/var/cache/btn-ops-backup
+UMask=0077
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=4h
+
+# Hardening: read-only system, writable backup dir only.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/btn-ops
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=

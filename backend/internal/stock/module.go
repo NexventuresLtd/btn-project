@@ -36,6 +36,8 @@ func Register(r fiber.Router, d *deps.Deps) {
 	r.Post("/opening", auth.RequirePermission("stock.adjust"), h.opening)
 	r.Get("/pdf/daily", auth.RequirePermission("stock.view"), ratelimit.Group("pdf"), h.pdfDaily)
 	r.Get("/pdf/position", auth.RequirePermission("stock.view"), ratelimit.Group("pdf"), h.pdfPosition)
+	registerOps(r, h)
+	registerSync()
 }
 
 type handler struct{ d *deps.Deps }
@@ -113,6 +115,10 @@ type movementOut struct {
 	SourceLabel *string `json:"sourceLabel"`
 	Note        *string `json:"note"`
 	CreatedBy   *string `json:"createdBy"`
+	CreatedByID *string `json:"createdById"`
+	LotRef      *string `json:"lotRef"`
+	Reference   *string `json:"reference"`
+	DeviceID    *string `json:"deviceId"`
 	CreatedAt   string  `json:"createdAt"`
 }
 
@@ -122,6 +128,7 @@ func (h *handler) movements(c *fiber.Ctx) error {
 	lang := httpx.Lang(c)
 	q := httpx.Query(c)
 	from, to, plant, product := QueryDate(q, "from"), QueryDate(q, "to"), QueryID(q, "plantId"), QueryID(q, "productId")
+	userID, lotRef := QueryID(q, "userId"), q.OptStr("lotRef").Trim().Max(MaxLotRef).Get()
 	typ := strings.TrimSpace(c.Query("type"))
 	if typ != "" {
 		q.Str("type").Trim().OneOf(MovementTypes)
@@ -148,6 +155,12 @@ func (h *handler) movements(c *fiber.Ctx) error {
 	if typ != "" {
 		add(`m.type = $%d::"StockMovementType"`, typ)
 	}
+	if userID != "" {
+		add(`m."createdById" = $%d`, userID)
+	}
+	if lotRef != "" {
+		add(`m."lotRef" = $%d`, lotRef)
+	}
 	var total int
 	var net int64
 	if err := h.d.Pool.QueryRow(ctx, `SELECT count(*), COALESCE(sum(m.quantity),0)::bigint FROM "StockMovement" m WHERE `+where, args...).Scan(&total, &net); err != nil {
@@ -156,7 +169,9 @@ func (h *handler) movements(c *fiber.Ctx) error {
 	args = append(args, pg.Limit, pg.Offset)
 	rows, err := h.d.Pool.Query(ctx, `SELECT m.id, to_char(m."date",'YYYY-MM-DD'), pl.code, m."plantId", pr.code, pr.name, pr.unit, m."productId",
 			m.type::text, m.quantity, m."sourceType", m."sourceId", m.note, usr.name, m."createdAt",
-			CASE m."sourceType" WHEN 'ProductionReport' THEN rep.number WHEN 'Delivery' THEN dn."dnNumber" WHEN 'Sale' THEN s.number END
+			CASE m."sourceType" WHEN 'ProductionReport' THEN rep.number WHEN 'Delivery' THEN dn."dnNumber" WHEN 'Sale' THEN s.number
+				WHEN 'StockTransfer' THEN tr.number WHEN 'StockTransferReversal' THEN tr.number WHEN 'StockCount' THEN sc.number WHEN 'StockAdjustment' THEN sa.number END,
+			m."createdById", m."lotRef", m.reference, m."deviceId"
 		FROM "StockMovement" m
 		JOIN "Plant" pl ON pl.id = m."plantId"
 		JOIN "Product" pr ON pr.id = m."productId"
@@ -164,6 +179,9 @@ func (h *handler) movements(c *fiber.Ctx) error {
 		LEFT JOIN "ProductionReport" rep ON m."sourceType" = 'ProductionReport' AND rep.id = m."sourceId"
 		LEFT JOIN "Delivery" dn ON m."sourceType" = 'Delivery' AND dn.id = m."sourceId"
 		LEFT JOIN "Sale" s ON m."sourceType" = 'Sale' AND s.id = m."sourceId"
+		LEFT JOIN stock_transfer tr ON m."sourceType" IN ('StockTransfer','StockTransferReversal') AND tr.id = m."sourceId"
+		LEFT JOIN stock_count sc ON m."sourceType" = 'StockCount' AND sc.id = m."sourceId"
+		LEFT JOIN stock_adjustment sa ON m."sourceType" = 'StockAdjustment' AND sa.id = m."sourceId"
 		WHERE `+where+fmt.Sprintf(` ORDER BY m."date" DESC, m."createdAt" DESC, m.id LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
 	if err != nil {
 		return err
@@ -176,7 +194,7 @@ func (h *handler) movements(c *fiber.Ctx) error {
 		var created time.Time
 		var label *string
 		if err := rows.Scan(&m.ID, &m.Date, &m.Plant, &m.PlantID, &pcode, &pname, &punit, &m.ProductID, &m.Type, &m.Quantity,
-			&m.SourceType, &m.SourceID, &m.Note, &m.CreatedBy, &created, &label); err != nil {
+			&m.SourceType, &m.SourceID, &m.Note, &m.CreatedBy, &created, &label, &m.CreatedByID, &m.LotRef, &m.Reference, &m.DeviceID); err != nil {
 			return err
 		}
 		m.Product = map[string]string{"code": pcode, "name": pname, "unit": punit}

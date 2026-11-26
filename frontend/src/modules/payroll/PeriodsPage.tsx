@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { Banknote, CalendarDays, ClipboardCheck, HandCoins, Plus, Users } from "lucide-react";
-import { Button, Card, DataTable, ErrorState, FilterBar, PageHeader, Pagination, PdfButton, Select, StatCard, StatusBadge, Tabs, useFilters, type Column } from "@/components/ui";
+import { Button, Card, DataTable, ErrorState, FilterBar, PageHeader, Pagination, ExportMenu, PdfButton, Select, StatCard, StatusBadge, Tabs, useFilters, type Column } from "@/components/ui";
 import { useT } from "@/i18n";
 import { Can } from "@/auth/guards";
 import { formatDateTime, todayISO } from "@/lib/dates";
@@ -76,7 +76,7 @@ export function PeriodsPage() {
         description={tr("payroll.description")}
         actions={
           <>
-            <PdfButton path="/payroll/pdf/summary" params={{ from: `${summaryYear}-01-01`, to: `${summaryYear}-12-31`, plantId: filters.plantId || undefined }} label={tr("payroll.labourCost", { year: summaryYear })} />
+            <div className="flex flex-wrap items-center gap-2"><PdfButton path="/payroll/pdf/summary" params={{ from: `${summaryYear}-01-01`, to: `${summaryYear}-12-31`, plantId: filters.plantId || undefined }} label={tr("payroll.labourCost", { year: summaryYear })} /><ExportMenu path="/payroll/summary" params={{ from: `${summaryYear}-01-01`, to: `${summaryYear}-12-31`, plantId: filters.plantId || undefined }} /><ExportMenu path="/payroll/periods" label={tr("exports.menu.list")} params={{ plantId: filters.plantId || undefined, status: status === "ALL" ? undefined : status, year }} /></div>
             <Link to="/payroll/workers">
               <Button variant="secondary" icon={<Users className="size-4" />}>{tr("payroll.workersLink")}</Button>
             </Link>

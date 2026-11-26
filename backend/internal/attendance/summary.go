@@ -25,6 +25,8 @@ type workerSummary struct {
 	DaysAbsent  int      `json:"daysAbsent"`
 	DaysLeave   int      `json:"daysLeave"`
 	PayableDays float64  `json:"payableDays"`
+	Overtime    float64  `json:"overtimeHours"`
+	Exceptions  int      `json:"exceptions"`
 }
 
 type summaryTotals struct {
@@ -34,6 +36,8 @@ type summaryTotals struct {
 	DaysAbsent  int     `json:"daysAbsent"`
 	DaysLeave   int     `json:"daysLeave"`
 	PayableDays float64 `json:"payableDays"`
+	Overtime    float64 `json:"overtimeHours"`
+	Exceptions  int     `json:"exceptions"`
 }
 
 type summaryData struct {
@@ -58,7 +62,9 @@ func aggregate(ctx context.Context, q db.DBTX, plantID string, from, to time.Tim
 		count(*) FILTER (WHERE a.status = 'PRESENT')  AS present,
 		count(*) FILTER (WHERE a.status = 'HALF_DAY') AS half,
 		count(*) FILTER (WHERE a.status = 'ABSENT')   AS absent,
-		count(*) FILTER (WHERE a.status = 'LEAVE')    AS leave
+		count(*) FILTER (WHERE a.status = 'LEAVE')    AS leave,
+		COALESCE(sum(a."overtimeHours"), 0)::float8  AS ot,
+		count(*) FILTER (WHERE a.exception)           AS exc
 		FROM "Worker" w JOIN "Plant" p ON p.id = w."plantId"
 		LEFT JOIN "Attendance" a ON a."workerId" = w.id AND a.date >= $1 AND a.date <= $2
 		WHERE `+where+`
@@ -74,7 +80,7 @@ func aggregate(ctx context.Context, q db.DBTX, plantID string, from, to time.Tim
 		var ws workerSummary
 		var first, last string
 		if err := rows.Scan(&ws.WorkerID, &first, &last, &ws.JobTitle, &ws.Plant.ID, &ws.Plant.Code, &ws.Plant.Name,
-			&ws.DaysPresent, &ws.HalfDays, &ws.DaysAbsent, &ws.DaysLeave); err != nil {
+			&ws.DaysPresent, &ws.HalfDays, &ws.DaysAbsent, &ws.DaysLeave, &ws.Overtime, &ws.Exceptions); err != nil {
 			return nil, summaryTotals{}, err
 		}
 		ws.Name = fullName(first, last)
@@ -86,6 +92,8 @@ func aggregate(ctx context.Context, q db.DBTX, plantID string, from, to time.Tim
 		tot.DaysAbsent += ws.DaysAbsent
 		tot.DaysLeave += ws.DaysLeave
 		tot.PayableDays += ws.PayableDays
+		tot.Overtime += ws.Overtime
+		tot.Exceptions += ws.Exceptions
 	}
 	return out, tot, rows.Err()
 }

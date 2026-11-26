@@ -41,9 +41,12 @@ export interface UserPayload {
   isActive: boolean;
 }
 
-/** Roles limited to one plant (mirrors PLANT_SCOPED_ROLES on the API). */
-export const PLANT_SCOPED_ROLES = ["SUPERVISOR", "LEAD_OPERATOR", "OPERATOR"];
+/** Roles limited to one plant (mirrors auth.IsPlantScoped on the API). */
+export { PLANT_SCOPED_ROLES, OPTIONALLY_SCOPED_ROLES } from "@/lib/scope";
+import { PLANT_SCOPED_ROLES, OPTIONALLY_SCOPED_ROLES } from "@/lib/scope";
 export const isPlantScoped = (role: string) => PLANT_SCOPED_ROLES.includes(role);
+/** STOCK_OFFICER: a site is optional (assigned → pinned to it; empty → all locations). */
+export const isOptionallyScoped = (role: string) => OPTIONALLY_SCOPED_ROLES.includes(role);
 export const isLocked = (u: Pick<AdminUser, "lockedUntil">) => !!u.lockedUntil && new Date(u.lockedUntil).getTime() > Date.now();
 
 export function useUsers(params: { q: string; page: number }) {
@@ -78,6 +81,8 @@ export interface Product {
   name: string;
   dimensions: string | null;
   unit: string;
+  category?: string | null;
+  reorderLevel?: number;
   defaultPrice: number;
   sortOrder: number;
   isActive: boolean;
@@ -88,6 +93,7 @@ export interface Material {
   code: string;
   name: string;
   unit: string;
+  category?: string | null;
   minLevel: string | number;
   sortOrder: number;
   isActive: boolean;
@@ -117,11 +123,16 @@ export const saveMasterRow = ({ entity, id, body }: { entity: MasterEntity; id?:
 
 // ───────────────────────────── Sites (plants + quick stats) ─────────────────────────────
 
+export type LocationKind = "SITE" | "HQ" | "WAREHOUSE";
+export const LOCATION_KINDS: LocationKind[] = ["SITE", "HQ", "WAREHOUSE"];
+
 export interface PlantStat {
   plantId: string;
   code: string;
   name: string;
   location: string | null;
+  /** STK-01 location kind: production SITE, head office HQ or WAREHOUSE. */
+  kind: LocationKind;
   isActive: boolean;
   workerCount: number;
   userCount: number;
@@ -145,11 +156,24 @@ export interface AuditEntry {
   before: unknown;
   after: unknown;
   ip: string | null;
+  deviceId?: string | null;
+  userAgent?: string | null;
   createdAt: string;
   user: { id: string; name: string; email: string } | null;
 }
 
-export function useAudit(params: { from: string; to: string; entity: string; entityId: string; q: string; page: number }) {
+export interface AuditQuery { from: string; to: string; entity: string; entityId: string; q: string; page: number; userId?: string; action?: string; deviceId?: string }
+
+/** Users, actions, entities and devices present in the trail (filter options). */
+export function useAuditFacets() {
+  return useQuery({
+    queryKey: [...ADMIN_KEY, "audit", "facets"],
+    queryFn: ({ signal }) => get<{ users: { id: string; name: string; email: string }[]; actions: string[]; entities: string[]; devices: string[] }>("/audit/facets", signal),
+    staleTime: 60_000,
+  });
+}
+
+export function useAudit(params: AuditQuery) {
   return useQuery({
     queryKey: [...ADMIN_KEY, "audit", params],
     queryFn: ({ signal }) => get<Paged<AuditEntry>>(`/audit${qs({ ...params, pageSize: 50 })}`, signal),

@@ -97,7 +97,9 @@ func TestFullSignInFlow(t *testing.T) {
 	// correct code
 	resp = do(e, "POST", "/api/auth/otp/verify", map[string]any{"code": otp.Code}, ticket)
 	sess := cookie(resp, "btn_session")
-	if resp.StatusCode != 200 || sess == nil || !sess.HttpOnly || sess.Path != "/" || sess.MaxAge != 12*3600 {
+	refresh := cookie(resp, "btn_refresh") // F3: access cookie lives as long as the device session (14 days); token itself 15 min
+	if resp.StatusCode != 200 || sess == nil || !sess.HttpOnly || sess.Path != "/" || sess.MaxAge < 14*24*3600-5 || sess.MaxAge > 14*24*3600 ||
+		refresh == nil || !refresh.HttpOnly || refresh.Path != "/api/auth" {
 		t.Fatalf("verify: %d session=%+v", resp.StatusCode, sess)
 	}
 	var out struct {

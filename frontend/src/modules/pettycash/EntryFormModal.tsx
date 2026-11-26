@@ -1,18 +1,26 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Alert, Button, Field, Input, Modal, Select, Textarea } from "@/components/ui";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { Alert, Button, Field, Input, Modal, Select, Textarea, DateInput } from "@/components/ui";
 import { useT, type T } from "@/i18n";
+import { useAuth } from "@/auth/AuthProvider";
 import { useLookups } from "@/hooks/useLookups";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { ApiError } from "@/lib/api";
 import { toISO, todayISO } from "@/lib/dates";
 import { formatRWF } from "@/lib/format";
 import { cn } from "@/lib/cn";
-import { createEntry, updateEntry, PC_KEY, type EntryPayload, type EntryType, type PettyEntry } from "./api";
+import { OfflineLockedError, useConnectivity, useDirtyForm, useOfflineMutation } from "@/offline/hooks";
+import { ProvisionalTag } from "@/offline/ui/SyncBadge";
+import { createEntry, updateEntry, PC_KEY, type EntryPayload, type EntryType, type PettyEntry, type PettyFloat } from "./api";
 import { EXPENSE_CATEGORIES, categoryLabel, normaliseMomo } from "./labels";
+import { PETTY_CASH_TYPE } from "./offline";
 
 interface FormState {
+  floatId: string;
   date: string;
   category: string;
+  department: string;
   description: string;
   plantId: string;
   payeeName: string;
@@ -22,12 +30,14 @@ interface FormState {
   invoiceRef: string;
 }
 
-const empty = (): FormState => ({ date: todayISO(), category: "", description: "", plantId: "", payeeName: "", momoNumber: "", amount: "", momoCharge: "", invoiceRef: "" });
+const empty = (floatId = "", amount = ""): FormState => ({ floatId, date: todayISO(), category: "", department: "", description: "", plantId: "", payeeName: "", momoNumber: "", amount, momoCharge: "", invoiceRef: "" });
 
 function fromEntry(e: PettyEntry): FormState {
   return {
+    floatId: e.floatId,
     date: toISO(e.date),
-    category: e.type === "EXPENSE" ? e.category : "",
+    category: e.type === "EXPENSE" ? (e.expenseCategory ?? e.category) : "",
+    department: e.department ?? "",
     description: e.description,
     plantId: e.plantId ?? "",
     payeeName: e.payeeName ?? "",
@@ -42,6 +52,7 @@ const toInt = (s: string) => (s.trim() === "" ? 0 : Number(s));
 
 function validate(type: EntryType, f: FormState, t: T): Record<string, string> {
   const errors: Record<string, string> = {};
+  if (!f.floatId) errors.floatId = t("pettycash.err.float");
   if (!f.date) errors.date = t("pettycash.err.date");
   else if (f.date > todayISO()) errors.date = t("pettycash.err.dateFuture");
   if (f.description.trim().length < 3) errors.description = t("pettycash.err.description");
@@ -52,6 +63,7 @@ function validate(type: EntryType, f: FormState, t: T): Record<string, string> {
   if (type === "EXPENSE") {
     if (!f.category) errors.category = t("pettycash.err.category");
     if (!f.payeeName.trim()) errors.payeeName = t("pettycash.err.payee");
+    if (!f.invoiceRef.trim()) errors.invoiceRef = t("pettycash.err.receiptRef");
     const charge = toInt(f.momoCharge);
     if (!Number.isFinite(charge) || charge < 0) errors.momoCharge = t("pettycash.err.negative");
     else if (!Number.isInteger(charge)) errors.momoCharge = t("pettycash.err.wholeFrancs");
@@ -60,20 +72,32 @@ function validate(type: EntryType, f: FormState, t: T): Record<string, string> {
   return errors;
 }
 
-/** Record or correct a petty cash deposit / expense. */
-export function EntryFormModal({ open, onClose, type, entry, currentBalance, approvalLimit }: {
+/** Record or correct a petty cash top-up request / expenditure, into one float. Works offline (outbox). */
+export function EntryFormModal({ open, onClose, type, entry, floats, defaultFloatId, defaultAmount, approvalLimit }: {
   open: boolean;
   onClose: () => void;
   type: EntryType;
   /** when set, edits this (own, submitted or rejected) entry */
   entry?: PettyEntry | null;
-  currentBalance: number | undefined;
+  /** floats the user may record into (server-scoped) */
+  floats: PettyFloat[];
+  defaultFloatId?: string;
+  defaultAmount?: number;
   approvalLimit: number | undefined;
 }) {
   const { t, tx } = useT();
+  const { can } = useAuth();
+  const qc = useQueryClient();
+  const net = useConnectivity();
   const { data: lookups } = useLookups();
   const [form, setForm] = useState<FormState>(empty);
   const [touched, setTouched] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const offline = useOfflineMutation<EntryPayload>(PETTY_CASH_TYPE);
+
+  const choices = useMemo(() => floats.filter((f) => f.isActive && (can("pettycash.record") || f.isMine)), [floats, can]);
+  const categories = lookups?.refdata?.expense_category;
+  const departments = lookups?.refdata?.department ?? [];
 
   const save = useMutate((body: EntryPayload) => (entry ? updateEntry({ id: entry.id, body }) : createEntry(body)), {
     success: (d) =>
@@ -89,44 +113,65 @@ export function EntryFormModal({ open, onClose, type, entry, currentBalance, app
 
   useEffect(() => {
     if (open) {
-      setForm(entry ? fromEntry(entry) : empty());
+      const first = defaultFloatId && choices.some((f) => f.id === defaultFloatId) ? defaultFloatId : (choices.find((f) => f.isMine) ?? choices.find((f) => f.isDefault) ?? choices[0])?.id ?? "";
+      setForm(entry ? fromEntry(entry) : empty(first, defaultAmount ? String(defaultAmount) : ""));
       setTouched(false);
       reset();
     }
-  }, [open, entry, reset]);
+  }, [open, entry, reset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (k: keyof FormState) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const clientErrors = useMemo(() => validate(type, form, t), [type, form, t]);
   const err = (k: string) => (touched ? clientErrors[k] : undefined) ?? fieldError(save.error, k);
+  const dirty = open && (form.description !== "" || form.amount !== "");
+  useDirtyForm(dirty);
 
+  const fl = floats.find((f) => f.id === form.floatId);
+  const currentBalance = fl?.balance;
   const amount = toInt(form.amount) || 0;
   const charge = type === "EXPENSE" ? toInt(form.momoCharge) || 0 : 0;
   const outflow = amount + charge;
-  // When editing, the entry itself is not yet in the approved balance (only submitted/rejected entries are editable).
-  const after = currentBalance == null ? null : type === "DEPOSIT" ? currentBalance + amount : currentBalance - outflow;
-  const exceeds = type === "EXPENSE" && currentBalance != null && outflow > currentBalance;
+  const after = currentBalance == null ? null : type === "DEPOSIT" ? currentBalance : currentBalance - outflow;
+  const exceeds = type === "EXPENSE" && currentBalance != null && !fl?.provisional && outflow > currentBalance;
   const autoApprove = type === "EXPENSE" && !entry && !!approvalLimit && amount > 0 && amount < approvalLimit;
 
-  const submit = (e: FormEvent) => {
+  const payload = (): EntryPayload => ({
+    floatId: form.floatId || null,
+    department: type === "EXPENSE" && form.department ? form.department : null,
+    date: form.date,
+    type,
+    category: type === "EXPENSE" ? form.category : "FLOAT_DEPOSIT",
+    description: form.description.trim(),
+    plantId: form.plantId || null,
+    payeeName: form.payeeName.trim() || null,
+    momoNumber: form.momoNumber.trim() ? normaliseMomo(form.momoNumber) : null,
+    amount,
+    momoCharge: charge,
+    invoiceRef: form.invoiceRef.trim() || null,
+  });
+
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     setTouched(true);
     if (Object.keys(clientErrors).length) return;
-    save.mutate({
-      date: form.date,
-      type,
-      category: type === "EXPENSE" ? form.category : "FLOAT_DEPOSIT",
-      description: form.description.trim(),
-      plantId: form.plantId || null,
-      payeeName: form.payeeName.trim() || null,
-      momoNumber: form.momoNumber.trim() ? normaliseMomo(form.momoNumber) : null,
-      amount,
-      momoCharge: charge,
-      invoiceRef: form.invoiceRef.trim() || null,
-    });
+    const body = payload();
+    if (entry) return save.mutate(body); // corrections of server records need the server (online)
+    setSaving(true);
+    try {
+      await offline.submit(body); // saved on the device first, then synced (SRS §5.2)
+      void qc.invalidateQueries({ queryKey: PC_KEY });
+      onClose();
+    } catch (ex) {
+      // device storage locked but the server is reachable: record directly online
+      if (ex instanceof OfflineLockedError && net.reachable) save.mutate(body);
+      else if (!(ex instanceof OfflineLockedError)) toast.error((ex as Error).message);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const isDeposit = type === "DEPOSIT";
-  const title = entry ? t("pettycash.form.titleEdit", { number: entry.number }) : isDeposit ? t("pettycash.form.titleDeposit") : t("pettycash.form.titleExpense");
+  const title = entry ? t("pettycash.form.titleEdit", { number: entry.number }) : isDeposit ? t("pettycash.form.titleTopUp") : t("pettycash.form.titleExpense");
   const serverMessage = save.error instanceof ApiError && !save.error.fields ? save.error.message : null;
 
   return (
@@ -135,38 +180,53 @@ export function EntryFormModal({ open, onClose, type, entry, currentBalance, app
       onClose={onClose}
       size="lg"
       title={title}
-      description={isDeposit ? t("pettycash.form.descDeposit") : t("pettycash.form.descExpense")}
+      description={isDeposit ? t("pettycash.form.descTopUp") : t("pettycash.form.descExpenseFloat")}
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>{t("common.cancel")}</Button>
-          <Button type="submit" form="pc-entry-form" loading={save.isPending} disabled={exceeds}>
-            {entry ? (entry.status === "REJECTED" ? t("pettycash.form.resubmit") : t("common.saveChanges")) : isDeposit ? t("pettycash.form.recordDeposit") : t("pettycash.form.recordExpense")}
+          <Button type="submit" form="pc-entry-form" loading={save.isPending || saving} disabled={exceeds || (!!entry && !net.reachable)}>
+            {entry ? (entry.status === "REJECTED" ? t("pettycash.form.resubmit") : t("common.saveChanges")) : isDeposit ? t("pettycash.form.requestTopUp") : t("pettycash.form.recordExpense")}
           </Button>
         </>
       }
     >
-      <form id="pc-entry-form" onSubmit={submit} noValidate className="space-y-4">
+      <form id="pc-entry-form" onSubmit={(ev) => void submit(ev)} noValidate className="space-y-4">
         {entry?.status === "REJECTED" && entry.reviewComment ? (
           <Alert tone="red" title={t("pettycash.form.rejectedBy", { name: entry.reviewedBy?.name ?? t("pettycash.form.approver") })}>{entry.reviewComment}</Alert>
         ) : null}
+        {entry && !net.reachable ? <Alert tone="amber">{t("pettycash.offline.editOnline")}</Alert> : null}
+        {!entry && !net.reachable ? <Alert tone="blue">{t("pettycash.offline.savedOnDevice")}</Alert> : null}
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label={t("common.date")} required error={err("date")} htmlFor="pc-date">
-            <Input id="pc-date" type="date" value={form.date} max={todayISO()} onChange={set("date")} invalid={!!err("date")} />
+          <Field label={t("pettycash.float.label")} required error={err("floatId")} htmlFor="pc-float" hint={!choices.length ? t("pettycash.float.none") : undefined}>
+            <Select id="pc-float" value={form.floatId} onChange={set("floatId")} invalid={!!err("floatId")} disabled={!!entry}>
+              <option value="">{t("pettycash.form.choose")}</option>
+              {choices.map((f) => <option key={f.id} value={f.id}>{f.code} · {f.name}</option>)}
+            </Select>
           </Field>
-          {isDeposit ? (
-            <Field label={t("pettycash.form.category")} hint={t("pettycash.form.categoryHint")}>
-              <Input value={categoryLabel(tx, "FLOAT_DEPOSIT")} disabled />
-            </Field>
-          ) : (
+          <Field label={t("common.date")} required error={err("date")} htmlFor="pc-date">
+            <DateInput id="pc-date" value={form.date} max={todayISO()} onChange={(v) => set("date")({ target: { value: v } })} invalid={!!err("date")} />
+          </Field>
+        </div>
+
+        {isDeposit ? null : (
+          <div className="grid gap-4 sm:grid-cols-2">
             <Field label={t("pettycash.form.category")} required error={err("category")} htmlFor="pc-category">
               <Select id="pc-category" value={form.category} onChange={set("category")} invalid={!!err("category")}>
                 <option value="">{t("pettycash.form.choose")}</option>
-                {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{categoryLabel(tx, c)}</option>)}
+                {categories?.length
+                  ? categories.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)
+                  : EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{categoryLabel(tx, c)}</option>)}
               </Select>
             </Field>
-          )}
-        </div>
+            <Field label={t("pettycash.form.department")} hint={t("pettycash.form.departmentHint")} htmlFor="pc-dept">
+              <Select id="pc-dept" value={form.department} onChange={set("department")}>
+                <option value="">{fl?.departmentName ? t("pettycash.form.departmentDefault", { name: fl.departmentName }) : t("pettycash.form.departmentNone")}</option>
+                {departments.map((d) => <option key={d.code} value={d.code}>{d.name}</option>)}
+              </Select>
+            </Field>
+          </div>
+        )}
 
         <Field label={t("common.description")} required error={err("description")} htmlFor="pc-desc">
           <Textarea
@@ -176,59 +236,58 @@ export function EntryFormModal({ open, onClose, type, entry, currentBalance, app
             value={form.description}
             onChange={set("description")}
             invalid={!!err("description")}
-            placeholder={isDeposit ? t("pettycash.form.descriptionPlaceholderDeposit") : t("pettycash.form.descriptionPlaceholderExpense")}
+            placeholder={isDeposit ? t("pettycash.form.descriptionPlaceholderTopUp") : t("pettycash.form.descriptionPlaceholderExpense")}
           />
         </Field>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label={isDeposit ? t("pettycash.form.receivedFrom") : t("pettycash.form.paidTo")} required={!isDeposit} error={err("payeeName")} htmlFor="pc-payee">
-            <Input id="pc-payee" value={form.payeeName} maxLength={120} onChange={set("payeeName")} invalid={!!err("payeeName")} placeholder={isDeposit ? t("pettycash.form.payeePlaceholderDeposit") : t("pettycash.form.payeePlaceholderExpense")} />
-          </Field>
-          <Field label={t("pettycash.form.momoNumber")} error={err("momoNumber")} hint={t("pettycash.form.momoHint")} htmlFor="pc-momo">
-            <Input id="pc-momo" inputMode="tel" value={form.momoNumber} maxLength={20} onChange={set("momoNumber")} invalid={!!err("momoNumber")} placeholder="0788 123 456" />
-          </Field>
-        </div>
+        {isDeposit ? null : (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label={t("pettycash.form.paidTo")} required error={err("payeeName")} htmlFor="pc-payee">
+              <Input id="pc-payee" value={form.payeeName} maxLength={120} onChange={set("payeeName")} invalid={!!err("payeeName")} placeholder={t("pettycash.form.payeePlaceholderExpense")} />
+            </Field>
+            <Field label={t("pettycash.form.momoNumber")} error={err("momoNumber")} hint={t("pettycash.form.momoHint")} htmlFor="pc-momo">
+              <Input id="pc-momo" inputMode="tel" value={form.momoNumber} maxLength={20} onChange={set("momoNumber")} invalid={!!err("momoNumber")} placeholder="0788 123 456" />
+            </Field>
+          </div>
+        )}
 
-        <div className={cn("grid gap-4", isDeposit ? "sm:grid-cols-2" : "sm:grid-cols-3")}>
-          <Field label={t("pettycash.form.amountRwf")} required error={err("amount")} htmlFor="pc-amount">
+        <div className={cn("grid gap-4", isDeposit ? "sm:grid-cols-1" : "sm:grid-cols-3")}>
+          <Field label={t("pettycash.form.amountRwf")} required error={err("amount")} htmlFor="pc-amount" hint={isDeposit && fl?.topUpSuggestion ? t("pettycash.float.suggestion", { amount: formatRWF(fl.topUpSuggestion) }) : undefined}>
             <Input id="pc-amount" type="number" inputMode="numeric" min={1} step={1} value={form.amount} onChange={set("amount")} invalid={!!err("amount")} className="tabular text-right" />
           </Field>
           {!isDeposit ? (
-            <Field label={t("pettycash.form.momoCharge")} error={err("momoCharge")} htmlFor="pc-charge">
-              <Input id="pc-charge" type="number" inputMode="numeric" min={0} step={1} value={form.momoCharge} onChange={set("momoCharge")} invalid={!!err("momoCharge")} placeholder="0" className="tabular text-right" />
-            </Field>
+            <>
+              <Field label={t("pettycash.form.momoCharge")} error={err("momoCharge")} htmlFor="pc-charge">
+                <Input id="pc-charge" type="number" inputMode="numeric" min={0} step={1} value={form.momoCharge} onChange={set("momoCharge")} invalid={!!err("momoCharge")} placeholder="0" className="tabular text-right" />
+              </Field>
+              <Field label={t("pettycash.form.receiptRef")} required error={err("invoiceRef")} hint={t("pettycash.form.receiptRefHint")} htmlFor="pc-invoice">
+                <Input id="pc-invoice" value={form.invoiceRef} maxLength={60} onChange={set("invoiceRef")} invalid={!!err("invoiceRef")} />
+              </Field>
+            </>
           ) : null}
-          <Field label={t("pettycash.form.invoiceRef")} error={err("invoiceRef")} htmlFor="pc-invoice">
-            <Input id="pc-invoice" value={form.invoiceRef} maxLength={60} onChange={set("invoiceRef")} invalid={!!err("invoiceRef")} />
-          </Field>
         </div>
 
-        <Field label={t("common.plant")} error={err("plantId")} hint={t("pettycash.form.plantHint")} htmlFor="pc-plant">
-          <Select id="pc-plant" value={form.plantId} onChange={set("plantId")} invalid={!!err("plantId")}>
-            <option value="">{t("pettycash.notPlantSpecific")}</option>
-            {lookups?.plants.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
-          </Select>
-        </Field>
+        {isDeposit ? null : (
+          <Field label={t("common.plant")} error={err("plantId")} hint={t("pettycash.form.plantHintFloat")} htmlFor="pc-plant">
+            <Select id="pc-plant" value={form.plantId} onChange={set("plantId")} invalid={!!err("plantId")}>
+              <option value="">{fl?.plant ? t("pettycash.form.plantDefault", { code: fl.plant.code }) : t("pettycash.notPlantSpecific")}</option>
+              {lookups?.plants.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+            </Select>
+          </Field>
+        )}
 
-        <BalanceHint
-          type={type}
-          currentBalance={currentBalance}
-          after={after}
-          outflow={outflow}
-          exceeds={exceeds}
-          autoApprove={autoApprove}
-          approvalLimit={approvalLimit}
-          editing={!!entry}
-        />
+        <BalanceHint type={type} currentBalance={currentBalance} provisional={!!fl?.provisional} after={after} outflow={outflow} exceeds={exceeds}
+          autoApprove={autoApprove} approvalLimit={approvalLimit} editing={!!entry} />
         {serverMessage ? <Alert tone="red">{serverMessage}</Alert> : null}
       </form>
     </Modal>
   );
 }
 
-function BalanceHint({ type, currentBalance, after, outflow, exceeds, autoApprove, approvalLimit, editing }: {
+function BalanceHint({ type, currentBalance, provisional, after, outflow, exceeds, autoApprove, approvalLimit, editing }: {
   type: EntryType;
   currentBalance: number | undefined;
+  provisional: boolean;
   after: number | null;
   outflow: number;
   exceeds: boolean;
@@ -239,7 +298,7 @@ function BalanceHint({ type, currentBalance, after, outflow, exceeds, autoApprov
   const { t } = useT();
   const approval =
     type === "DEPOSIT"
-      ? t("pettycash.approval.deposit")
+      ? t("pettycash.approval.topUp")
       : editing
         ? t("pettycash.approval.edited")
         : autoApprove
@@ -251,9 +310,10 @@ function BalanceHint({ type, currentBalance, after, outflow, exceeds, autoApprov
     <div className={cn("rounded-xl border px-4 py-3 text-sm", exceeds ? "border-red-200 bg-red-50" : "border-navy-100 bg-navy-50/60")}>
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
         <span className="text-slate-600">
-          {t("pettycash.balance.current")} <span className="tabular font-semibold text-slate-900">{currentBalance == null ? "…" : formatRWF(currentBalance)}</span>
+          {t("pettycash.balance.floatCurrent")} <span className="tabular font-semibold text-slate-900">{currentBalance == null ? "…" : formatRWF(currentBalance)}</span>
+          {provisional ? <ProvisionalTag className="ml-2" /> : null}
         </span>
-        {after != null ? (
+        {after != null && type === "EXPENSE" ? (
           <span className="text-slate-600">
             {t("pettycash.balance.after")} <span className={cn("tabular font-semibold", after < 0 ? "text-red-700" : "text-slate-900")}>{formatRWF(after)}</span>
           </span>

@@ -6,19 +6,22 @@ import (
 	"fmt"
 	"log/slog"
 
+	"btn-ops/internal/approvals"
 	"btn-ops/internal/auth"
 	"btn-ops/internal/catalog"
 	"btn-ops/internal/config"
 	"btn-ops/internal/db"
+	"btn-ops/internal/refdata"
 	"btn-ops/internal/settings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Catalog seeds plants, products, materials and the default settings (no users). Safe to repeat.
+// Catalog seeds locations (sites + HQ), products, materials, reference data, approval thresholds and the
+// default settings (no users). Safe to repeat: existing rows are never changed.
 func Catalog(ctx context.Context, pool *pgxpool.Pool) error {
 	for _, p := range catalog.Plants {
-		if _, err := pool.Exec(ctx, `INSERT INTO "Plant" (id, code, name) VALUES ($1,$2,$3) ON CONFLICT (code) DO NOTHING`, db.NewID(), p.Code, p.Name); err != nil {
+		if _, err := pool.Exec(ctx, `INSERT INTO "Plant" (id, code, name, kind) VALUES ($1,$2,$3,$4) ON CONFLICT (code) DO NOTHING`, db.NewID(), p.Code, p.Name, p.Kind); err != nil {
 			return err
 		}
 	}
@@ -33,6 +36,21 @@ func Catalog(ctx context.Context, pool *pgxpool.Pool) error {
 			db.NewID(), m.Code, m.Name, m.Unit, m.MinLevel, m.SortOrder); err != nil {
 			return err
 		}
+	}
+	// STK-02 (P2): default catalogue categories (refdata codes) for seeded items that have none yet.
+	if _, err := pool.Exec(ctx, `UPDATE "Product" SET category = CASE WHEN code LIKE 'HB%' THEN 'HOLLOW_BLOCK' WHEN code LIKE 'SB%' THEN 'SOLID_BLOCK'
+		WHEN code LIKE 'HD%' THEN 'HOURDI' WHEN code LIKE 'PV%' THEN 'PAVER' ELSE 'OTHER' END WHERE category IS NULL`); err != nil {
+		return err
+	}
+	if _, err := pool.Exec(ctx, `UPDATE "Material" SET category = CASE WHEN code = 'CEMENT' THEN 'CEMENT' WHEN code IN ('QDUST','BSAND','KSAND') THEN 'AGGREGATE'
+		WHEN code IN ('VISCO90','BPOWDER') THEN 'ADDITIVE' ELSE 'OTHER' END WHERE category IS NULL`); err != nil {
+		return err
+	}
+	if err := refdata.SeedDefaults(ctx, pool); err != nil {
+		return err
+	}
+	if err := approvals.SeedDefaults(ctx, pool); err != nil {
+		return err
 	}
 	for key, val := range map[string]any{"company": settings.DefaultCompany, "approvals": settings.DefaultApprovals, "branding": settings.DefaultBranding} {
 		b, err := jsonBytes(val)

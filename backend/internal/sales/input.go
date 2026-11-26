@@ -101,9 +101,35 @@ func (x in) money(v *httpx.V, key string) *httpx.N {
 }
 
 type lineIn struct {
-	ProductID string
-	Quantity  int64
-	UnitPrice int64
+	SaleLineID      string // amendments: keep an existing line ("" = new line)
+	ProductID       string
+	Quantity        int64
+	UnitPrice       int64
+	DiscountPercent *float64
+	DiscountAmount  int64
+}
+
+// calc is the line money (gross, discount, net).
+func (l lineIn) calc() lineCalc {
+	c, _ := lineAmounts(l.Quantity, l.UnitPrice, l.DiscountPercent, l.DiscountAmount)
+	return c
+}
+
+// terms are the commercial and delivery terms of an order (ORD-03, DEL-01). Set* = the key was supplied.
+type terms struct {
+	PaymentTerm                     *string
+	TransportMode                   string
+	DeliveryAddress, DeliverySite   *string
+	RequestedDate, ValidUntil       *string
+	DeliveryZone                    *string
+	DistanceKm                      *float64
+	SetPaymentTerm, SetTransport    bool
+	SetAddress, SetSite, SetReqDate bool
+	SetZone, SetKm, SetValid        bool
+}
+
+func (t terms) any() bool {
+	return t.SetPaymentTerm || t.SetTransport || t.SetAddress || t.SetSite || t.SetReqDate || t.SetZone || t.SetKm || t.SetValid
 }
 
 type saleIn struct {
@@ -114,6 +140,114 @@ type saleIn struct {
 	Lines                            []lineIn
 	HasLines                         bool
 	Confirm                          bool
+	Quote                            bool
+	Terms                            terms
+}
+
+// commercialChange: the PATCH touches something ORD-10 locks once the order is confirmed.
+func (s saleIn) commercialChange() bool {
+	return s.PlantID != "" || s.CustomerID != "" || s.Date != "" || s.HasLines || s.Terms.any()
+}
+
+// parseTerms validates the delivery requirements and payment terms.
+func (x in) parseTerms(partial bool) terms {
+	v := x.v
+	var t terms
+	t.SetPaymentTerm = v.Has("paymentTerm")
+	t.PaymentTerm = x.optCode("paymentTerm")
+	t.SetTransport = v.Has("transportMode")
+	if t.SetTransport || !partial {
+		t.TransportMode = v.OptStr("transportMode").Default(TransportClient).OneOf([]string{TransportClient, TransportBTN}, "sales.v.transport").Get()
+	}
+	t.DeliveryAddress, t.SetAddress = x.optText("deliveryAddress", 300), v.Has("deliveryAddress")
+	t.DeliverySite, t.SetSite = x.optText("deliverySite", 160), v.Has("deliverySite")
+	t.SetReqDate = v.Has("requestedDate")
+	t.RequestedDate = x.optISODate("requestedDate")
+	t.SetValid = v.Has("validUntil")
+	t.ValidUntil = x.optISODate("validUntil")
+	t.SetZone = v.Has("deliveryZone")
+	t.DeliveryZone = x.optCode("deliveryZone")
+	t.SetKm = v.Has("distanceKm")
+	if t.SetKm && v.Raw("distanceKm") != nil && v.Raw("distanceKm") != "" {
+		if !numeric(v.Raw("distanceKm")) {
+			v.Fail("distanceKm", "sales.v.enter_distance")
+		} else {
+			f := v.Num("distanceKm").Coerce().Min(0, "sales.v.not_negative").Max(5000, "sales.v.too_large").F()
+			f = float64(int64(f*10+0.5)) / 10
+			t.DistanceKm = &f
+		}
+	}
+	return t
+}
+
+// optCode: optional refdata code (upper-cased), null/"" → nil.
+func (x in) optCode(key string) *string {
+	s := x.v.NullStr(key).Trim().Upper().Max(40, x.atMost(40)).NilIfEmpty()
+	return s
+}
+
+// optISODate: optional YYYY-MM-DD (future allowed), null/"" → nil.
+func (x in) optISODate(key string) *string {
+	raw := x.v.Raw(key)
+	if raw == nil {
+		return nil
+	}
+	if s, ok := raw.(string); ok && strings.TrimSpace(s) == "" {
+		return nil
+	}
+	s := x.v.Str(key).Trim().Date("sales.v.valid_date").Get()
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// parseLine validates one order line (product, qty, unit price, optional percent OR amount discount).
+func (x in) parseLine(l *httpx.V, withLineID bool) lineIn {
+	li := lineIn{ProductID: x.id2(l, "productId")}
+	if withLineID && l.Has("saleLineId") && l.Raw("saleLineId") != nil && l.Raw("saleLineId") != "" {
+		li.SaleLineID = x.id2(l, "saleLineId")
+	}
+	li.Quantity = x.qty(l, "quantity")
+	li.UnitPrice = x.money(l, "unitPrice").Min(0, "sales.v.not_negative").Max(100_000_000, "sales.v.too_large").I()
+	hasPct := l.Has("discountPercent") && l.Raw("discountPercent") != nil && l.Raw("discountPercent") != ""
+	hasAmt := l.Has("discountAmount") && l.Raw("discountAmount") != nil && l.Raw("discountAmount") != ""
+	if hasPct && hasAmt {
+		l.Fail("discountAmount", "sales.v.one_discount")
+	}
+	if hasPct {
+		if !numeric(l.Raw("discountPercent")) {
+			l.Fail("discountPercent", "sales.v.discount_pct")
+		} else {
+			p := l.Num("discountPercent").Coerce().Min(0, "sales.v.discount_pct").Max(100, "sales.v.discount_pct").F()
+			p = float64(int64(p*1000+0.5)) / 1000
+			if p > 0 {
+				li.DiscountPercent = &p
+			}
+		}
+	} else if hasAmt {
+		li.DiscountAmount = x.money(l, "discountAmount").Min(0, "sales.v.not_negative").Max(1_000_000_000, "sales.v.too_large").I()
+		if li.DiscountAmount > li.Quantity*li.UnitPrice && li.Quantity > 0 {
+			l.Fail("discountAmount", "sales.v.discount_too_big")
+		}
+	}
+	return li
+}
+
+// parseLines validates the lines array (1..50).
+func (x in) parseLines(withLineID bool) []lineIn {
+	v := x.v
+	arr := v.Arr("lines", true)
+	if arr != nil && len(arr) == 0 {
+		v.Fail("lines", "sales.v.add_product")
+	} else if len(arr) > 50 {
+		v.Fail("lines", "sales.v.max_lines")
+	}
+	out := make([]lineIn, 0, len(arr))
+	for _, l := range arr {
+		out = append(out, x.parseLine(l, withLineID))
+	}
+	return out
 }
 
 // parseSale validates createSaleSchema (partial=false) or updateSaleSchema (partial=true).
@@ -132,23 +266,20 @@ func (x in) parseSale(partial bool) saleIn {
 	s.EbmInvoiceNo, s.SetInvoice = x.optText("ebmInvoiceNo", 60), v.Has("ebmInvoiceNo")
 	s.EbmReceiptNo, s.SetReceipt = x.optText("ebmReceiptNo", 60), v.Has("ebmReceiptNo")
 	s.Notes, s.SetNotes = x.optText("notes", 1000), v.Has("notes")
+	s.Terms = x.parseTerms(partial)
 	if !partial || v.Has("lines") {
 		s.HasLines = true
-		arr := v.Arr("lines", true)
-		if arr != nil && len(arr) == 0 {
-			v.Fail("lines", "sales.v.add_product")
-		} else if len(arr) > 50 {
-			v.Fail("lines", "sales.v.max_lines")
-		}
-		for _, l := range arr {
-			li := lineIn{ProductID: x.id2(l, "productId")}
-			li.Quantity = x.qty(l, "quantity")
-			li.UnitPrice = x.money(l, "unitPrice").Min(0, "sales.v.not_negative").Max(100_000_000, "sales.v.too_large").I()
-			s.Lines = append(s.Lines, li)
-		}
+		s.Lines = x.parseLines(false)
 	}
 	if !partial {
 		s.Confirm = v.OptBool("confirm").Default(false).Get()
+		s.Quote = v.OptBool("quote").Default(false).Get()
+	}
+	if s.Date != "" && s.Terms.RequestedDate != nil && *s.Terms.RequestedDate < s.Date {
+		v.Fail("requestedDate", "sales.v.requested_before_order")
+	}
+	if s.Date != "" && s.Terms.ValidUntil != nil && *s.Terms.ValidUntil < s.Date {
+		v.Fail("validUntil", "sales.v.valid_before_order")
 	}
 	return s
 }
@@ -158,9 +289,9 @@ func (x in) id2(v *httpx.V, key string) string {
 }
 
 type deliveryIn struct {
-	DNNumber, Date, PlantID string
-	Vehicle, Driver         *string
-	Lines                   []deliveryReq
+	DNNumber, Date, PlantID      string
+	Vehicle, Driver, Destination *string
+	Lines                        []deliveryReq
 }
 
 func (x in) parseDelivery() deliveryIn {
@@ -171,6 +302,7 @@ func (x in) parseDelivery() deliveryIn {
 	d.PlantID = x.optID("plantId")
 	d.Vehicle = x.optText("vehicle", 40)
 	d.Driver = x.optText("driver", 80)
+	d.Destination = x.optText("destination", 300)
 	arr := v.Arr("lines", true)
 	if arr != nil && len(arr) == 0 {
 		v.Fail("lines", "sales.v.add_line")
@@ -210,6 +342,7 @@ type paymentIn struct {
 	Date      string
 	Amount    int64
 	Method    string
+	Kind      string // "" = classify automatically
 	Reference *string
 }
 
@@ -229,6 +362,7 @@ func (x in) parsePayment() paymentIn {
 	}
 	p.Method = method
 	p.Reference = x.optText("reference", 80)
+	p.Kind = x.v.OptStr("kind").OneOf([]string{"", PayKindDeposit, PayKindPart, PayKindBalance}, "sales.v.pay_kind").Get()
 	return p
 }
 
@@ -236,11 +370,13 @@ func (x in) parsePayment() paymentIn {
 type deliveredIn struct {
 	ReceivedBy  string
 	DeliveredAt *time.Time
+	Note        *string
 }
 
 func (x in) parseDelivered() deliveredIn {
 	var d deliveredIn
 	d.ReceivedBy = x.reqText("receivedBy", 120, x.t("sales.v.received_by"))
+	d.Note = x.optText("note", 500)
 	if raw, ok := x.v.Raw("deliveredAt").(string); ok {
 		t, err := time.Parse(time.RFC3339, raw)
 		if err != nil {

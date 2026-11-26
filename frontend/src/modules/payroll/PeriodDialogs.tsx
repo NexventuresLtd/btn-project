@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { TriangleAlert } from "lucide-react";
-import { Alert, Button, Checkbox, Field, Modal, Textarea } from "@/components/ui";
+import { Alert, Button, Checkbox, DateInput, Field, Modal, Select, Textarea } from "@/components/ui";
 import { useT } from "@/i18n";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { formatInt, formatRWF } from "@/lib/format";
-import { PAYROLL_KEY, payPeriod, returnToDraft, type PeriodDetail } from "./api";
+import { todayISO } from "@/lib/dates";
+import { PAYMENT_METHODS, PAYROLL_KEY, payPeriod, returnToDraft, type PaymentMethod, type PeriodDetail } from "./api";
 
 const invalidate = (id: string) => [[...PAYROLL_KEY, "period", id], [...PAYROLL_KEY, "periods"]];
 
@@ -57,25 +58,34 @@ export function ReturnModal({ open, onClose, period }: { open: boolean; onClose:
 }
 
 export function PayModal({ open, onClose, period, canRecordPettyCash }: { open: boolean; onClose: () => void; period: PeriodDetail; canRecordPettyCash: boolean }) {
-  const { t } = useT();
+  const { t, tx } = useT();
   const payable = period.lines.filter((l) => l.netAmount > 0);
   const [refs, setRefs] = useState<Record<string, string>>({});
+  const [lineMethods, setLineMethods] = useState<Record<string, PaymentMethod | "">>({});
+  const [method, setMethod] = useState<PaymentMethod>("MOMO");
+  const [paidOn, setPaidOn] = useState(todayISO());
   const [petty, setPetty] = useState(true);
   useEffect(() => {
     if (open) {
       setRefs({});
+      setLineMethods({});
+      setMethod("MOMO");
+      setPaidOn(todayISO());
       setPetty(true);
     }
   }, [open]);
+
   const pay = useMutate(payPeriod, {
     success: (r) => (r.pettyCash.created ? t("payroll.pay.donePetty", { number: period.number, count: r.pettyCash.created }) : t("payroll.pay.done", { number: period.number })),
     invalidate: [...invalidate(period.id), ["pettycash"]],
     onSuccess: (r) => {
+      if (r.period.payments?.count) toast.info(t("payroll.wrk.paymentsRecorded", { count: r.period.payments.count, amount: formatRWF(r.period.payments.amount) }));
       if (r.warning) toast.warning(r.warning, { duration: 12_000 });
       onClose();
     },
   });
   const mismatches = payable.filter((l) => l.worker.momoNameMismatch);
+  const dateError = !paidOn ? t("payroll.wrk.err.paidOn") : paidOn > todayISO() ? t("payroll.wrk.err.paidFuture") : fieldError(pay.error, "paidOn");
 
   return (
     <Modal
@@ -90,10 +100,15 @@ export function PayModal({ open, onClose, period, canRecordPettyCash }: { open: 
           <Button
             variant="success"
             loading={pay.isPending}
+            disabled={!!dateError && !fieldError(pay.error, "paidOn")}
             onClick={() =>
               pay.mutate({
                 id: period.id,
-                paymentRefs: Object.entries(refs).filter(([, v]) => v.trim()).map(([lineId, ref]) => ({ lineId, ref: ref.trim() })),
+                method,
+                paidOn,
+                paymentRefs: payable
+                  .filter((l) => (refs[l.id] ?? "").trim() || lineMethods[l.id])
+                  .map((l) => ({ lineId: l.id, ref: (refs[l.id] ?? "").trim(), ...(lineMethods[l.id] ? { method: lineMethods[l.id] as PaymentMethod } : {}) })),
                 createPettyCash: canRecordPettyCash && petty,
               })
             }
@@ -109,6 +124,16 @@ export function PayModal({ open, onClose, period, canRecordPettyCash }: { open: 
             {mismatches.map((l) => `${l.worker.fullName} → ${l.worker.momoName}`).join(" · ")}
           </Alert>
         ) : null}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={t("payroll.wrk.method")} required htmlFor="pay-method" hint={t("payroll.wrk.methodHint")}>
+            <Select id="pay-method" value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
+              {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{tx(`payroll.wrk.method.${m}`)}</option>)}
+            </Select>
+          </Field>
+          <Field label={t("payroll.wrk.paidOn")} required error={dateError} htmlFor="pay-date">
+            <DateInput id="pay-date" value={paidOn} max={todayISO()} onChange={(v) => setPaidOn(v)} />
+          </Field>
+        </div>
         <div>
           <p className="mb-2 text-[13px] font-medium text-slate-700">{t("payroll.pay.refs")} <span className="font-normal text-slate-500">({t("common.optional")})</span></p>
           <div className="overflow-hidden rounded-xl border border-line">
@@ -118,6 +143,7 @@ export function PayModal({ open, onClose, period, canRecordPettyCash }: { open: 
                   <th className="px-3 py-2 text-left">{t("payroll.pay.colWorker")}</th>
                   <th className="hidden px-3 py-2 text-left sm:table-cell">{t("payroll.pay.colMomo")}</th>
                   <th className="px-3 py-2 text-right">{t("common.amount")}</th>
+                  <th className="px-3 py-2 text-left">{t("payroll.wrk.method")}</th>
                   <th className="px-3 py-2 text-left">{t("payroll.pay.colReference")}</th>
                 </tr>
               </thead>
@@ -132,6 +158,12 @@ export function PayModal({ open, onClose, period, canRecordPettyCash }: { open: 
                     </td>
                     <td className="tabular hidden px-3 py-2 text-xs text-slate-600 sm:table-cell">{l.worker.momoNumber ?? "—"}</td>
                     <td className="tabular px-3 py-2 text-right font-semibold">{formatInt(l.netAmount)}</td>
+                    <td className="px-3 py-1.5">
+                      <Select value={lineMethods[l.id] ?? ""} onChange={(e) => setLineMethods((m) => ({ ...m, [l.id]: e.target.value as PaymentMethod | "" }))} className="h-9 min-w-28" aria-label={t("payroll.wrk.methodAria", { name: l.worker.fullName })}>
+                        <option value="">{t("payroll.wrk.methodDefault", { method: tx(`payroll.wrk.method.${method}`) })}</option>
+                        {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{tx(`payroll.wrk.method.${m}`)}</option>)}
+                      </Select>
+                    </td>
                     <td className="px-3 py-1.5">
                       <input
                         value={refs[l.id] ?? ""}

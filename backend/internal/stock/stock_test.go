@@ -57,7 +57,7 @@ func TestReadEndpointsPermissionsAndScope(t *testing.T) {
 		Total int `json:"total"`
 	}
 	e.Decode(e.Do("GET", "/api/stock/balances", nil, pm), &pos)
-	if pos.Total != 200 || len(pos.Plants) != 3 || len(pos.Products) != 11 || pos.Products[0].Code != "HB20" || pos.Products[0].ByPlant[plant2] != 100 {
+	if pos.Total != 200 || len(pos.Plants) != 4 || len(pos.Products) != 11 || pos.Products[0].Code != "HB20" || pos.Products[0].ByPlant[plant2] != 100 {
 		t.Fatalf("pm position: %+v", pos)
 	}
 	// plant-scoped supervisor of BTN-2 is pinned to BTN-2 whatever plantId they ask for

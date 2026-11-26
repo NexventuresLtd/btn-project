@@ -3,7 +3,6 @@ package materials
 import (
 	"sort"
 	"strconv"
-	"time"
 
 	"btn-ops/internal/auth"
 	"btn-ops/internal/dates"
@@ -32,20 +31,10 @@ func signed(v float64) string {
 	return fmtQty(v)
 }
 
-// fmtRange: "14 Nov 2026", "12–14 Nov 2026", "28 Oct – 3 Nov 2026", "28 Dec 2026 – 3 Jan 2027" (localized months).
+// fmtRange: "14/11/2026" or "12/11/2026 – 14/11/2026" (NFR-L1).
 func fmtRange(lang i18n.Lang, fromISO, toISO string) string {
-	a, _ := dates.ParseISO(fromISO)
-	b, _ := dates.ParseISO(toISO)
-	mon := func(t time.Time) string { return i18n.T(lang, "materials.month."+strconv.Itoa(int(t.Month()))) }
-	switch {
-	case fromISO == toISO:
-		return strconv.Itoa(b.Day()) + " " + mon(b) + " " + strconv.Itoa(b.Year())
-	case a.Year() != b.Year():
-		return strconv.Itoa(a.Day()) + " " + mon(a) + " " + strconv.Itoa(a.Year()) + " – " + strconv.Itoa(b.Day()) + " " + mon(b) + " " + strconv.Itoa(b.Year())
-	case a.Month() != b.Month():
-		return strconv.Itoa(a.Day()) + " " + mon(a) + " – " + strconv.Itoa(b.Day()) + " " + mon(b) + " " + strconv.Itoa(b.Year())
-	}
-	return strconv.Itoa(a.Day()) + "–" + strconv.Itoa(b.Day()) + " " + mon(b) + " " + strconv.Itoa(b.Year())
+	_ = lang
+	return dates.FormatISORange(fromISO, toISO)
 }
 
 func sheetColumns(lang i18n.Lang, destinations []string, withAdjustment bool) []pdf.Column {

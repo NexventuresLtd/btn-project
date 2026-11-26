@@ -1,7 +1,7 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { get, post, qs } from "@/lib/api";
 
-export type MovementType = "OPENING" | "RECEIPT" | "TRANSFER_OUT" | "TRANSFER_IN" | "CONSUMPTION" | "ADJUSTMENT";
+export type MovementType = "OPENING" | "RECEIPT" | "TRANSFER_OUT" | "TRANSFER_IN" | "CONSUMPTION" | "ISSUE" | "ADJUSTMENT";
 
 export interface PlantRef {
   id: string;
@@ -85,6 +85,8 @@ export interface Movement {
   material: { id: string; code: string; name: string; unit: string };
   counterpartPlant: PlantRef | null;
   transferGroup: string | null;
+  lotRef?: string | null;
+  deviceId?: string | null;
   sourceType: string | null;
   sourceId: string | null;
   source: string;
@@ -152,14 +154,7 @@ export interface ReceiptInput {
   unitCost: string;
   supplier: string;
   reference: string;
-  note: string;
-}
-export interface TransferInput {
-  fromPlantId: string;
-  toPlantId: string;
-  date: string;
-  materialId: string;
-  quantity: string;
+  lotRef: string;
   note: string;
 }
 export interface ConsumptionInput {
@@ -167,6 +162,7 @@ export interface ConsumptionInput {
   date: string;
   materialId: string;
   quantity: string;
+  lotRef: string;
   note: string;
 }
 export interface AdjustmentInput {
@@ -184,7 +180,6 @@ export interface OpeningInput {
 }
 
 export const recordReceipt = (v: ReceiptInput) => post("/materials/receipts", { ...v });
-export const recordTransfer = (v: TransferInput) => post("/materials/transfers", { ...v });
 export const recordConsumption = (v: ConsumptionInput) => post("/materials/consumption", { ...v });
 export const recordAdjustment = (v: AdjustmentInput) => post("/materials/adjustments", { ...v });
 export const recordOpening = (v: OpeningInput) => post("/materials/opening", { ...v, lines: v.lines.map((l) => ({ ...l })) });

@@ -1,0 +1,96 @@
+# NFR-M1: every push and pull request is vetted, tested (race detector, real PostgreSQL) and built.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (Go)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: btn
+          POSTGRES_PASSWORD: btn
+          POSTGRES_DB: btn_ops
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U btn -d btn_ops"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://btn:btn@localhost:5432/btn_ops?sslmode=disable
+      TEST_DATABASE_URL: postgresql://btn:btn@localhost:5432/btn_ops_test?sslmode=disable
+      OTP_PEPPER: ci-only-pepper-not-a-secret-0123456789abcdef
+      APP_ENV: test
+      JOBS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l ./cmd ./internal ./migrations)"
+          if [ -n "$unformatted" ]; then echo "Run gofmt on:"; echo "$unformatted"; exit 1; fi
+      - name: go mod verify
+        run: go mod verify
+      - name: Migrate (dev + test databases)
+        run: |
+          go run ./cmd/migrate up
+          MIGRATE_TARGET=test go run ./cmd/migrate up
+      - name: go vet
+        run: go vet ./...
+      - name: go test -race
+        run: go test -race -count=1 -timeout 20m ./...
+      - name: Build binaries
+        run: CGO_ENABLED=0 go build -trimpath -tags timetzdata -o bin/ ./cmd/server ./cmd/migrate ./cmd/seed ./cmd/import
+
+  frontend:
+    name: Frontend (React)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  scripts:
+    name: Deploy scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n + shellcheck
+        run: |
+          for f in deploy/*.sh; do bash -n "$f"; done
+          shellcheck -S warning deploy/*.sh

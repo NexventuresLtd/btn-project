@@ -40,7 +40,18 @@ export interface Worker {
   isActive: boolean;
   startDate: string | null;
   momoNameMismatch: boolean;
+  phone: string | null;
+  rateBasis: RateBasis;
+  employmentStatus: EmploymentStatus;
+  leftDate: string | null;
 }
+
+export type RateBasis = "DAILY" | "PIECE" | "MIXED";
+export type EmploymentStatus = "ACTIVE" | "INACTIVE" | "LEFT";
+export const RATE_BASES: RateBasis[] = ["DAILY", "PIECE", "MIXED"];
+export const EMPLOYMENT_STATUSES: EmploymentStatus[] = ["ACTIVE", "INACTIVE", "LEFT"];
+export type PaymentMethod = "MOMO" | "CASH" | "BANK";
+export const PAYMENT_METHODS: PaymentMethod[] = ["MOMO", "CASH", "BANK"];
 
 export interface WorkerList {
   items: Worker[];
@@ -60,13 +71,19 @@ export interface WorkerPayload {
   plantId: string;
   dailyWage: number;
   startDate: string | null;
-  isActive: boolean;
+  isActive?: boolean;
+  phone: string | null;
+  rateBasis: RateBasis;
+  employmentStatus: EmploymentStatus;
+  leftDate: string | null;
 }
 
 export interface WorkerQuery {
   plantId?: string;
   q?: string;
   active?: "true" | "false" | "all";
+  status?: EmploymentStatus;
+  rateBasis?: RateBasis;
   page?: number;
   pageSize?: number;
 }
@@ -146,6 +163,22 @@ export interface PeriodLine {
   netAmount: number;
   paymentRef: string | null;
   note: string | null;
+  fullDays: number;
+  halfDays: number;
+  halfDayRate: number;
+  overtimeHours: number;
+  overtimeRate: number;
+  basicAmount: number;
+  overtimeAmount: number;
+  pieceUnits: number;
+  pieceAmount: number;
+  adjustmentAmount: number;
+  calculatedGross: number | null;
+  calculatedDays: number | null;
+  calculation: WageCalc | null;
+  isOverride: boolean;
+  overrideReason: string | null;
+  paymentMethod: PaymentMethod | null;
   worker: {
     id: string;
     firstName: string;
@@ -157,8 +190,54 @@ export interface PeriodLine {
     jobTitle: string;
     isActive: boolean;
     momoNameMismatch: boolean;
+    rateBasis?: RateBasis;
+    employmentStatus?: EmploymentStatus;
   };
 }
+
+/** The system's wage calculation for one worker (backend internal/workforce Calc, WRK-03). */
+export interface WageRates {
+  ruleId: string;
+  ruleName: string;
+  dailyRate: number;
+  halfDayRate: number;
+  overtimeRate: number;
+}
+
+export interface WageCalc {
+  rateBasis: RateBasis;
+  segments: (WageRates & { from: string; to: string; fullDays: number; halfDays: number; overtimeHours: number; basic: number; overtime: number })[];
+  pieces: { productId: string; productCode: string; productName: string; rateId: string; rate: number; units: number; amount: number }[];
+  adjustments: { id: string; date: string; amount: number; reason: string; sourcePeriod?: string }[];
+  fullDays: number;
+  halfDays: number;
+  payableDays: number;
+  overtimeHours: number;
+  pieceUnits: number;
+  basic: number;
+  overtime: number;
+  piece: number;
+  adjustment: number;
+  gross: number;
+  exceptions: number;
+  warnings: string[];
+  last: WageRates;
+}
+
+/** Mirrors workforce.OverrideGross: days split into full + half days at the last rates; pieces and adjustments stay. */
+export function overrideGross(c: WageCalc, days: number, overtimeHours: number): { gross: number; basic: number; overtime: number } {
+  let basic = 0;
+  let overtime = 0;
+  if (c.rateBasis !== "PIECE") {
+    const halves = Math.round(days * 2);
+    basic = Math.floor(halves / 2) * c.last.dailyRate + (halves % 2) * c.last.halfDayRate;
+    const q = Math.round(overtimeHours * 4);
+    overtime = q > 0 && c.last.overtimeRate > 0 ? Math.floor((q * c.last.overtimeRate + 2) / 4) : 0;
+  }
+  return { gross: basic + overtime + c.piece + c.adjustment, basic, overtime };
+}
+
+export const isQuarterStep = (n: number) => Number.isFinite(n) && Math.abs(n * 4 - Math.round(n * 4)) < 1e-9;
 
 export interface PeriodDetail {
   id: string;
@@ -177,7 +256,11 @@ export interface PeriodDetail {
   totals: Totals;
   mismatchCount: number;
   pettyCash: { entries: number; amount: number };
-  actions: Record<PayrollStep | "edit" | "return", ActionState>;
+  actions: Record<PayrollStep | "edit" | "return" | "calculate", ActionState>;
+  calculatedAt: string | null;
+  overrides: number;
+  warnings: number;
+  payments: { count: number; amount: number };
 }
 
 export function usePeriod(id: string | undefined) {
@@ -201,14 +284,19 @@ export const getPeriodAttendance = (id: string) => get<PeriodAttendance>(`/payro
 
 export interface LinePayload {
   workerId: string;
-  daysWorked: number;
+  /** omitted = the calculated value; a different value is an override and needs overrideReason */
+  daysWorked?: number;
+  overtimeHours?: number;
   foodDeduction: number;
   otherDeduction: number;
   note: string | null;
+  overrideReason?: string | null;
 }
 
 export const createPeriod = (body: { plantId: string; startDate: string; endDate: string }) => post<PeriodDetail>("/payroll/periods", body);
 export const saveLines = ({ id, lines }: { id: string; lines: LinePayload[] }) => put<PeriodDetail>(`/payroll/periods/${id}/lines`, { lines: lines as unknown as Record<string, unknown>[] });
+/** WRK-03: the system recalculates a DRAFT sheet from attendance, rate rules, piece work and adjustments. */
+export const calculatePeriod = (id: string) => post<PeriodDetail>(`/payroll/periods/${id}/calculate`);
 export const advance = ({ id, step }: { id: string; step: Exclude<PayrollStep, "pay"> }) => post<PeriodDetail>(`/payroll/periods/${id}/${step}`);
 export const returnToDraft = ({ id, comment }: { id: string; comment: string }) => post<PeriodDetail>(`/payroll/periods/${id}/return`, { comment });
 
@@ -218,8 +306,15 @@ export interface PayResult {
   warning?: string;
 }
 
-export const payPeriod = ({ id, paymentRefs, createPettyCash }: { id: string; paymentRefs: { lineId: string; ref: string }[]; createPettyCash: boolean }) =>
-  post<PayResult>(`/payroll/periods/${id}/pay`, { paymentRefs, createPettyCash });
+export interface PayPayload {
+  id: string;
+  method: PaymentMethod;
+  paidOn: string;
+  createPettyCash: boolean;
+  paymentRefs: { lineId: string; ref: string; method?: PaymentMethod }[];
+}
+
+export const payPeriod = ({ id, ...body }: PayPayload) => post<PayResult>(`/payroll/periods/${id}/pay`, body as unknown as Record<string, unknown>);
 
 // ───────────────────────────── Wage maths (mirrors backend calc.ts) ─────────────────────────────
 

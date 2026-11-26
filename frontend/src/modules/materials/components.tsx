@@ -19,6 +19,7 @@ export const TYPE_META: Record<MovementType, { tone: Tone }> = {
   TRANSFER_IN: { tone: "blue" },
   TRANSFER_OUT: { tone: "purple" },
   CONSUMPTION: { tone: "amber" },
+  ISSUE: { tone: "amber" },
   ADJUSTMENT: { tone: "slate" },
 };
 

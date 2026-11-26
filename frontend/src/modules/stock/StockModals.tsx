@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Minus, Plus } from "lucide-react";
-import { Alert, Button, Field, Input, Modal, Select, Textarea } from "@/components/ui";
+import { Alert, Button, Field, Input, Modal, Select, Textarea, DateInput } from "@/components/ui";
 import { useAuth } from "@/auth/AuthProvider";
 import { useLookups } from "@/hooks/useLookups";
 import { fieldError, useMutate } from "@/hooks/useMutate";
@@ -10,12 +10,12 @@ import { todayISO } from "@/lib/dates";
 import { formatInt } from "@/lib/format";
 import { useT } from "@/i18n";
 import { usePosition } from "./api";
+import { pinnedPlantId } from "@/lib/scope";
 
-const PLANT_SCOPED = ["SUPERVISOR", "LEAD_OPERATOR", "OPERATOR"];
 
 function usePinnedPlant() {
   const { user } = useAuth();
-  return user?.plant && PLANT_SCOPED.includes(user.role) ? user.plant.id : null;
+  return pinnedPlantId(user);
 }
 
 const INVALIDATE = [["stock"], ["dashboard"]];
@@ -68,7 +68,7 @@ function AdjustmentForm({ onClose, defaultPlantId }: { onClose: () => void; defa
             </Select>
           </Field>
           <Field label={t("stock.field.date")} required error={err("date")}>
-            <Input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} invalid={!!err("date")} />
+            <DateInput value={date} max={todayISO()} onChange={(v) => setDate(v)} invalid={!!err("date")} />
           </Field>
         </div>
         <Field label={t("stock.field.product")} required error={err("productId")} hint={current != null ? <>{t("stock.adjust.balanceOn")} <span className="tabular font-semibold text-slate-700">{formatInt(current)}</span></> : undefined}>
@@ -155,7 +155,7 @@ function OpeningForm({ onClose, defaultPlantId }: { onClose: () => void; default
             </Select>
           </Field>
           <Field label={t("stock.opening.countDate")} required error={err("date")} hint={t("stock.opening.countHint")}>
-            <Input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} invalid={!!err("date")} />
+            <DateInput value={date} max={todayISO()} onChange={(v) => setDate(v)} invalid={!!err("date")} />
           </Field>
         </div>
         <div className="overflow-hidden rounded-xl border border-line">

@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Alert, Button, Checkbox, Field, Input, Modal, Select } from "@/components/ui";
+import { Alert, Button, Field, Input, Modal, Select, DateInput } from "@/components/ui";
 import { useT, type T } from "@/i18n";
 import { useLookups } from "@/hooks/useLookups";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { ApiError } from "@/lib/api";
-import { createWorker, DEFAULT_WAGE, PAYROLL_KEY, updateWorker, type Worker, type WorkerPayload } from "./api";
+import { createWorker, DEFAULT_WAGE, EMPLOYMENT_STATUSES, PAYROLL_KEY, RATE_BASES, updateWorker, type EmploymentStatus, type RateBasis, type Worker, type WorkerPayload } from "./api";
 import { momoNameMismatch, normaliseMomo } from "./identity";
 
 interface FormState {
@@ -17,10 +17,14 @@ interface FormState {
   plantId: string;
   dailyWage: string;
   startDate: string;
-  isActive: boolean;
+  phone: string;
+  rateBasis: RateBasis;
+  employmentStatus: EmploymentStatus;
+  leftDate: string;
 }
 
-const empty = (plantId = ""): FormState => ({ firstName: "", lastName: "", nationalId: "", momoNumber: "", momoName: "", jobTitle: "Helper", plantId, dailyWage: "", startDate: "", isActive: true });
+const empty = (plantId = ""): FormState => ({ firstName: "", lastName: "", nationalId: "", momoNumber: "", momoName: "", jobTitle: "Helper", plantId, dailyWage: "", startDate: "",
+  phone: "", rateBasis: "DAILY", employmentStatus: "ACTIVE", leftDate: "" });
 
 const fromWorker = (w: Worker): FormState => ({
   firstName: w.firstName,
@@ -32,7 +36,10 @@ const fromWorker = (w: Worker): FormState => ({
   plantId: w.plantId,
   dailyWage: String(w.dailyWage),
   startDate: w.startDate ?? "",
-  isActive: w.isActive,
+  phone: w.phone ?? "",
+  rateBasis: w.rateBasis ?? "DAILY",
+  employmentStatus: w.employmentStatus ?? (w.isActive ? "ACTIVE" : "INACTIVE"),
+  leftDate: w.leftDate ?? "",
 });
 
 function validate(f: FormState, t: T): Record<string, string> {
@@ -43,15 +50,18 @@ function validate(f: FormState, t: T): Record<string, string> {
   if (!normaliseMomo(f.momoNumber)) e.momoNumber = t("payroll.worker.err.momo");
   if (!f.jobTitle.trim()) e.jobTitle = t("payroll.worker.err.jobTitle");
   if (!f.plantId) e.plantId = t("payroll.worker.err.plant");
+  if (f.phone.trim() && !normaliseMomo(f.phone)) e.phone = t("payroll.wrk.err.phone");
   const wage = Number(f.dailyWage);
-  if (!f.dailyWage.trim() || !Number.isFinite(wage) || wage <= 0) e.dailyWage = t("payroll.worker.err.wagePositive");
+  const pieceOk = f.rateBasis === "PIECE" && f.dailyWage.trim() !== "" && wage === 0;
+  if (pieceOk) return e;
+  if (!f.dailyWage.trim() || !Number.isFinite(wage) || wage <= 0) e.dailyWage = t(f.rateBasis === "PIECE" ? "payroll.wrk.err.wagePiece" : "payroll.worker.err.wagePositive");
   else if (!Number.isInteger(wage)) e.dailyWage = t("payroll.worker.err.wholeFrancs");
   return e;
 }
 
 /** Register or edit a casual worker. */
 export function WorkerModal({ open, onClose, worker, pinnedPlant, defaultPlant }: { open: boolean; onClose: () => void; worker: Worker | null; pinnedPlant: string | null; defaultPlant?: string }) {
-  const { t } = useT();
+  const { t, tx } = useT();
   const { data: lookups } = useLookups();
   const [form, setForm] = useState<FormState>(() => empty());
   const [touched, setTouched] = useState(false);
@@ -101,7 +111,10 @@ export function WorkerModal({ open, onClose, worker, pinnedPlant, defaultPlant }
       plantId: form.plantId,
       dailyWage: Number(form.dailyWage),
       startDate: form.startDate || null,
-      isActive: form.isActive,
+      phone: form.phone.trim() || null,
+      rateBasis: form.rateBasis,
+      employmentStatus: form.employmentStatus,
+      leftDate: form.employmentStatus === "LEFT" ? form.leftDate || null : null,
     });
   };
 
@@ -168,10 +181,32 @@ export function WorkerModal({ open, onClose, worker, pinnedPlant, defaultPlant }
             <Input id="wk-wage" value={form.dailyWage} onChange={(e) => set("dailyWage", e.target.value)} invalid={!!err("dailyWage")} inputMode="numeric" className="tabular text-right" />
           </Field>
           <Field label={t("payroll.worker.startDate")} htmlFor="wk-start">
-            <Input id="wk-start" type="date" value={form.startDate} onChange={(e) => set("startDate", e.target.value)} />
+            <DateInput id="wk-start" clearable value={form.startDate} onChange={(v) => set("startDate", v)} />
           </Field>
         </div>
-        <Checkbox label={t("payroll.worker.activeLabel")} checked={form.isActive} onChange={(e) => set("isActive", e.target.checked)} />
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field label={t("payroll.wrk.phone")} error={err("phone")} hint={t("payroll.wrk.phoneHint")} htmlFor="wk-phone">
+            <Input id="wk-phone" value={form.phone} onChange={(e) => set("phone", e.target.value)} invalid={!!err("phone")} inputMode="tel" autoComplete="off" className="tabular" />
+          </Field>
+          <Field label={t("payroll.wrk.rateBasis")} required error={err("rateBasis")} hint={tx(`payroll.wrk.basisHint.${form.rateBasis}`)} htmlFor="wk-basis">
+            <Select id="wk-basis" value={form.rateBasis} onChange={(e) => set("rateBasis", e.target.value as RateBasis)}>
+              {RATE_BASES.map((b) => <option key={b} value={b}>{tx(`payroll.wrk.basis.${b}`)}</option>)}
+            </Select>
+          </Field>
+          <Field label={t("payroll.wrk.status")} required error={err("employmentStatus")} htmlFor="wk-status">
+            <Select id="wk-status" value={form.employmentStatus} onChange={(e) => set("employmentStatus", e.target.value as EmploymentStatus)}>
+              {EMPLOYMENT_STATUSES.map((s) => <option key={s} value={s}>{tx(`payroll.wrk.status.${s}`)}</option>)}
+            </Select>
+          </Field>
+        </div>
+        {form.employmentStatus === "LEFT" ? (
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label={t("payroll.wrk.leftDate")} hint={t("payroll.wrk.leftDateHint")} error={err("leftDate")} htmlFor="wk-left">
+              <DateInput id="wk-left" clearable value={form.leftDate} onChange={(v) => set("leftDate", v)} />
+            </Field>
+          </div>
+        ) : null}
+        <p className="text-xs text-slate-500">{t("payroll.wrk.privacy")}</p>
       </form>
     </Modal>
   );

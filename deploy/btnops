@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# btnops — manage the BTN Operations deployment (installed to /usr/local/bin by deploy/deploy.sh)
+set -Eeuo pipefail
+CONF=/etc/btn-ops/deploy.conf
+# shellcheck source=/dev/null
+[[ -r "$CONF" ]] && source "$CONF"
+APP_DIR="${APP_DIR:-/opt/btn-ops}"; SRC_DIR="${SRC_DIR:-$APP_DIR}"; SERVICE="${SERVICE:-btn-ops-api}"; API_PORT="${API_PORT:-}"
+WEB_DOMAIN="${WEB_DOMAIN:-operations.btnlimited.com}"; API_DOMAIN="${API_DOMAIN:-operation-api.btnlimited.com}"
+RUN_USER="${RUN_USER:-btnops}"; DB_NAME="${DB_NAME:-btn_ops}"; DB_USER="${DB_USER:-btn_ops}"
+BACKEND="$APP_DIR/backend"
+c() { printf '\e[1;36m%s\e[0m\n' "$*"; }
+need_root() { [[ $EUID -eq 0 ]] || exec sudo -E "$0" "$@"; }
+deploy() { bash "$SRC_DIR/deploy/deploy.sh" "$@"; }
+case "${1:-help}" in
+  start|stop|restart|enable|disable)
+      need_root "$@"; systemctl "$1" "$SERVICE"; systemctl --no-pager --lines=0 status "$SERVICE" || true ;;
+  status)
+      systemctl --no-pager status "$SERVICE" || true
+      echo; c "nginx:"; systemctl is-active nginx || true; c "postgresql:"; systemctl is-active postgresql || true
+      if [[ -n "$API_PORT" ]]; then echo; c "health (127.0.0.1:$API_PORT):"; curl -s "http://127.0.0.1:$API_PORT/api/health" || true; echo; fi ;;
+  logs|journal)  shift; journalctl -u "$SERVICE" -f -n "${1:-100}" --no-pager ;;
+  logs-tail)     shift; journalctl -u "$SERVICE" -n "${1:-200}" --no-pager ;;
+  errors)        journalctl -u "$SERVICE" -p err -n 200 --no-pager ;;
+  nginx-logs)    tail -n 100 -f /var/log/nginx/access.log /var/log/nginx/error.log ;;
+  nginx-test)    need_root "$@"; nginx -t && systemctl reload nginx ;;
+  update)        need_root "$@"; shift
+                 if [[ -d "$SRC_DIR/.git" ]]; then sudo -u "$(stat -c %U "$SRC_DIR")" git -C "$SRC_DIR" pull --ff-only; fi
+                 deploy --no-certbot "$@" ;;
+  deploy)        need_root "$@"; shift; deploy "$@" ;;
+  build|frontend) need_root "$@"; deploy --frontend-only --no-certbot ;;
+  backend)       need_root "$@"; deploy --backend-only --no-certbot ;;
+  migrate)       need_root "$@"; shift; cd "$BACKEND"; sudo -u "$RUN_USER" ./bin/migrate "${1:-status}" ;;
+  seed)          need_root "$@"; cd "$BACKEND"; sudo -u "$RUN_USER" ./bin/seed ;;
+  import)        need_root "$@"; shift; cd "$BACKEND"; sudo -u "$RUN_USER" ./bin/import "$@" ;;
+  psql)          sudo -u postgres psql "$DB_NAME" ;;
+  env)           need_root "$@"; "${EDITOR:-nano}" "$BACKEND/.env"; echo "then: btnops restart" ;;
+  port)          echo "${API_PORT:-unknown}" ;;
+  where|info)    echo "source  : $SRC_DIR"; echo "app dir : $APP_DIR"; echo "service : $SERVICE (user $RUN_USER)"
+                 echo "port    : ${API_PORT:-unknown}"; echo "db      : $DB_NAME (role $DB_USER)"
+                 echo "web     : https://$WEB_DOMAIN"; echo "api     : https://$API_DOMAIN" ;;
+  cert|certbot)  need_root "$@"; deploy --frontend-only ;;  # requests missing certificates, rewrites the nginx sites
+  renew)         need_root "$@"; certbot renew --quiet && systemctl reload nginx ;;
+  backup)        need_root "$@"
+                 [[ -r /etc/btn-ops/backup.env ]] || { echo "✖ /etc/btn-ops/backup.env missing — see the 'Backups & restore' section of README.md"; exit 1; }
+                 systemctl start btn-ops-backup && journalctl -u btn-ops-backup -n 30 --no-pager ;;
+  help|*) cat <<H
+btnops — BTN Operations service manager  (web https://$WEB_DOMAIN · api https://$API_DOMAIN)
+  btnops status              API service + nginx/postgresql state + /api/health
+  btnops start|stop|restart  control the API service ($SERVICE)
+  btnops logs [n]            follow the API journal          | btnops logs-tail [n] | btnops errors
+  btnops nginx-logs          follow nginx access/error logs  | btnops nginx-test (test + reload)
+  btnops update [opts]       git pull + redeploy (build Go + web, migrate, restart)
+  btnops deploy [opts]       run deploy/deploy.sh with options (see deploy.sh --help)
+  btnops backend | build     redeploy the Go API only | the web app only
+  btnops migrate [cmd]       goose: status (default) | up | down | version
+  btnops seed                re-run the idempotent seed      | btnops import [args] (legacy Excel import)
+  btnops env                 edit backend/.env (then btnops restart) | btnops psql (database shell)
+  btnops cert                request missing Let's Encrypt certificates | btnops renew
+  btnops backup              run the encrypted backup now (btn-ops-backup.service)
+  btnops where | port        deployed paths, port, database, domains
+Raw systemd:  systemctl status|restart $SERVICE   ·   journalctl -u $SERVICE -f
+H
+  ;;
+esac

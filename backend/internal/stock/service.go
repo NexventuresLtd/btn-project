@@ -126,13 +126,16 @@ func visiblePlants(ctx context.Context, q db.DBTX, plantID string) ([]plantRef, 
 }
 
 type positionProduct struct {
-	ID       string         `json:"id"`
-	Code     string         `json:"code"`
-	Name     string         `json:"name"`
-	Unit     string         `json:"unit"`
-	IsActive bool           `json:"isActive"`
-	ByPlant  map[string]int `json:"byPlant"`
-	Total    int            `json:"total"`
+	ReorderLevel int             `json:"reorderLevel"`
+	Levels       map[string]int  `json:"levels"` // effective reorder level per plant (override or default)
+	Low          map[string]bool `json:"low"`    // plant id → below reorder level
+	ID           string          `json:"id"`
+	Code         string          `json:"code"`
+	Name         string          `json:"name"`
+	Unit         string          `json:"unit"`
+	IsActive     bool            `json:"isActive"`
+	ByPlant      map[string]int  `json:"byPlant"`
+	Total        int             `json:"total"`
 }
 
 // Position is the stock matrix: every visible plant x product at a date.
@@ -165,15 +168,36 @@ func position(ctx context.Context, q db.DBTX, dateISO, plantID string) (*Positio
 	if err != nil {
 		return nil, err
 	}
+	overrides, err := LevelOverrides(ctx, q, ItemProduct)
+	if err != nil {
+		return nil, err
+	}
+	defaults := map[string]int{}
+	if items, err := LoadItems(ctx, q, ItemProduct, nil); err == nil {
+		for id, it := range items {
+			defaults[id] = int(it.ReorderLevel)
+		}
+	} else {
+		return nil, err
+	}
 	out := &Position{Date: dateISO, Plants: plants, Products: []positionProduct{}, PlantTotals: map[string]int{}}
 	for _, pl := range plants {
 		out.PlantTotals[pl.ID] = 0
 	}
 	for _, p := range products {
-		row := positionProduct{ID: p.ID, Code: p.Code, Name: p.Name, Unit: p.Unit, IsActive: p.IsActive, ByPlant: map[string]int{}}
+		row := positionProduct{ID: p.ID, Code: p.Code, Name: p.Name, Unit: p.Unit, IsActive: p.IsActive, ByPlant: map[string]int{},
+			ReorderLevel: defaults[p.ID], Levels: map[string]int{}, Low: map[string]bool{}}
 		hasStock := false
 		for _, pl := range plants {
 			n := bal[pl.ID+":"+p.ID]
+			lvl := defaults[p.ID]
+			if o, ok := overrides[pl.ID+":"+p.ID]; ok {
+				lvl = int(o)
+			}
+			row.Levels[pl.ID] = lvl
+			if _, tracked := bal[pl.ID+":"+p.ID]; (tracked || lvl > 0 && overridesHas(overrides, pl.ID, p.ID)) && IsLow(float64(n), float64(lvl)) {
+				row.Low[pl.ID] = true
+			}
 			row.ByPlant[pl.ID] = n
 			row.Total += n
 			if n != 0 {
@@ -303,6 +327,10 @@ func sourceFallback(lang i18n.Lang, sourceType string) string {
 		return i18n.T(lang, "stock.source.import")
 	case "SaleReturn":
 		return i18n.T(lang, "stock.source.sale_return")
+	case SourceManual:
+		return i18n.T(lang, "stock.source.manual")
+	case "purchase_order", "PurchaseOrder", "GoodsReceipt", "goods_receipt":
+		return i18n.T(lang, "stock.source.purchase")
 	}
 	return sourceType
 }

@@ -1,0 +1,16 @@
+{
+  "auth.token_expired": "Igihe cyawe cyo kwinjira kigomba kuvugururwa. Ongera ugerageze.",
+  "auth.device_revoked": "Iki gikoresho cyasohowe muri konti. Ongera winjire kugira ngo ukomeze.",
+  "auth.refresh_invalid": "Igihe cyawe cyo kwinjira cyarangiye. Ongera winjire.",
+  "auth.device_mismatch": "Iki cyifuzo cyaturutse ku gikoresho gitandukanye n'icyinjiriweho.",
+  "auth.device_required": "Iki gikorwa gisaba igikoresho cyanditswe. Sohoka hanyuma wongere winjire kuri iki gikoresho.",
+  "auth.device_already_revoked": "Iki gikoresho cyari cyarasohowe muri konti.",
+  "auth.reset_link_invalid": "Iyi link yo guhindura ijambobanga ntikiri yo, yarataye agaciro cyangwa yarakoreshejwe. Saba indi nshya.",
+  "auth.reset_done": "Ijambobanga ryawe ryahinduwe. Injira ukoresheje ijambobanga rishya.",
+  "auth.reset_generic_link": "Niba hari konti ifite iyo imeri, twohereje link na kode byo guhindura ijambobanga.",
+  "entity.device": "Igikoresho",
+  "mail.reset_link_intro": "Kanda kuri buto iri hasi kugira ngo uhitemo ijambobanga rishya.",
+  "mail.reset_link_button": "Hindura ijambobanga ryanjye",
+  "mail.reset_link_expiry": "Link irangira nyuma y'iminota {minutes} kandi ikoreshwa inshuro imwe gusa.",
+  "mail.reset_or_code": "Cyangwa andika iyi kode ku rupapuro rwo guhindura:"
+}

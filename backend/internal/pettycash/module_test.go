@@ -54,7 +54,7 @@ func (e *env) deposit(amount int64) string {
 }
 
 func expense(amount, charge int64) map[string]any {
-	return map[string]any{"date": "2026-01-06", "type": "EXPENSE", "category": "FUEL", "description": "Diesel for generator", "payeeName": "Total Rwanda", "momoNumber": "+250 788 123 456", "amount": amount, "momoCharge": charge}
+	return map[string]any{"date": "2026-01-06", "type": "EXPENSE", "category": "FUEL", "description": "Diesel for generator", "payeeName": "Total Rwanda", "momoNumber": "+250 788 123 456", "amount": amount, "momoCharge": charge, "invoiceRef": "RCPT-1"}
 }
 
 func TestPermissionsAndAuth(t *testing.T) {

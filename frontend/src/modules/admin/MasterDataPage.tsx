@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
 import { Building2, Factory, Package, Pencil, Plus, Boxes } from "lucide-react";
 import { useT, type T } from "@/i18n";
-import { Alert, Badge, Button, Card, Checkbox, DataTable, EmptyState, ErrorState, Field, Input, Modal, PageHeader, StatusBadge, Tabs, Textarea, type Column } from "@/components/ui";
+import { Alert, Badge, Button, Card, Checkbox, DataTable, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Select, StatusBadge, Tabs, Textarea, type Column } from "@/components/ui";
+import { useLookups, type RefItem } from "@/hooks/useLookups";
 import { useAuth } from "@/auth/AuthProvider";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { formatInt, formatQty, formatRWF } from "@/lib/format";
@@ -26,6 +27,8 @@ interface FieldDef {
   integer?: boolean;
   min?: number;
   upper?: boolean;
+  /** STK-02: choose from this reference-data kind (unit, product_category, material_category) */
+  refKind?: string;
 }
 
 interface EntityDef {
@@ -35,8 +38,6 @@ interface EntityDef {
   /** "Plant BTN-1" etc. for titles */
   title: (row: MasterRow) => string;
 }
-
-const UNITS = ["Pcs", "BAG", "TRUCK", "LITER", "KG", "TON", "M3"];
 
 const DEFS: Record<MasterEntity, EntityDef> = {
   plants: {
@@ -57,8 +58,10 @@ const DEFS: Record<MasterEntity, EntityDef> = {
       { key: "code", required: true, placeholder: "HB20", upper: true },
       { key: "name", required: true, placeholder: "Hollow Block 20" },
       { key: "dimensions", placeholder: "20 x 20 x 40 cm" },
-      { key: "unit", required: true, options: ["Pcs"], placeholder: "Pcs" },
+      { key: "unit", required: true, refKind: "unit" },
+      { key: "category", refKind: "product_category" },
       { key: "defaultPrice", type: "number", required: true, integer: true, min: 0, hint: true },
+      { key: "reorderLevel", type: "number", integer: true, min: 0, hint: true },
       { key: "sortOrder", type: "number", integer: true, hint: true },
     ],
   },
@@ -69,7 +72,8 @@ const DEFS: Record<MasterEntity, EntityDef> = {
     fields: [
       { key: "code", required: true, placeholder: "CEMENT", upper: true },
       { key: "name", required: true, placeholder: "Cement" },
-      { key: "unit", required: true, options: UNITS, placeholder: "BAG" },
+      { key: "unit", required: true, refKind: "unit" },
+      { key: "category", refKind: "material_category" },
       { key: "minLevel", type: "number", min: 0, hint: true },
       { key: "sortOrder", type: "number", integer: true, hint: true },
     ],
@@ -223,13 +227,34 @@ function MasterTable({ def, canEdit, onEdit, onCreate }: { def: EntityDef; canEd
 
 // ───────────────────────────── create / edit modal ─────────────────────────────
 
+function RefSelect({ id, kind, value, required, invalid, onChange }: { id: string; kind: string; value: string; required: boolean; invalid: boolean; onChange: (v: string) => void }) {
+  const { t } = useT();
+  const { data: lookups } = useLookups();
+  const opts = lookups?.refdata?.[kind] ?? [];
+  const cur = refValue(opts, value);
+  return (
+    <Select id={id} value={cur} onChange={(e) => onChange(e.target.value)} invalid={invalid}>
+      {!required || !value ? <option value="">{required ? t("admin.md.chooseRef") : t("admin.md.noneRef")}</option> : null}
+      {opts.map((o) => <option key={o.code} value={o.code}>{o.name}{kind === "unit" && typeof o.metadata?.symbol === "string" ? ` (${o.metadata.symbol})` : ""}</option>)}
+      {value && !opts.some((o) => o.code === cur) ? <option value={value}>{value}</option> : null}
+    </Select>
+  );
+}
+
+/** Maps a stored value (legacy "Pcs", a symbol like "kg") to its reference-data code. */
+function refValue(items: RefItem[], value: string): string {
+  const v = value.trim();
+  const hit = items.find((o) => o.code.toUpperCase() === v.toUpperCase() || (typeof o.metadata?.symbol === "string" && o.metadata.symbol.toLowerCase() === v.toLowerCase()));
+  return hit ? hit.code : v;
+}
+
 type Values = Record<string, string | boolean>;
 
 function initialValues(def: EntityDef, row: MasterRow | null): Values {
   const v: Values = { isActive: row ? row.isActive : true };
   for (const f of def.fields) {
     const raw = row ? (row as unknown as Record<string, unknown>)[f.key] : undefined;
-    v[f.key] = raw == null ? (f.key === "unit" && def.entity === "products" ? "Pcs" : f.key === "sortOrder" ? "0" : "") : String(raw);
+    v[f.key] = raw == null ? (f.key === "unit" && def.entity === "products" ? "PCS" : f.key === "sortOrder" || f.key === "reorderLevel" ? "0" : "") : String(raw);
   }
   return v;
 }
@@ -302,7 +327,9 @@ function MasterModal({ def, open, row, onClose }: { def: EntityDef; open: boolea
           const value = String(values[f.key] ?? "");
           return (
             <Field key={f.key} label={tx(`admin.md.field.${f.key}`)} required={f.required} error={err(f.key)} hint={f.hint ? tx(`admin.md.hint.${def.entity}.${f.key}`) : undefined} htmlFor={id} className={f.wide ? "sm:col-span-2" : undefined}>
-              {f.type === "textarea" ? (
+              {f.refKind ? (
+                <RefSelect id={id} kind={f.refKind} value={value} required={!!f.required} invalid={!!err(f.key)} onChange={(v) => set(f.key, v)} />
+              ) : f.type === "textarea" ? (
                 <Textarea id={id} value={value} onChange={(e) => set(f.key, e.target.value)} invalid={!!err(f.key)} rows={2} />
               ) : (
                 <>

@@ -1,6 +1,5 @@
 import { Link, useNavigate } from "react-router";
-import { CalendarDays } from "lucide-react";
-import { Card, CardHeader, DataTable, ErrorState, PageHeader, PdfButton, Select, StatCard, type Column } from "@/components/ui";
+import { Card, CardHeader, DataTable, ErrorState, PageHeader, ExportMenu, PdfButton, Select, StatCard, type Column, DateInput } from "@/components/ui";
 import { useAuth } from "@/auth/AuthProvider";
 import { useLookups } from "@/hooks/useLookups";
 import { formatDate, todayISO } from "@/lib/dates";
@@ -10,6 +9,7 @@ import { useT } from "@/i18n";
 import { AGE_BUCKETS, useReceivables, type Receivables } from "./api";
 import { Amount, TotalsRow } from "./components";
 import { useParam } from "./useParam";
+import { pinnedPlantId } from "@/lib/scope";
 
 type Row = Receivables["rows"][number];
 const BUCKET_TONE = ["text-slate-700", "text-amber-700", "text-orange-700", "text-red-700"];
@@ -22,7 +22,7 @@ export function ReceivablesPage() {
   const { params, set } = useParam();
   const today = todayISO();
   const asOf = params.get("asOf") ?? today;
-  const pinned = user?.plant && ["SUPERVISOR", "LEAD_OPERATOR", "OPERATOR"].includes(user.role) ? user.plant.id : null;
+  const pinned = pinnedPlantId(user);
   const plantId = pinned ?? params.get("plantId") ?? "";
   const r = useReceivables({ asOf, plantId: plantId || undefined });
   const d = r.data;
@@ -54,13 +54,12 @@ export function ReceivablesPage() {
         title={tt("sales.receivables.title")}
         description={tt("sales.receivables.desc")}
         breadcrumbs={[{ label: tt("sales.title"), to: "/sales" }, { label: tt("sales.receivables.title") }]}
-        actions={<PdfButton path="/sales/pdf/receivables" params={{ asOf, plantId: plantId || undefined }} label={tt("sales.receivables.pdf")} />}
+        actions={<div className="flex flex-wrap items-center gap-2"><PdfButton path="/sales/pdf/receivables" params={{ asOf, plantId: plantId || undefined }} label={tt("sales.receivables.pdf")} /><ExportMenu path="/sales/receivables" params={{ asOf, plantId: plantId || undefined }} /></div>}
       />
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1 rounded-xl border border-line bg-white px-2">
-          <CalendarDays className="ml-1 size-4 text-slate-400" />
           <span className="pl-1 text-xs font-medium text-slate-500">{tt("sales.receivables.asOf")}</span>
-          <input type="date" value={asOf} max={today} onChange={(e) => e.target.value && set("asOf", e.target.value === today ? null : e.target.value)} className="h-9 bg-transparent px-1 text-sm text-slate-700 outline-none" aria-label={tt("sales.receivables.asOfAria")} />
+          <DateInput variant="bare" value={asOf} max={today} onChange={(v) => v && set("asOf", v === today ? null : v)} aria-label={tt("sales.receivables.asOfAria")} />
         </div>
         <Select value={plantId} onChange={(e) => set("plantId", e.target.value)} disabled={!!pinned} className="h-10 w-40" aria-label={tt("common.plant")}>
           {!pinned ? <option value="">{tt("common.allPlants")}</option> : null}

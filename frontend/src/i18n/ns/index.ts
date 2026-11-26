@@ -15,7 +15,24 @@ import payroll from "./payroll";
 import attendance from "./attendance";
 import admin from "./admin";
 import guide from "./guide";
+import refdata from "./refdata";
+import transfers from "./transfers";
+import stockcount from "./stockcount";
+import procurement from "./procurement";
+import expenses from "./expenses";
+import budgets from "./budgets";
+import finance from "./finance";
+import workforce from "./workforce";
+import datepicker from "./datepicker";
+import offline from "./offline";
+import privacy from "./privacy";
+import notifications from "./notifications";
+import monitoring from "./monitoring";
+import session from "./session";
+import dataimport from "./dataimport";
+import exports from "./exports";
+import orders from "./orders";
 
 /** name → file; every key in a file must start with "<name>." (enforced by catalog.test.ts) */
-export const NAMESPACES = { common, enums, layout, auth, superadmin, security, dashboard, reports, production, stock, materials, sales, pettycash, payroll, attendance, admin, guide } as const;
+export const NAMESPACES = { common, enums, layout, auth, superadmin, security, dashboard, reports, production, stock, materials, sales, pettycash, payroll, attendance, admin, guide, refdata, transfers, stockcount, procurement, expenses, budgets, finance, workforce, offline, datepicker, notifications, monitoring, privacy, session, dataimport, exports, orders } as const;
 export type Namespaces = typeof NAMESPACES;

@@ -186,6 +186,7 @@ func localized(v *httpx.V, key string, max int, cur settings.Localized) settings
 	pick("en", &cur.EN)
 	pick("am", &cur.AM)
 	pick("rw", &cur.RW)
+	pick("fr", &cur.FR)
 	return cur
 }
 
@@ -222,7 +223,7 @@ func (h *handler) putBranding(c *fiber.Ctx) error {
 	cur.LoginSubtitle = localized(v, "loginSubtitle", 300, cur.LoginSubtitle)
 	cur.FooterText = localized(v, "footerText", 200, cur.FooterText)
 	if v.Has("defaultLanguage") {
-		cur.DefaultLanguage = v.Str("defaultLanguage").Trim().Lower().OneOf([]string{"en", "am", "rw"}, "v.language").Get()
+		cur.DefaultLanguage = v.Str("defaultLanguage").Trim().Lower().OneOf(i18n.Codes(), "v.language").Get()
 	}
 	if err := v.Err(); err != nil {
 		return err
@@ -417,7 +418,7 @@ func (h *handler) adminPutI18n(c *fiber.Ctx) error {
 	type item struct{ lang, key, value string }
 	var list []item
 	parseOne := func(x *httpx.V) {
-		l := x.Str("lang").Trim().Lower().OneOf([]string{"en", "am", "rw"}, "i18n.bad_lang").Get()
+		l := x.Str("lang").Trim().Lower().OneOf(i18n.Codes(), "i18n.bad_lang").Get()
 		k := x.Str("key").Trim().Regex(reKey, "i18n.bad_key").Get()
 		val := x.Str("value").Max(2000).Get()
 		list = append(list, item{l, k, val})

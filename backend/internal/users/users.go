@@ -148,7 +148,7 @@ func (h *handler) create(c *fiber.Ctx) error {
 	role := auth.Role(v.Str("role").OneOf(roleStrings()).Get())
 	plantID := v.NullStr("plantId").Ptr()
 	isActive := v.OptBool("isActive").Default(true).Get()
-	lang := v.OptStr("language").Default("en").OneOf([]string{"en", "am", "rw"}, "v.language").Get()
+	lang := v.OptStr("language").Default("en").OneOf(i18n.Codes(), "v.language").Get()
 	if err := v.Err(); err != nil {
 		return err
 	}

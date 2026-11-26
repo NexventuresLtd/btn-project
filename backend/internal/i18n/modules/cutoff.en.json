@@ -1,0 +1,10 @@
+{
+ "cutoff.label": "Data cut-off",
+ "cutoff.note": "Data cut-off: {at} (Kigali time). Figures include every record received by the server up to this time.",
+ "cutoff.note_none": "No device reports unsynchronised data.",
+ "cutoff.note_pending": "Offline devices still hold {records} unsynchronised record(s) on {devices} device(s): {list}. Figures for these sites may be incomplete until they sync.",
+ "cutoff.sites_one": "{count} site ({codes})",
+ "cutoff.sites_other": "{count} sites ({codes})",
+ "cutoff.unassigned": "{count} device(s) of users without a site",
+ "cutoff.unsynced_label": "Unsynchronised data"
+}

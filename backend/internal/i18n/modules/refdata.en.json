@@ -1,0 +1,9 @@
+{
+  "approvals.max_gt_min": "The upper limit must be greater than the lower limit",
+  "approvals.unknown_permission": "Unknown permission",
+  "approvals.unknown_role": "Unknown role",
+  "masterdata.location_kind": "Choose site, head office or warehouse",
+  "refdata.code_format": "Use 1–40 capital letters, digits, _ or - (for example BROKEN_MACHINE)",
+  "refdata.code_immutable": "The code cannot be changed; create a new item and deactivate this one",
+  "refdata.metadata_object": "Metadata must be a JSON object (at most 4 000 characters)"
+}

@@ -1,0 +1,10 @@
+{
+ "cutoff.label": "Igihe amakuru agarukira",
+ "cutoff.note": "Amakuru agarukira: {at} (isaha ya Kigali). Imibare irimo inyandiko zose seriveri yakiriye kugeza icyo gihe.",
+ "cutoff.note_none": "Nta gikoresho kivuga ko gifite amakuru atarahuzwa.",
+ "cutoff.note_pending": "Ibikoresho bidafite interineti biracyafite inyandiko {records} zitarahuzwa ku bikoresho {devices}: {list}. Imibare y'izo site ishobora kutuzura kugeza zihujwe.",
+ "cutoff.sites_one": "Site {count} ({codes})",
+ "cutoff.sites_other": "Site {count} ({codes})",
+ "cutoff.unassigned": "Ibikoresho {count} by'abakoresha badafite site",
+ "cutoff.unsynced_label": "Amakuru atarahuzwa"
+}

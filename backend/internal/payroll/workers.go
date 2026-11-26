@@ -16,6 +16,7 @@ import (
 	"btn-ops/internal/dates"
 	"btn-ops/internal/db"
 	"btn-ops/internal/httpx"
+	"btn-ops/internal/workforce"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
@@ -40,19 +41,27 @@ type workerOut struct {
 	Plant            plantRef `json:"plant"`
 	FullName         string   `json:"fullName"`
 	MomoNameMismatch bool     `json:"momoNameMismatch"`
+	Phone            *string  `json:"phone"`
+	RateBasis        string   `json:"rateBasis"`
+	EmploymentStatus string   `json:"employmentStatus"`
+	LeftDate         *string  `json:"leftDate"`
 }
 
 const workerCols = `w.id, w."firstName", w."lastName", w."nationalId", w."momoNumber", w."momoName", w."jobTitle", w."plantId",
-	w."dailyWage", w."isActive", w."startDate", w."createdAt", w."updatedAt", p.id, p.code, p.name`
+	w."dailyWage", w."isActive", w."startDate", w."createdAt", w."updatedAt", p.id, p.code, p.name, w."phone", w."rateBasis", w."employmentStatus", w."leftDate"`
 const workerFrom = `FROM "Worker" w JOIN "Plant" p ON p.id = w."plantId"`
 
 func scanWorker(row pgx.Row) (workerOut, error) {
 	var w workerOut
-	var sd *time.Time
+	var sd, ld *time.Time
 	var ca, ua time.Time
 	if err := row.Scan(&w.ID, &w.FirstName, &w.LastName, &w.NationalID, &w.MomoNumber, &w.MomoName, &w.JobTitle, &w.PlantID,
-		&w.DailyWage, &w.IsActive, &sd, &ca, &ua, &w.Plant.ID, &w.Plant.Code, &w.Plant.Name); err != nil {
+		&w.DailyWage, &w.IsActive, &sd, &ca, &ua, &w.Plant.ID, &w.Plant.Code, &w.Plant.Name, &w.Phone, &w.RateBasis, &w.EmploymentStatus, &ld); err != nil {
 		return w, err
+	}
+	if ld != nil {
+		s := dates.ToISO(*ld)
+		w.LeftDate = &s
 	}
 	if sd != nil {
 		s := dates.ToISO(*sd)
@@ -77,6 +86,8 @@ func (h *handler) listWorkers(c *fiber.Ctx) error {
 	u := auth.MustUser(c)
 	qv := httpx.Query(c)
 	active := qv.OptStr("active").OneOf([]string{"true", "false", "all"}, "payroll.v.active").Get()
+	empStatus := qv.OptStr("status").Trim().Upper().OneOf(append([]string{""}, workforce.EmploymentStatuses...), "payroll.v.status").Get()
+	basis := qv.OptStr("rateBasis").Trim().Upper().OneOf(append([]string{""}, workforce.RateBases...), "payroll.v.rate_basis").Get()
 	search := qv.OptStr("q").Trim().Max(80, "payroll.v.max_80").Get()
 	plantQ := qv.OptStr("plantId").Get()
 	if err := qv.Err(); err != nil {
@@ -84,7 +95,7 @@ func (h *handler) listWorkers(c *fiber.Ctx) error {
 	}
 	pg := httpx.Paginate(c, 50)
 	plantID := auth.PlantFilter(u, plantQ)
-	key := fmt.Sprintf("payroll:workers:%s:%s:%s:%s:%s:%d:%d", lang(c), scopeKey(u), plantID, active, search, pg.Page, pg.PageSize)
+	key := fmt.Sprintf("payroll:workers:%s:%s:%s:%s:%s:%s:%s:%d:%d", lang(c), scopeKey(u), plantID, active, empStatus, basis, search, pg.Page, pg.PageSize)
 	body, err := jsonCache.GetOrLoad(ctx, key, func(ctx context.Context) ([]byte, error) {
 		where := []string{"TRUE"}
 		var args []any
@@ -94,6 +105,12 @@ func (h *handler) listWorkers(c *fiber.Ctx) error {
 		}
 		if plantID != "" {
 			add(`w."plantId" = ?`, plantID)
+		}
+		if empStatus != "" {
+			add(`w."employmentStatus" = ?`, empStatus)
+		}
+		if basis != "" {
+			add(`w."rateBasis" = ?`, basis)
 		}
 		switch active {
 		case "false":
@@ -179,6 +196,9 @@ func (h *handler) listWorkers(c *fiber.Ctx) error {
 type workerInput struct {
 	FirstName, LastName, NationalID, MomoNumber, JobTitle, PlantID string
 	MomoName                                                       *string
+	Phone                                                          *string
+	RateBasis, Status                                              string
+	LeftDate                                                       *time.Time
 	DailyWage                                                      int
 	StartDate                                                      *time.Time
 	IsActive                                                       bool
@@ -298,6 +318,30 @@ func parseWorker(v *httpx.V, partial bool) workerInput {
 			}
 		}
 	}
+	if want("rateBasis") {
+		in.RateBasis = v.OptStr("rateBasis").Trim().Upper().Default(workforce.BasisDaily).OneOf(workforce.RateBases, "payroll.v.rate_basis").Get()
+	}
+	if want("employmentStatus") {
+		in.Status = v.OptStr("employmentStatus").Trim().Upper().Default(workforce.StatusActive).OneOf(workforce.EmploymentStatuses, "payroll.v.status").Get()
+	}
+	if want("leftDate") {
+		s := v.NullStr("leftDate").Trim().Date("payroll.v.date")
+		if s.Present() && s.Get() != "" {
+			if d, err := dates.ParseISO(s.Get()); err == nil {
+				in.LeftDate = &d
+			}
+		}
+	}
+	if want("phone") {
+		s := v.NullStr("phone").Trim().Max(20, "payroll.v.phone_format")
+		if s.Present() && s.Get() != "" {
+			if n, ok := NormaliseMomoNumber(s.Get()); ok {
+				in.Phone = &n
+			} else {
+				v.Fail("phone", "payroll.v.phone_format")
+			}
+		}
+	}
 	if want("dailyWage") {
 		f, ok := coerceNumber(v.Raw("dailyWage"))
 		switch {
@@ -305,6 +349,8 @@ func parseWorker(v *httpx.V, partial bool) workerInput {
 			v.Fail("dailyWage", "payroll.v.wage_required")
 		case f != math.Trunc(f):
 			v.Fail("dailyWage", "v.whole_francs")
+		case f == 0 && in.RateBasis == workforce.BasisPiece:
+			in.DailyWage = 0
 		case f <= 0:
 			v.Fail("dailyWage", "payroll.v.wage_positive")
 		case f > 1_000_000:
@@ -393,6 +439,13 @@ func (h *handler) createWorker(c *fiber.Ctx) error {
 	if err := v.Err(); err != nil {
 		return err
 	}
+	if in.Status == workforce.StatusLeft && in.LeftDate == nil {
+		d := dates.MustParseISO(dates.TodayISO())
+		in.LeftDate = &d
+	}
+	if in.Status != workforce.StatusActive {
+		in.IsActive = false
+	}
 	if err := auth.AssertPlantAccess(u, in.PlantID); err != nil {
 		return err
 	}
@@ -405,9 +458,14 @@ func (h *handler) createWorker(c *fiber.Ctx) error {
 	}
 	out, err := db.TxVal(ctx, h.d.Pool, func(tx pgx.Tx) (workerOut, error) {
 		var id string
-		if err := tx.QueryRow(ctx, `INSERT INTO "Worker" ("firstName","lastName","nationalId","momoNumber","momoName","jobTitle","plantId","dailyWage","isActive","startDate","updatedAt")
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-			in.FirstName, in.LastName, in.NationalID, in.MomoNumber, in.MomoName, in.JobTitle, in.PlantID, in.DailyWage, in.IsActive, in.StartDate, db.Now()).Scan(&id); err != nil {
+		if !in.IsActive && in.Status == workforce.StatusActive {
+			in.Status = workforce.StatusInactive
+		}
+		if err := tx.QueryRow(ctx, `INSERT INTO "Worker" ("firstName","lastName","nationalId","momoNumber","momoName","jobTitle","plantId","dailyWage","isActive","startDate","updatedAt",
+				"phone","rateBasis","employmentStatus","leftDate")
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+			in.FirstName, in.LastName, in.NationalID, in.MomoNumber, in.MomoName, in.JobTitle, in.PlantID, in.DailyWage, in.IsActive, in.StartDate, db.Now(),
+			in.Phone, in.RateBasis, in.Status, in.LeftDate).Scan(&id); err != nil {
 			return workerOut{}, err
 		}
 		w, err := getWorker(ctx, tx, id)
@@ -435,6 +493,13 @@ func (h *handler) updateWorker(c *fiber.Ctx) error {
 	in := parseWorker(v, true)
 	if err := v.Err(); err != nil {
 		return err
+	}
+	if in.has["employmentStatus"] {
+		delete(in.has, "isActive") // the status decides; the trigger keeps isActive in step
+		if in.Status == workforce.StatusLeft && !in.has["leftDate"] {
+			d := dates.MustParseISO(dates.TodayISO())
+			in.LeftDate, in.has["leftDate"] = &d, true
+		}
 	}
 	before, err := getWorker(ctx, h.d.Pool, id)
 	if db.IsNoRows(err) {
@@ -469,7 +534,8 @@ func (h *handler) updateWorker(c *fiber.Ctx) error {
 		key string
 		val any
 	}{{"firstName", in.FirstName}, {"lastName", in.LastName}, {"nationalId", in.NationalID}, {"momoNumber", in.MomoNumber}, {"momoName", in.MomoName},
-		{"jobTitle", in.JobTitle}, {"plantId", in.PlantID}, {"dailyWage", in.DailyWage}, {"startDate", in.StartDate}, {"isActive", in.IsActive}} {
+		{"jobTitle", in.JobTitle}, {"plantId", in.PlantID}, {"dailyWage", in.DailyWage}, {"startDate", in.StartDate}, {"isActive", in.IsActive},
+		{"phone", in.Phone}, {"rateBasis", in.RateBasis}, {"employmentStatus", in.Status}, {"leftDate", in.LeftDate}} {
 		if in.has[f.key] {
 			set(f.key, f.val)
 		}

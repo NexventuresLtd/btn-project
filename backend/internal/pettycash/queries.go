@@ -18,6 +18,7 @@ import (
 const effSQL = `(CASE WHEN e.type = 'DEPOSIT' THEN e.amount ELSE -(e.amount + e."momoCharge") END)`
 
 const entryFrom = ` FROM "PettyCashEntry" e
+	LEFT JOIN petty_cash_float f ON f.id = e."floatId"
 	LEFT JOIN "Plant" p ON p.id = e."plantId"
 	LEFT JOIN "User" cu ON cu.id = e."createdById"
 	LEFT JOIN "User" ru ON ru.id = e."reviewedById"`
@@ -25,14 +26,13 @@ const entryFrom = ` FROM "PettyCashEntry" e
 const entryCols = `e.id, e.number, e.date, e.type::text, e.category::text, e.description, e."plantId", p.id, p.code, p.name,
 	e."payeeName", e."momoNumber", e.amount, e."momoCharge", e."invoiceRef", e.status::text, e."sourceType", e."sourceId",
 	e."createdById", cu.name, cu.role::text, e."reviewedById", ru.name, ru.role::text, e."reviewedAt", e."reviewComment",
-	e."createdAt", e."updatedAt"`
+	e."createdAt", e."updatedAt", e."floatId", f.code, f.name, f.custodian_id, e."expenseCategory", e.department, e."deviceId", e.server_version`
 
-// balCTE computes the running cash-box balance of every APPROVED entry in [$1,$2] with one window function:
-// opening (all approved before $1, all plants) + cumulative effect in ledger order (date, createdAt, id).
+// balCTE computes the running balance of every APPROVED entry up to $2, per float (one window function): the
+// balance after an entry is the cumulative effect of its float's approved entries in ledger order (date, createdAt, id).
 const balCTE = `bal AS (
-	SELECT e.id, (SELECT COALESCE(SUM(` + effSQL + `), 0) FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND e.date < $1)
-		+ SUM(` + effSQL + `) OVER (ORDER BY e.date, e."createdAt", e.id ROWS UNBOUNDED PRECEDING) AS b
-	FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND e.date >= $1 AND e.date <= $2)`
+	SELECT e.id, SUM(` + effSQL + `) OVER (PARTITION BY e."floatId" ORDER BY e.date, e."createdAt", e.id ROWS UNBOUNDED PRECEDING) AS b
+	FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND e.date <= $2)`
 
 type entryRow struct {
 	ID, Number           string
@@ -53,6 +53,13 @@ type entryRow struct {
 	ReviewedAt           *time.Time
 	ReviewComment        *string
 	CreatedAt, UpdatedAt time.Time
+	FloatID              string
+	FCode, FName         *string
+	FCustodian           *string
+	ExpenseCategory      *string
+	Department           *string
+	DeviceID             *string
+	ServerVersion        int64
 	Bal                  *int64
 }
 
@@ -60,7 +67,7 @@ func (r *entryRow) dests(withBal bool) []any {
 	d := []any{&r.ID, &r.Number, &r.Date, &r.Type, &r.Category, &r.Description, &r.PlantID, &r.PID, &r.PCode, &r.PName,
 		&r.PayeeName, &r.MomoNo, &r.Amount, &r.MomoCharge, &r.InvoiceRef, &r.Status, &r.SourceType, &r.SourceID,
 		&r.CreatedByID, &r.CUName, &r.CURole, &r.ReviewedByID, &r.RUName, &r.RURole, &r.ReviewedAt, &r.ReviewComment,
-		&r.CreatedAt, &r.UpdatedAt}
+		&r.CreatedAt, &r.UpdatedAt, &r.FloatID, &r.FCode, &r.FName, &r.FCustodian, &r.ExpenseCategory, &r.Department, &r.DeviceID, &r.ServerVersion}
 	if withBal {
 		d = append(d, &r.Bal)
 	}
@@ -97,6 +104,8 @@ func getRow(ctx context.Context, q db.DBTX, id string) (*entryRow, error) {
 type filter struct {
 	from, to time.Time
 	plantID  string
+	floatID  string
+	floats   []string // restriction to these floats (custodians); nil = every float
 	typ      string
 	category string
 	q        string
@@ -114,11 +123,17 @@ func (f filter) where() (string, []any) {
 	if f.plantID != "" {
 		add(`e."plantId" = ?`, f.plantID)
 	}
+	if f.floatID != "" {
+		add(`e."floatId" = ?`, f.floatID)
+	}
+	if f.floats != nil {
+		add(`e."floatId" = ANY(?::text[])`, f.floats)
+	}
 	if f.typ != "" {
 		add(`e.type = ?::"PettyCashType"`, f.typ)
 	}
 	if f.category != "" {
-		add(`e.category = ?::"PettyCashCategory"`, f.category)
+		add(`COALESCE(e."expenseCategory", e.category::text) = ?`, f.category)
 	}
 	if q := strings.TrimSpace(f.q); q != "" {
 		args = append(args, likePattern(q))
@@ -185,27 +200,29 @@ func statusCounts(ctx context.Context, q db.DBTX, f filter) (map[string]int, err
 	return out, rows.Err()
 }
 
-// ledgerTotals: opening balance before `from` and closing balance at `to`, all plants, approved only.
-func ledgerTotals(ctx context.Context, q db.DBTX, from, to time.Time) (opening, closing int64, err error) {
+// ledgerTotals: opening balance before `from` and closing balance at `to` (approved only) of one float, of a set of
+// floats, or of every float (floatID "" and floats nil).
+func ledgerTotals(ctx context.Context, q db.DBTX, from, to time.Time, floatID string, floats []string) (opening, closing int64, err error) {
 	err = q.QueryRow(ctx, `SELECT COALESCE(SUM(`+effSQL+`) FILTER (WHERE e.date < $1), 0)::bigint, COALESCE(SUM(`+effSQL+`), 0)::bigint
-		FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND e.date <= $2`, from, to).Scan(&opening, &closing)
+		FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND e.date <= $2 AND ($3 = '' OR e."floatId" = $3)
+			AND ($4::text[] IS NULL OR e."floatId" = ANY($4::text[]))`, from, to, floatID, floats).Scan(&opening, &closing)
 	return
 }
 
-// currentBalance is the all-time approved cash balance.
-func currentBalance(ctx context.Context, q db.DBTX) (int64, error) {
+// currentBalance is the all-time approved cash balance of a float ("" = every float).
+func currentBalance(ctx context.Context, q db.DBTX, floatID string) (int64, error) {
 	var b int64
-	err := q.QueryRow(ctx, `SELECT COALESCE(SUM(`+effSQL+`), 0)::bigint FROM "PettyCashEntry" e WHERE e.status = 'APPROVED'`).Scan(&b)
+	err := q.QueryRow(ctx, `SELECT COALESCE(SUM(`+effSQL+`), 0)::bigint FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND ($1 = '' OR e."floatId" = $1)`, floatID).Scan(&b)
 	return b, err
 }
 
-// balanceAfter is the running balance after one approved entry (within its day).
+// balanceAfter is the running balance of the entry's float right after one approved entry.
 func balanceAfter(ctx context.Context, q db.DBTX, id string, date time.Time) (*int64, error) {
 	var b *int64
 	err := q.QueryRow(ctx, `SELECT x.b FROM (
-		SELECT e.id, (SELECT COALESCE(SUM(`+effSQL+`), 0) FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND e.date < $1)
-			+ SUM(`+effSQL+`) OVER (ORDER BY e.date, e."createdAt", e.id ROWS UNBOUNDED PRECEDING) AS b
-		FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND e.date = $1) x WHERE x.id = $2`, date, id).Scan(&b)
+		SELECT e.id, SUM(`+effSQL+`) OVER (ORDER BY e.date, e."createdAt", e.id ROWS UNBOUNDED PRECEDING) AS b
+		FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND e.date <= $1
+			AND e."floatId" = (SELECT "floatId" FROM "PettyCashEntry" WHERE id = $2)) x WHERE x.id = $2`, date, id).Scan(&b)
 	if db.IsNoRows(err) {
 		return nil, nil
 	}
@@ -214,8 +231,8 @@ func balanceAfter(ctx context.Context, q db.DBTX, id string, date time.Time) (*i
 
 // lockLedger serialises every petty-cash mutation that depends on the balance, so two concurrent expenses
 // cannot both pass the balance check. The advisory lock is released at commit/rollback.
-func lockLedger(ctx context.Context, tx pgx.Tx) error {
-	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('btn.pettycash.ledger'))`)
+func lockLedger(ctx context.Context, tx pgx.Tx, floatID string) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('btn.pettycash.ledger:' || $1))`, floatID)
 	return err
 }
 
@@ -268,7 +285,7 @@ type summaryOut struct {
 }
 
 // computeSummary runs four set-based aggregates (no per-row work in Go).
-func computeSummary(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to time.Time, plantID string) (*summaryOut, error) {
+func computeSummary(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to time.Time, plantID, floatID string, floats []string) (*summaryOut, error) {
 	out := &summaryOut{From: dates.ToISO(from), To: dates.ToISO(to), ByCategory: []catRow{}, ByPlant: []plantRow{}}
 	if plantID != "" {
 		out.PlantID = &plantID
@@ -276,15 +293,16 @@ func computeSummary(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to tim
 	// 1) balances: opening, range effect, current
 	if err := q.QueryRow(ctx, `SELECT COALESCE(SUM(`+effSQL+`) FILTER (WHERE e.date < $1), 0)::bigint,
 			COALESCE(SUM(`+effSQL+`) FILTER (WHERE e.date <= $2), 0)::bigint, COALESCE(SUM(`+effSQL+`), 0)::bigint
-		FROM "PettyCashEntry" e WHERE e.status = 'APPROVED'`, from, to).Scan(&out.Opening, &out.Closing, &out.CurrentBal); err != nil {
+		FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND ($3 = '' OR e."floatId" = $3) AND ($4::text[] IS NULL OR e."floatId" = ANY($4::text[]))`,
+		from, to, floatID, floats).Scan(&out.Opening, &out.Closing, &out.CurrentBal); err != nil {
 		return nil, err
 	}
 	// 2) by (status,type) for the (optionally plant-filtered) set: approved + rejected in range, submitted any date
 	rows, err := q.Query(ctx, `SELECT e.status::text, e.type::text, count(*)::int, COALESCE(SUM(e.amount),0)::bigint, COALESCE(SUM(e."momoCharge"),0)::bigint
 		FROM "PettyCashEntry" e
-		WHERE ($3 = '' OR e."plantId" = $3)
+		WHERE ($3 = '' OR e."plantId" = $3) AND ($4 = '' OR e."floatId" = $4) AND ($5::text[] IS NULL OR e."floatId" = ANY($5::text[]))
 		  AND ((e.status IN ('APPROVED','REJECTED') AND e.date >= $1 AND e.date <= $2) OR e.status = 'SUBMITTED')
-		GROUP BY e.status, e.type`, from, to, plantID)
+		GROUP BY e.status, e.type`, from, to, plantID, floatID, floats)
 	if err != nil {
 		return nil, err
 	}
@@ -316,9 +334,10 @@ func computeSummary(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to tim
 	out.ExpensesTotal = out.Expenses + out.Charges
 	out.Pending.Count = out.Pending.DepositCount + out.Pending.ExpenseCount
 	// 3) approved expenses by category
-	crows, err := q.Query(ctx, `SELECT e.category::text, count(*)::int, COALESCE(SUM(e.amount),0)::bigint, COALESCE(SUM(e."momoCharge"),0)::bigint
+	crows, err := q.Query(ctx, `SELECT COALESCE(e."expenseCategory", e.category::text) AS cat, count(*)::int, COALESCE(SUM(e.amount),0)::bigint, COALESCE(SUM(e."momoCharge"),0)::bigint
 		FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND e.type = 'EXPENSE' AND e.date >= $1 AND e.date <= $2 AND ($3 = '' OR e."plantId" = $3)
-		GROUP BY e.category ORDER BY SUM(e.amount + e."momoCharge") DESC, e.category`, from, to, plantID)
+			AND ($4 = '' OR e."floatId" = $4) AND ($5::text[] IS NULL OR e."floatId" = ANY($5::text[]))
+		GROUP BY cat ORDER BY SUM(e.amount + e."momoCharge") DESC, cat`, from, to, plantID, floatID, floats)
 	if err != nil {
 		return nil, err
 	}
@@ -339,7 +358,8 @@ func computeSummary(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to tim
 	prows, err := q.Query(ctx, `SELECT e."plantId", pl.code, pl.name, count(*)::int, COALESCE(SUM(e.amount),0)::bigint, COALESCE(SUM(e."momoCharge"),0)::bigint
 		FROM "PettyCashEntry" e LEFT JOIN "Plant" pl ON pl.id = e."plantId"
 		WHERE e.status = 'APPROVED' AND e.type = 'EXPENSE' AND e.date >= $1 AND e.date <= $2
-		GROUP BY e."plantId", pl.code, pl.name ORDER BY (e."plantId" IS NULL), pl.code`, from, to)
+			AND ($3 = '' OR e."floatId" = $3) AND ($4::text[] IS NULL OR e."floatId" = ANY($4::text[]))
+		GROUP BY e."plantId", pl.code, pl.name ORDER BY (e."plantId" IS NULL), pl.code`, from, to, floatID, floats)
 	if err != nil {
 		return nil, err
 	}
@@ -370,13 +390,22 @@ func computeSummary(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to tim
 
 // ── scope ────────────────────────────────────────────────────────────────────
 
-// canSee reports whether a (possibly plant-scoped) user may see an entry attributed to plantID.
-func canSee(u *auth.User, plantID *string) bool {
+// canSee reports whether u may see an entry: finance roles see every float (site-scoped users only their site),
+// custodians see the entries of the floats they hold.
+func canSee(u *auth.User, sc scope, r *entryRow) bool {
+	if !sc.all {
+		for _, f := range sc.floats {
+			if f == r.FloatID {
+				return true
+			}
+		}
+		return false
+	}
 	s := auth.ScopedPlantID(u)
 	if s == "" {
 		return true
 	}
-	return plantID != nil && *plantID == s
+	return r.PlantID != nil && *r.PlantID == s
 }
 
 func isNoRows(err error) bool { return db.IsNoRows(err) }

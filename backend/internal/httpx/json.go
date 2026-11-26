@@ -92,11 +92,17 @@ func NewPage[T any](items []T, total, page, pageSize int) Page[T] {
 	return Page[T]{Items: items, Total: total, Page: page, PageSize: pageSize}
 }
 
+// UnpagedLocal is set by internal/export while it runs a list endpoint for an export (value = row cap).
+const UnpagedLocal = "httpx.unpaged"
+
 // Pager is the parsed ?page=&pageSize=.
 type Pager struct{ Page, PageSize, Offset, Limit int }
 
 // Paginate mirrors Node pagination(): page>=1, pageSize 1..200 (default defaultSize).
 func Paginate(c *fiber.Ctx, defaultSize int) Pager {
+	if n, ok := c.Locals(UnpagedLocal).(int); ok && n > 0 { // export in progress: one page with every row (internal/export)
+		return Pager{Page: 1, PageSize: n, Offset: 0, Limit: n}
+	}
 	if defaultSize <= 0 {
 		defaultSize = 25
 	}

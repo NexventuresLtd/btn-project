@@ -10,7 +10,12 @@ import { useBranding } from "@/branding";
 import { useT } from "@/i18n";
 import { PageLoader } from "@/components/ui";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import { ConnectionIndicator } from "@/offline/ui/ConnectionIndicator";
+import { SyncNavBadge } from "@/offline/ui/SyncNavBadge";
 import { GuideProvider, useGuide, USER_MENU_EVENT } from "@/components/guide";
+import { NotificationBell } from "@/modules/notifications/NotificationBell";
+import { BellRing } from "lucide-react";
+import { MonitorSmartphone } from "lucide-react"; // F3: my devices
 import { LayoutContext } from "./LayoutContext";
 
 function initials(name: string) {
@@ -39,7 +44,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                     <NavLink
                       to={to}
                       data-tour-nav={to}
-                      end={to === "/" || to === "/sales" || to === "/payroll"}
+                      end={to === "/" || to === "/sales" || to === "/payroll" || to === "/finance"}
                       onClick={onNavigate}
                       onMouseEnter={() => prefetchRoute(to)}
                       onFocus={() => prefetchRoute(to)}
@@ -55,6 +60,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                           {isActive ? <span className="absolute top-2 bottom-2 left-0 w-[3px] rounded-r-full bg-accent" /> : null}
                           <Icon className={cn("size-[18px] shrink-0", isActive ? "text-accent" : "text-navy-300 group-hover:text-navy-100")} />
                           <span className="min-w-0">{t(labelKey)}</span>
+                          {to === "/sync-issues" ? <SyncNavBadge /> : null}
                         </>
                       )}
                     </NavLink>
@@ -113,10 +119,12 @@ function UserMenu() {
             <p className="truncate text-xs text-slate-500">{user.email}</p>
           </div>
           <button role="menuitem" data-tour="menu-security" onClick={() => go("/account/security")} className={item}><ShieldCheck className="size-4 shrink-0 text-slate-400" /> {t("layout.menu.security")}</button>
+          <button role="menuitem" onClick={() => go("/account/devices")} className={item}><MonitorSmartphone className="size-4 shrink-0 text-slate-400" /> {t("session.menu.devices")}</button>
+          <button role="menuitem" onClick={() => go("/notifications/preferences")} className={item}><BellRing className="size-4 shrink-0 text-slate-400" /> {t("notifications.settings")}</button>
           <button role="menuitem" onClick={() => go("/account/password")} className={item}><KeyRound className="size-4 shrink-0 text-slate-400" /> {t("layout.menu.changePassword")}</button>
           <button role="menuitem" onClick={() => { setOpen(false); startTour(); }} className={item}><Compass className="size-4 shrink-0 text-slate-400" /> {t("layout.menu.takeTour")}</button>
           <button role="menuitem" onClick={() => go("/help")} className={item}><LifeBuoy className="size-4 shrink-0 text-slate-400" /> {t("layout.menu.help")}</button>
-          <button role="menuitem" onClick={() => void logout().then(() => navigate("/login"))} className="flex w-full items-center gap-2.5 border-t border-line px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"><LogOut className="size-4 shrink-0" /> {t("layout.menu.signOut")}</button>
+          <button role="menuitem" onClick={() => void logout().then((ok) => ok && navigate("/login"))} className="flex w-full items-center gap-2.5 border-t border-line px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"><LogOut className="size-4 shrink-0" /> {t("layout.menu.signOut")}</button>
         </div>
       ) : null}
     </div>
@@ -163,6 +171,8 @@ export function AppLayout() {
               <button onClick={() => setMobileOpen(true)} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden" aria-label={t("common.openMenu")}><Menu className="size-5" /></button>
               <div className="hidden lg:block" />
               <div className="flex items-center gap-1 sm:gap-2">
+                <ConnectionIndicator />
+                <NotificationBell />
                 <LanguageSwitcher />
                 <GuideButton />
                 <UserMenu />

@@ -3,13 +3,13 @@ import type { Lang } from "@/i18n";
 /**
  * Small inline SVG flags for the language switcher. Inline (not emoji) because
  * flag emoji do not render on Linux/Chrome. 20×14 rounded, decorative.
- *  en → United Kingdom · am → Ethiopia · rw → Rwanda
+ *  en → United Kingdom · am → Ethiopia · rw → Rwanda · fr → France
  */
 export function Flag({ lang, className = "size-5" }: { lang: Lang; className?: string }) {
   return (
     <span className={`inline-block overflow-hidden rounded-[3px] shadow-[0_0_0_1px_rgb(0_0_0/0.08)] ${className}`} aria-hidden="true">
       <svg viewBox="0 0 20 14" className="block h-full w-full" preserveAspectRatio="xMidYMid slice">
-        {lang === "en" ? <UK /> : lang === "am" ? <Ethiopia /> : <Rwanda />}
+        {lang === "en" ? <UK /> : lang === "am" ? <Ethiopia /> : lang === "fr" ? <France /> : <Rwanda />}
       </svg>
     </span>
   );
@@ -57,6 +57,16 @@ function Rwanda() {
           <rect key={i} x="-0.12" y="-2.9" width="0.24" height="1.1" fill="#E5BE01" transform={`rotate(${i * 15})`} />
         ))}
       </g>
+    </>
+  );
+}
+
+function France() {
+  return (
+    <>
+      <rect width="20" height="14" fill="#FFFFFF" />
+      <rect width="6.67" height="14" fill="#002395" />
+      <rect width="6.67" height="14" x="13.33" fill="#ED2939" />
     </>
   );
 }

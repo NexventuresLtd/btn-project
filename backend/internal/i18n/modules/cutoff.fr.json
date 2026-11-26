@@ -1,0 +1,10 @@
+{
+ "cutoff.label": "Date d'arrêt des données",
+ "cutoff.note": "Arrêt des données : {at} (heure de Kigali). Les chiffres incluent tous les enregistrements reçus par le serveur jusqu'à cette heure.",
+ "cutoff.note_none": "Aucun appareil ne signale de données non synchronisées.",
+ "cutoff.note_pending": "Des appareils hors ligne détiennent encore {records} enregistrement(s) non synchronisé(s) sur {devices} appareil(s) : {list}. Les chiffres de ces sites peuvent être incomplets jusqu'à leur synchronisation.",
+ "cutoff.sites_one": "{count} site ({codes})",
+ "cutoff.sites_other": "{count} sites ({codes})",
+ "cutoff.unassigned": "{count} appareil(s) d'utilisateurs sans site",
+ "cutoff.unsynced_label": "Données non synchronisées"
+}

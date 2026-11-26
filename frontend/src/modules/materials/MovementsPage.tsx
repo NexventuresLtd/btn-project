@@ -1,5 +1,5 @@
 import { useSearchParams } from "react-router";
-import { Card, DataTable, ErrorState, FilterBar, PageHeader, Pagination, Select, useFilters, type Column } from "@/components/ui";
+import { Card, DataTable, ErrorState, FilterBar, PageHeader, Pagination, Select, useFilters, type Column, ExportMenu } from "@/components/ui";
 import { formatDate, formatDateTime } from "@/lib/dates";
 import { formatRWF } from "@/lib/format";
 import { useT, type T } from "@/i18n";
@@ -31,6 +31,7 @@ const buildColumns = (t: T): Column<Movement>[] => [
       <div className="min-w-48">
         <p className="text-slate-800">{m.source}</p>
         {m.reference ? <p className="text-xs text-slate-500">{t("materials.ref", { ref: m.reference })}</p> : null}
+        {m.lotRef ? <p className="font-mono text-xs text-slate-500">{t("materials.lotLabel", { lot: m.lotRef })}</p> : null}
       </div>
     ),
   },
@@ -73,6 +74,7 @@ export function MovementsPage() {
         title={t("materials.ledger.title")}
         description={t("materials.ledger.desc")}
         breadcrumbs={[{ label: t("materials.title"), to: "/materials" }, { label: t("materials.ledger.crumb") }]}
+        actions={<ExportMenu path="/materials/movements" params={{ plantId: filters.plantId, from: filters.from, to: filters.to, materialId, type }} />}
       />
       <FilterBar filters={filters} onChange={set} pinnedPlant={pinnedPlant} className="mb-5">
         <Select value={materialId} onChange={(e) => set({ materialId: e.target.value })} className="h-10 w-48" aria-label={t("materials.material")}>

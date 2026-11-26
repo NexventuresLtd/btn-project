@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Building2, Pencil, Plus, Users, Wallet } from "lucide-react";
-import { Badge, Button, Card, DataTable, ErrorState, PageHeader, Pagination, Select, StatCard, type Column } from "@/components/ui";
+import { Badge, Button, Card, DataTable, ErrorState, PageHeader, Pagination, Select, StatCard, type Column, ExportMenu } from "@/components/ui";
 import { Can } from "@/auth/guards";
 import { useAuth } from "@/auth/AuthProvider";
 import { formatDate } from "@/lib/dates";
 import { formatCompactRWF, formatInt, formatRWF } from "@/lib/format";
 import { useT } from "@/i18n";
-import { useCustomers, type CustomerRow } from "./api";
+import { useCustomers, useSalesMeta, type CustomerRow } from "./api";
 import { Amount, CustomerModal, SearchInput } from "./components";
 import { useParam } from "./useParam";
 
@@ -18,7 +18,11 @@ export function CustomersPage() {
   const { params, set, page } = useParam();
   const q = params.get("q") ?? "";
   const sort = params.get("sort") ?? "name";
-  const list = useCustomers({ q: q || undefined, sort, page, pageSize: 50 });
+  const status = params.get("status") ?? "";
+  const clientType = params.get("clientType") ?? "";
+  const { data: meta } = useSalesMeta();
+  const typeName = new Map(meta?.clientTypes.map((c) => [c.code, c.name]));
+  const list = useCustomers({ q: q || undefined, sort, page, pageSize: 50, status: status || undefined, clientType: clientType || undefined });
   const d = list.data;
   const [editing, setEditing] = useState<CustomerRow | null>(null);
   const [creating, setCreating] = useState(false);
@@ -31,7 +35,8 @@ export function CustomersPage() {
         <div className="max-w-[20rem] min-w-[12rem]">
           <div className="flex items-center gap-2">
             <Link to={`/sales/customers/${c.id}`} onClick={(e) => e.stopPropagation()} className="truncate font-semibold text-navy-800 hover:underline">{c.name}</Link>
-            {!c.isActive ? <Badge tone="slate">{t("enums.status.INACTIVE")}</Badge> : null}
+            {c.status && c.status !== "ACTIVE" ? <Badge tone={c.status === "BLOCKED" ? "red" : "slate"}>{t(`orders.client.st.${c.status}`)}</Badge> : null}
+            {c.clientType ? <Badge tone="navy">{typeName.get(c.clientType) ?? c.clientType}</Badge> : null}
           </div>
           <p className="truncate text-xs text-slate-500">{[c.tin ? t("sales.customer.tinValue", { tin: c.tin }) : null, c.phone, c.address].filter(Boolean).join(" · ") || t("sales.customers.noContact")}</p>
         </div>
@@ -67,6 +72,7 @@ export function CustomersPage() {
         actions={
           <>
             <Button variant="secondary" onClick={() => navigate("/sales/receivables")}>{t("sales.customers.ageing")}</Button>
+            <ExportMenu path="/sales/customers" params={{ q: q || undefined, sort, status: status || undefined, clientType: clientType || undefined }} />
             <Can permission="customers.manage">
               <Button icon={<Plus className="size-4" />} onClick={() => setCreating(true)}>{t("sales.customer.new")}</Button>
             </Can>
@@ -82,6 +88,14 @@ export function CustomersPage() {
       <Card>
         <div className="flex flex-wrap items-center gap-2 px-5 pt-5 pb-4">
           <SearchInput value={q} onChange={(v) => set("q", v)} placeholder={t("sales.customers.search")} />
+          <Select value={clientType} onChange={(e) => set("clientType", e.target.value || null)} className="w-full sm:w-44" aria-label={t("orders.client.type")}>
+            <option value="">{t("orders.client.allTypes")}</option>
+            {meta?.clientTypes.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+          </Select>
+          <Select value={status} onChange={(e) => set("status", e.target.value || null)} className="w-full sm:w-40" aria-label={t("orders.client.status")}>
+            <option value="">{t("orders.client.allStatuses")}</option>
+            {(["ACTIVE", "INACTIVE", "BLOCKED"] as const).map((x) => <option key={x} value={x}>{t(`orders.client.st.${x}`)}</option>)}
+          </Select>
           <Select value={sort} onChange={(e) => set("sort", e.target.value === "name" ? null : e.target.value)} className="w-full sm:w-52" aria-label={t("sales.customers.sort")}>
             <option value="name">{t("sales.customers.sortName")}</option>
             <option value="outstanding">{t("sales.customers.sortBalance")}</option>
@@ -104,7 +118,7 @@ export function CustomersPage() {
           </>
         )}
       </Card>
-      <CustomerModal open={creating || !!editing} customer={editing} onClose={() => { setCreating(false); setEditing(null); }} />
+      <CustomerModal open={creating || !!editing} customerId={editing?.id} onClose={() => { setCreating(false); setEditing(null); }} />
     </>
   );
 }

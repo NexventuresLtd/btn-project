@@ -29,31 +29,33 @@ func TestCatalogEndpoint(t *testing.T) {
 		Groups []struct {
 			Group   string
 			Reports []struct {
-				Key, Title, Path, Permission string
-				Params                       []string
+				Key, Title, Path, ExportPath, Permission string
+				Params, Formats                          []string
 			}
 		}
 	}
 	var gm catalog
 	e.Decode(e.Do("GET", "/api/reports/catalog", nil, e.User(auth.RoleGeneralManager)), &gm)
-	if len(gm.Groups) != 5 || gm.Groups[0].Group != "Production" || gm.Groups[4].Reports[0].Path != "/reports/pdf/management" {
+	if len(gm.Groups) < 7 || gm.Groups[0].Group != "Production" {
 		t.Fatalf("gm %+v", gm.Groups)
 	}
-	var op catalog
-	e.Decode(e.Do("GET", "/api/reports/catalog", nil, e.User(auth.RoleOperator)), &op)
-	if len(op.Groups) != 1 || op.Groups[0].Reports[0].Key != "production-summary" {
-		t.Fatalf("operator %+v", op.Groups)
+	for _, g := range gm.Groups {
+		for _, r := range g.Reports {
+			if r.Path == "" || r.ExportPath == "" || len(r.Formats) != 4 {
+				t.Fatalf("%s lacks a format: %+v", r.Key, r)
+			}
+		}
 	}
 	var am catalog
 	e.Decode(e.Do("GET", "/api/reports/catalog?lang=am", nil, e.User(auth.RoleOperator)), &am)
 	if am.Groups[0].Reports[0].Title != "የምርት ማጠቃለያ" {
 		t.Fatalf("am %q", am.Groups[0].Reports[0].Title)
 	}
-	// SYSTEM_ADMIN holds no report permission: an empty list, not an error
+	// SYSTEM_ADMIN only sees the audit trail
 	var sys catalog
 	r := e.Do("GET", "/api/reports/catalog", nil, e.User(auth.RoleSystemAdmin))
 	e.Decode(r, &sys)
-	if r.StatusCode != 200 || len(sys.Groups) != 0 {
+	if r.StatusCode != 200 || len(sys.Groups) != 1 || sys.Groups[0].Reports[0].Key != "audit-trail" {
 		t.Fatalf("sysadmin %d %+v", r.StatusCode, sys)
 	}
 }

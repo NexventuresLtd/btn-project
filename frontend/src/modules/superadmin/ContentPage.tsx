@@ -44,11 +44,11 @@ export function ContentPage() {
   const [onlyOverridden, setOnlyOverridden] = useState(false);
   const [limit, setLimit] = useState(PAGE);
   const [editing, setEditing] = useState<string | null>(null);
-  const [vals, setVals] = useState<Record<Lang, string>>({ en: "", am: "", rw: "" });
+  const [vals, setVals] = useState<Record<Lang, string>>({ en: "", am: "", rw: "", fr: "" });
   const [busy, setBusy] = useState(false);
 
   const ov = useMemo<OverrideMap>(() => {
-    const m: OverrideMap = { en: {}, am: {}, rw: {} };
+    const m: OverrideMap = { en: {}, am: {}, rw: {}, fr: {} };
     for (const o of data ?? []) if (m[o.lang]) m[o.lang][o.key] = o.value;
     return m;
   }, [data]);
@@ -65,7 +65,7 @@ export function ContentPage() {
 
   function open(k: string) {
     setEditing(k);
-    setVals({ en: ov.en[k] ?? CATALOGS.en[k] ?? "", am: ov.am[k] ?? CATALOGS.am[k] ?? "", rw: ov.rw[k] ?? CATALOGS.rw[k] ?? "" });
+    setVals(Object.fromEntries(LANGS.map((l) => [l, ov[l][k] ?? CATALOGS[l][k] ?? ""])) as Record<Lang, string>);
   }
 
   /** push the refreshed override set into the live i18n store so the UI updates immediately */

@@ -14,6 +14,7 @@ import (
 	"btn-ops/internal/dates"
 	"btn-ops/internal/db"
 	"btn-ops/internal/i18n"
+	"btn-ops/internal/refdata"
 )
 
 // isoTime renders a timestamp(3) like JS toISOString().
@@ -27,115 +28,42 @@ func isoTimePtr(t *time.Time) *string {
 	return &s
 }
 
-type lineRec struct {
-	ID, ProductID, Code, Name, Unit string
-	LineQty
+// editable statuses (PRD-07: own entries stay editable — also after submitting — until approved or the day closes).
+func isEditable(status string) bool {
+	return status == "DRAFT" || status == "REJECTED" || status == "SUBMITTED"
 }
-
-type usageRec struct {
-	ID, MaterialID, Code, Name, Unit string
-	Quantity                         float64
-	QtyText                          string // exact decimal text (audit snapshots)
-}
-
-// reportRec is a shift report with its plant, lines and material usages.
-type reportRec struct {
-	ID, Number, PlantID, PlantCode, PlantName string
-	Date                                      time.Time
-	Shift, Status                             string
-	DowntimeMins                              int
-	DowntimeNote, Notes                       *string
-	CreatedByID                               string
-	CreatedByName                             *string
-	CreatedAt, UpdatedAt                      time.Time
-	SubmittedAt                               *time.Time
-	ReviewedByID, ReviewedByName              *string
-	ReviewedAt                                *time.Time
-	ReviewComment                             *string
-	Lines                                     []lineRec
-	Usages                                    []usageRec
-}
-
-// loadReport reads a report with lines and usages in three set-based queries. nil = not found.
-func loadReport(ctx context.Context, q db.DBTX, id string) (*reportRec, error) {
-	r := &reportRec{}
-	err := q.QueryRow(ctx, `SELECT r.id, r.number, r."plantId", p.code, p.name, r."date", r.shift::text, r.status::text, r."downtimeMins",
-			r."downtimeNote", r.notes, r."createdById", cu.name, r."createdAt", r."updatedAt", r."submittedAt", r."reviewedById", ru.name,
-			r."reviewedAt", r."reviewComment"
-		FROM "ProductionReport" r
-		JOIN "Plant" p ON p.id = r."plantId"
-		LEFT JOIN "User" cu ON cu.id = r."createdById"
-		LEFT JOIN "User" ru ON ru.id = r."reviewedById"
-		WHERE r.id = $1`, id).Scan(&r.ID, &r.Number, &r.PlantID, &r.PlantCode, &r.PlantName, &r.Date, &r.Shift, &r.Status, &r.DowntimeMins,
-		&r.DowntimeNote, &r.Notes, &r.CreatedByID, &r.CreatedByName, &r.CreatedAt, &r.UpdatedAt, &r.SubmittedAt, &r.ReviewedByID, &r.ReviewedByName,
-		&r.ReviewedAt, &r.ReviewComment)
-	if db.IsNoRows(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	rows, err := q.Query(ctx, `SELECT l.id, l."productId", p.code, p.name, p.unit, l."targetQty", l."producedQty", l."damageProdQty", l."damageHandQty", l."sampleQty"
-		FROM "ProductionLine" l JOIN "Product" p ON p.id = l."productId" WHERE l."reportId" = $1 ORDER BY p."sortOrder", p.name`, id)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var l lineRec
-		if err := rows.Scan(&l.ID, &l.ProductID, &l.Code, &l.Name, &l.Unit, &l.TargetQty, &l.ProducedQty, &l.DamageProdQty, &l.DamageHandQty, &l.SampleQty); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		r.Lines = append(r.Lines, l)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	rows, err = q.Query(ctx, `SELECT u.id, u."materialId", m.code, m.name, m.unit, u.quantity::float8, u.quantity::text
-		FROM "ProductionMaterialUsage" u JOIN "Material" m ON m.id = u."materialId" WHERE u."reportId" = $1 ORDER BY m."sortOrder", m.name`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var u usageRec
-		if err := rows.Scan(&u.ID, &u.MaterialID, &u.Code, &u.Name, &u.Unit, &u.Quantity, &u.QtyText); err != nil {
-			return nil, err
-		}
-		u.QtyText = db.TrimDecimal(u.QtyText)
-		r.Usages = append(r.Usages, u)
-	}
-	return r, rows.Err()
-}
-
-func (r *reportRec) quantities() []LineQty {
-	out := make([]LineQty, len(r.Lines))
-	for i, l := range r.Lines {
-		out[i] = l.LineQty
-	}
-	return out
-}
-
-// editable statuses.
-func isEditable(status string) bool { return status == "DRAFT" || status == "REJECTED" }
 
 type actions struct {
-	CanEdit    bool `json:"canEdit"`
-	CanSubmit  bool `json:"canSubmit"`
-	CanApprove bool `json:"canApprove"`
-	CanReject  bool `json:"canReject"`
+	CanEdit              bool `json:"canEdit"`
+	CanSubmit            bool `json:"canSubmit"`
+	CanApprove           bool `json:"canApprove"`
+	CanReject            bool `json:"canReject"`
+	CanRequestCorrection bool `json:"canRequestCorrection"`
+	CanAddNote           bool `json:"canAddNote"`
+	CanCloseDay          bool `json:"canCloseDay"`
+}
+
+// actionCtx is the state the actions depend on beyond the report row.
+type actionCtx struct {
+	dayClosed      bool
+	pendingCorrect bool
 }
 
 // allowedActions mirrors the checks in the handlers: what the current user may do with a report.
-func allowedActions(u *auth.User, status, createdByID, plantID string) actions {
+func allowedActions(u *auth.User, r *reportRec, ac actionCtx) actions {
 	scoped := auth.ScopedPlantID(u)
-	inPlant := scoped == "" || scoped == plantID
+	inPlant := scoped == "" || scoped == r.PlantID
 	approver := u.Can("production.approve")
-	own := createdByID == u.ID
-	canEdit := inPlant && isEditable(status) && ((own && u.Can("production.record")) || approver)
-	canReview := inPlant && status == "SUBMITTED" && approver && !own
-	return actions{CanEdit: canEdit, CanSubmit: canEdit, CanApprove: canReview, CanReject: canReview}
+	own := r.CreatedByID == u.ID
+	editor := (own && u.Can("production.record")) || approver
+	canEdit := inPlant && isEditable(r.Status) && !ac.dayClosed && editor
+	lastEditor := r.LastEditedByID != nil && *r.LastEditedByID == u.ID
+	canReview := inPlant && r.Status == "SUBMITTED" && approver && !own && !lastEditor
+	locked := r.Status == "APPROVED" || ac.dayClosed
+	canCorrect := inPlant && locked && !ac.pendingCorrect && (editor || u.Can("production.close"))
+	return actions{CanEdit: canEdit, CanSubmit: canEdit && r.Status != "SUBMITTED", CanApprove: canReview, CanReject: canReview,
+		CanRequestCorrection: canCorrect, CanAddNote: inPlant && (u.Can("production.record") || approver),
+		CanCloseDay: inPlant && u.Can("production.close") && !ac.dayClosed}
 }
 
 type personOut struct {
@@ -156,16 +84,29 @@ type productOut struct {
 	Unit string `json:"unit"`
 }
 
+type defectOut struct {
+	ID         string  `json:"id"`
+	ReasonCode string  `json:"reasonCode"`
+	Reason     string  `json:"reason"`
+	Stage      string  `json:"stage"`
+	Qty        int     `json:"qty"`
+	Note       *string `json:"note"`
+}
+
 type lineOut struct {
-	ID            string     `json:"id"`
-	ProductID     string     `json:"productId"`
-	Product       productOut `json:"product"`
-	TargetQty     int        `json:"targetQty"`
-	ProducedQty   int        `json:"producedQty"`
-	DamageProdQty int        `json:"damageProdQty"`
-	DamageHandQty int        `json:"damageHandQty"`
-	SampleQty     int        `json:"sampleQty"`
-	GoodOutput    int        `json:"goodOutput"`
+	ID              string      `json:"id"`
+	ProductID       string      `json:"productId"`
+	Product         productOut  `json:"product"`
+	BatchRef        string      `json:"batchRef"`
+	AdditionalBatch bool        `json:"additionalBatch"`
+	TargetQty       int         `json:"targetQty"`
+	ProducedQty     int         `json:"producedQty"`
+	DamageProdQty   int         `json:"damageProdQty"`
+	DamageHandQty   int         `json:"damageHandQty"`
+	SampleQty       int         `json:"sampleQty"`
+	GoodOutput      int         `json:"goodOutput"`
+	Defects         []defectOut `json:"defects"`
+	Unclassified    int         `json:"unclassifiedDefects"`
 }
 
 type usageOut struct {
@@ -175,9 +116,28 @@ type usageOut struct {
 	Quantity   float64    `json:"quantity"`
 }
 
+type flagOut struct {
+	ID        string  `json:"id"`
+	Code      string  `json:"code"`
+	Name      string  `json:"name"`
+	Note      *string `json:"note"`
+	By        string  `json:"by"`
+	CreatedAt string  `json:"createdAt"`
+}
+
+type noteOut struct {
+	ID        string `json:"id"`
+	Body      string `json:"body"`
+	Source    string `json:"source"`
+	By        string `json:"by"`
+	CreatedAt string `json:"createdAt"`
+}
+
 type kpisOut struct {
 	Achievement   *float64 `json:"achievement"`
 	RejectionRate *float64 `json:"rejectionRate"`
+	Yield         *float64 `json:"yield"`
+	DefectRate    *float64 `json:"defectRate"`
 }
 
 type historyOut struct {
@@ -188,30 +148,45 @@ type historyOut struct {
 	By      string  `json:"by"`
 }
 
+type dayOut struct {
+	Status     string  `json:"status"`
+	AutoClosed bool    `json:"autoClosed"`
+	ClosedAt   *string `json:"closedAt"`
+	ClosedBy   *string `json:"closedBy"`
+}
+
 type detailOut struct {
-	ID            string       `json:"id"`
-	Number        string       `json:"number"`
-	Plant         plantOut     `json:"plant"`
-	PlantID       string       `json:"plantId"`
-	Date          string       `json:"date"`
-	Shift         string       `json:"shift"`
-	Status        string       `json:"status"`
-	DowntimeMins  int          `json:"downtimeMins"`
-	DowntimeNote  *string      `json:"downtimeNote"`
-	Notes         *string      `json:"notes"`
-	CreatedBy     personOut    `json:"createdBy"`
-	CreatedAt     string       `json:"createdAt"`
-	UpdatedAt     string       `json:"updatedAt"`
-	SubmittedAt   *string      `json:"submittedAt"`
-	ReviewedBy    *personOut   `json:"reviewedBy"`
-	ReviewedAt    *string      `json:"reviewedAt"`
-	ReviewComment *string      `json:"reviewComment"`
-	Lines         []lineOut    `json:"lines"`
-	MaterialUse   []usageOut   `json:"materialUsages"`
-	Totals        LineTotals   `json:"totals"`
-	KPIs          kpisOut      `json:"kpis"`
-	Actions       actions      `json:"actions"`
-	History       []historyOut `json:"history"`
+	ID              string          `json:"id"`
+	Number          string          `json:"number"`
+	Plant           plantOut        `json:"plant"`
+	PlantID         string          `json:"plantId"`
+	Date            string          `json:"date"`
+	Shift           string          `json:"shift"`
+	Status          string          `json:"status"`
+	Source          string          `json:"source"`
+	DowntimeMins    int             `json:"downtimeMins"`
+	DowntimeNote    *string         `json:"downtimeNote"`
+	Notes           *string         `json:"notes"`
+	CreatedBy       personOut       `json:"createdBy"`
+	CreatedAt       string          `json:"createdAt"`
+	UpdatedAt       string          `json:"updatedAt"`
+	SubmittedAt     *string         `json:"submittedAt"`
+	ReviewedBy      *personOut      `json:"reviewedBy"`
+	ReviewedAt      *string         `json:"reviewedAt"`
+	ReviewComment   *string         `json:"reviewComment"`
+	StockPosted     bool            `json:"stockPosted"`
+	Lines           []lineOut       `json:"lines"`
+	MaterialUse     []usageOut      `json:"materialUsages"`
+	ExceptionFlags  []flagOut       `json:"exceptionFlags"`
+	NoteList        []noteOut       `json:"entryNotes"`
+	Totals          LineTotals      `json:"totals"`
+	KPIs            kpisOut         `json:"kpis"`
+	Variance        varianceOut     `json:"variance"`
+	VarianceFlagged bool            `json:"varianceFlagged"`
+	Day             dayOut          `json:"day"`
+	Corrections     []correctionOut `json:"corrections"`
+	Actions         actions         `json:"actions"`
+	History         []historyOut    `json:"history"`
 }
 
 func name(n *string, lang i18n.Lang) string {
@@ -221,35 +196,76 @@ func name(n *string, lang i18n.Lang) string {
 	return *n
 }
 
-// serialize builds the detail payload (history is filled by the caller).
-func serialize(r *reportRec, u *auth.User, lang i18n.Lang) detailOut {
+// refNames resolves reference-data names (defect reasons, exception flags) in one query.
+func refNames(ctx context.Context, q db.DBTX, kind string, lang i18n.Lang) (map[string]string, error) {
+	items, err := refdata.List(ctx, q, kind, true, lang)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(items))
+	for _, it := range items {
+		out[it.Code] = it.Name
+	}
+	return out, nil
+}
+
+// serialize builds the detail payload without the parts that need the database (history, variance, day…).
+func serialize(r *reportRec, u *auth.User, lang i18n.Lang, reasons, flagNames map[string]string, ac actionCtx) detailOut {
 	out := detailOut{
 		ID: r.ID, Number: r.Number, Plant: plantOut{r.PlantID, r.PlantCode, r.PlantName}, PlantID: r.PlantID, Date: dates.ToISO(r.Date),
-		Shift: r.Shift, Status: r.Status, DowntimeMins: r.DowntimeMins, DowntimeNote: r.DowntimeNote, Notes: r.Notes,
+		Shift: r.Shift, Status: r.Status, Source: r.Source, DowntimeMins: r.DowntimeMins, DowntimeNote: r.DowntimeNote, Notes: r.Notes,
 		CreatedBy: personOut{r.CreatedByID, name(r.CreatedByName, lang)}, CreatedAt: isoTime(r.CreatedAt), UpdatedAt: isoTime(r.UpdatedAt),
-		SubmittedAt: isoTimePtr(r.SubmittedAt), ReviewedAt: isoTimePtr(r.ReviewedAt), ReviewComment: r.ReviewComment,
-		Lines: make([]lineOut, len(r.Lines)), MaterialUse: make([]usageOut, len(r.Usages)), History: []historyOut{},
+		SubmittedAt: isoTimePtr(r.SubmittedAt), ReviewedAt: isoTimePtr(r.ReviewedAt), ReviewComment: r.ReviewComment, StockPosted: stockActive(r.Status),
+		Lines: make([]lineOut, len(r.Lines)), MaterialUse: make([]usageOut, len(r.Usages)), ExceptionFlags: []flagOut{}, NoteList: []noteOut{},
+		History: []historyOut{}, Corrections: []correctionOut{}, VarianceFlagged: r.VarianceFlagged, Day: dayOut{Status: "OPEN"},
 	}
 	if r.ReviewedByID != nil {
 		out.ReviewedBy = &personOut{*r.ReviewedByID, name(r.ReviewedByName, lang)}
 	}
 	for i, l := range r.Lines {
-		out.Lines[i] = lineOut{ID: l.ID, ProductID: l.ProductID, Product: productOut{Code: l.Code, Name: l.Name, Unit: l.Unit},
-			TargetQty: l.TargetQty, ProducedQty: l.ProducedQty, DamageProdQty: l.DamageProdQty, DamageHandQty: l.DamageHandQty, SampleQty: l.SampleQty, GoodOutput: GoodOutput(l.LineQty)}
+		lo := lineOut{ID: l.ID, ProductID: l.ProductID, Product: productOut{Code: l.Code, Name: l.Name, Unit: l.Unit}, BatchRef: l.BatchRef, AdditionalBatch: l.Additional,
+			TargetQty: l.TargetQty, ProducedQty: l.ProducedQty, DamageProdQty: l.DamageProdQty, DamageHandQty: l.DamageHandQty, SampleQty: l.SampleQty,
+			GoodOutput: GoodOutput(l.LineQty), Defects: []defectOut{}}
+		classified := 0
+		for _, d := range l.Defects {
+			nm := reasons[d.ReasonCode]
+			if nm == "" {
+				nm = d.ReasonCode
+			}
+			lo.Defects = append(lo.Defects, defectOut{ID: d.ID, ReasonCode: d.ReasonCode, Reason: nm, Stage: d.Stage, Qty: d.Qty, Note: d.Note})
+			classified += d.Qty
+		}
+		if u := l.DamageProdQty + l.DamageHandQty - classified; u > 0 {
+			lo.Unclassified = u
+		}
+		out.Lines[i] = lo
 	}
 	for i, m := range r.Usages {
 		out.MaterialUse[i] = usageOut{ID: m.ID, MaterialID: m.MaterialID, Material: productOut{Code: m.Code, Name: m.Name, Unit: m.Unit}, Quantity: m.Quantity}
 	}
+	for _, f := range r.Flags {
+		nm := flagNames[f.Code]
+		if nm == "" {
+			nm = f.Code
+		}
+		out.ExceptionFlags = append(out.ExceptionFlags, flagOut{ID: f.ID, Code: f.Code, Name: nm, Note: f.Note, By: name(f.CreatedByName, lang), CreatedAt: isoTime(f.CreatedAt)})
+	}
+	for _, n := range r.NoteList {
+		out.NoteList = append(out.NoteList, noteOut{ID: n.ID, Body: n.Body, Source: n.Source, By: name(n.CreatedByName, lang), CreatedAt: isoTime(n.CreatedAt)})
+	}
 	out.Totals = Totals(r.quantities())
-	out.KPIs = kpisOut{Achievement(out.Totals.Target, out.Totals.Produced), RejectionRate(out.Totals.DamageProd, out.Totals.DamageHand, out.Totals.Produced)}
-	out.Actions = allowedActions(u, r.Status, r.CreatedByID, r.PlantID)
+	t := out.Totals
+	out.KPIs = kpisOut{Achievement(t.Target, t.Produced), RejectionRate(t.DamageProd, t.DamageHand, t.Produced), Yield(t.GoodOutput, t.Produced), DefectRate(t.DamageProd, t.DamageHand, t.Produced)}
+	out.Actions = allowedActions(u, r, ac)
 	return out
 }
 
-// loadHistory returns the audit trail of a report, oldest first.
+// loadHistory returns the audit trail of a report (and its correction requests), oldest first.
 func loadHistory(ctx context.Context, q db.DBTX, id string, lang i18n.Lang) ([]historyOut, error) {
 	rows, err := q.Query(ctx, `SELECT a.id, a.action, a.summary, a."createdAt", u.name FROM "AuditLog" a LEFT JOIN "User" u ON u.id = a."userId"
-		WHERE a.entity = 'ProductionReport' AND a."entityId" = $1 ORDER BY a."createdAt", a.id`, id)
+		WHERE (a.entity = 'ProductionReport' AND a."entityId" = $1)
+		   OR (a.entity = 'ProductionCorrection' AND a."entityId" IN (SELECT id FROM production_correction WHERE "reportId" = $1))
+		ORDER BY a."createdAt", a.id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +298,35 @@ func detail(ctx context.Context, q db.DBTX, id string, u *auth.User, lang i18n.L
 }
 
 func detailFrom(ctx context.Context, q db.DBTX, r *reportRec, u *auth.User, lang i18n.Lang) (*detailOut, error) {
-	d := serialize(r, u, lang)
+	day, err := dayState(ctx, q, r.PlantID, r.Date)
+	if err != nil {
+		return nil, err
+	}
+	corr, err := listCorrections(ctx, q, correctionFilter{reportID: r.ID}, lang, 0, 50)
+	if err != nil {
+		return nil, err
+	}
+	pending := false
+	for _, c := range corr {
+		if c.Status == "PENDING" {
+			pending = true
+		}
+	}
+	reasons, err := refNames(ctx, q, "defect_reason", lang)
+	if err != nil {
+		return nil, err
+	}
+	flagNames, err := refNames(ctx, q, "exception_flag", lang)
+	if err != nil {
+		return nil, err
+	}
+	d := serialize(r, u, lang, reasons, flagNames, actionCtx{dayClosed: day.Status == "CLOSED", pendingCorrect: pending})
+	d.Day = dayOut{Status: day.Status, AutoClosed: day.AutoClosed, ClosedAt: isoTimePtr(day.ClosedAt), ClosedBy: day.ClosedByName}
+	d.Corrections = corr
+	set := loadSettings(ctx, q)
+	if d.Variance, err = computeVariance(ctx, q, r, set.VarianceTolerancePct); err != nil {
+		return nil, err
+	}
 	h, err := loadHistory(ctx, q, r.ID, lang)
 	if err != nil {
 		return nil, err
@@ -331,10 +375,12 @@ type figures struct {
 	LineTotals
 	Achievement   *float64 `json:"achievement"`
 	RejectionRate *float64 `json:"rejectionRate"`
+	Yield         *float64 `json:"yield"`
+	DefectRate    *float64 `json:"defectRate"`
 }
 
 func withKPIs(t LineTotals) figures {
-	return figures{t, Achievement(t.Target, t.Produced), RejectionRate(t.DamageProd, t.DamageHand, t.Produced)}
+	return figures{t, Achievement(t.Target, t.Produced), RejectionRate(t.DamageProd, t.DamageHand, t.Produced), Yield(t.GoodOutput, t.Produced), DefectRate(t.DamageProd, t.DamageHand, t.Produced)}
 }
 
 func addTotals(a, b LineTotals) LineTotals {
@@ -465,7 +511,7 @@ func productionSummary(ctx context.Context, q db.DBTX, fromISO, toISO, plantID s
 	if plantID != "" {
 		rows, err = q.Query(ctx, `SELECT id, code, name, "isActive" FROM "Plant" WHERE id = $1 ORDER BY code`, plantID)
 	} else {
-		rows, err = q.Query(ctx, `SELECT id, code, name, "isActive" FROM "Plant" ORDER BY code`)
+		rows, err = q.Query(ctx, `SELECT id, code, name, "isActive" FROM "Plant" WHERE kind = 'SITE' ORDER BY code`) // production happens only at SITE locations (STK-01)
 	}
 	if err != nil {
 		return nil, err

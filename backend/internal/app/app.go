@@ -11,19 +11,34 @@ import (
 	"btn-ops/internal/attendance"
 	"btn-ops/internal/auth"
 	"btn-ops/internal/branding"
+	"btn-ops/internal/budgets"
 	"btn-ops/internal/dashboard"
+	"btn-ops/internal/dataexport"
+	"btn-ops/internal/dataimport"
 	"btn-ops/internal/deps"
+	"btn-ops/internal/expenses"
+	"btn-ops/internal/export"
+	"btn-ops/internal/finance"
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/masterdata"
 	"btn-ops/internal/materials"
+	"btn-ops/internal/openapi"
 	"btn-ops/internal/payroll"
 	"btn-ops/internal/pettycash"
+	"btn-ops/internal/platform"
+	"btn-ops/internal/privacy"
+	"btn-ops/internal/procurement"
 	"btn-ops/internal/production"
 	"btn-ops/internal/ratelimit"
+	"btn-ops/internal/refdata"
 	"btn-ops/internal/reports"
 	"btn-ops/internal/sales"
 	"btn-ops/internal/stock"
+	"btn-ops/internal/stockcount"
+	"btn-ops/internal/syncsvc"
+	"btn-ops/internal/transfers"
 	"btn-ops/internal/users"
+	"btn-ops/internal/workforce"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -41,8 +56,8 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 		AppName:               "BTN Ops API",
 		ErrorHandler:          httpx.ErrorHandler,
 		DisableStartupMessage: true,
-		Immutable:             true, // handler-visible strings (params, headers, cookies) stay valid after return
-		BodyLimit:             2 * 1024 * 1024,
+		Immutable:             true,             // handler-visible strings (params, headers, cookies) stay valid after return
+		BodyLimit:             11 * 1024 * 1024, // multipart uploads (P5 expense receipts ≤ 10 MB); JSON bodies stay capped at 1 MB in httpx
 		ReadTimeout:           30 * time.Second,
 		WriteTimeout:          90 * time.Second, // PDFs
 		IdleTimeout:           120 * time.Second,
@@ -63,7 +78,9 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 			slog.Error("panic recovered", "panic", e, "path", c.Path(), "stack", string(debug.Stack()))
 		},
 	}))
+	app.Use(platform.Capture(d)) // F1: panics + 5xx -> error_event (dedup) + alerts
 	app.Use(requestid.New())
+	app.Use(openapi.VersionAlias()) // F2 §9.2: /api/v1/* is served by the same routes as /api/*
 	app.Use(httpx.AccessLog())
 	app.Use(helmet.New(helmet.Config{
 		CrossOriginResourcePolicy: "same-site",
@@ -78,7 +95,7 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     strings.Join(cfg.FrontendOrigins, ","),
 		AllowCredentials: true,
-		AllowHeaders:     "Content-Type,X-Requested-With,Accept",
+		AllowHeaders:     "Content-Type,X-Requested-With,Accept,X-Device-Id",
 		ExposeHeaders:    "Content-Disposition,Retry-After,ETag,Server-Timing,X-Request-Id",
 		MaxAge:           600,
 	}))
@@ -116,13 +133,22 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 	})
 	d.Auth.Routes(api.Group("/auth"))
 	d.Auth.AccountRoutes(api.Group("/account/passkeys"))
+	platform.Register(api, d) // F1: /api/notifications, /api/ops/jobs, /api/ops/monitoring (each route checks auth itself)
 	branding.Register(api, d) // /api/public/* (no auth) and /api/admin/* (SUPER_ADMIN)
 
 	// ── everything below requires a signed-in user who has set their own password ──
 	api.Use(auth.RequireAuth())
-	masterdata.Register(api, d) // /api/masterdata/*, /api/lookups
-	users.Register(api, d)      // /api/users
-	adminapi.Register(api, d)   // /api/audit, /api/settings
+	api.Use(privacy.AccessLogger(d)) // F2 NFR-D2: logs views/exports of worker & customer personal data
+	api.Use(export.Middleware(d))    // F2 FIN-07/RPT-03: ?format=csv|xlsx|json and /export on registered reports
+	openapi.Register(api, app)       // F2 §9.2: /api/v1/openapi.json + /api/v1/docs
+	masterdata.Register(api, d)      // /api/masterdata/*, /api/lookups
+	users.Register(api, d)           // /api/users
+	adminapi.Register(api, d)        // /api/audit, /api/settings
+
+	d.Auth.DeviceRoutes(api.Group("/account/devices")) // F3: own devices
+	d.Auth.AdminDeviceRoutes(api.Group("/devices"))    // F3: any user's devices (devices.manage)
+	syncsvc.Register(api.Group("/sync"), d)            // F3: /api/sync/push|pull|status|conflicts|monitor
+	syncsvc.PersonalDataAccess = privacy.LogAccess     // F3 → F2: worker/customer data pulled to devices is access-logged
 
 	// ════════════════ MODULE REGISTRATION — module agents: replace your stub line ════════════════
 	// Each module exports Register(r fiber.Router, d *deps.Deps) and receives its own group,
@@ -137,6 +163,19 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 	attendance.Register(api.Group("/attendance"), d)
 	dashboard.Register(api.Group("/dashboard"), d)
 	reports.Register(api.Group("/reports"), d)
+	reports.BindApp(d, app)  // P7: scheduled reports render in-process (RPT-02)
+	refdata.Register(api, d) // F5: /api/refdata/*, /api/admin/refdata/*, /api/admin/approval-thresholds
+	// Phase-2 modules (F5 stubs answer 501 until the owner fills Register).
+	transfers.Register(api.Group("/transfers"), d)     // P2
+	stockcount.Register(api.Group("/stock-counts"), d) // P2
+	procurement.Register(api.Group("/procurement"), d) // P6
+	expenses.Register(api.Group("/expenses"), d)       // P5
+	budgets.Register(api.Group("/budgets"), d)         // P5
+	finance.Register(api.Group("/finance"), d)         // P5 FIN-04/06 finance dashboard
+	workforce.Register(api.Group("/workforce"), d)     // P4
+	privacy.Register(api.Group("/privacy"), d)         // F2 NFR-D2
+	dataimport.Register(api.Group("/data/import"), d)  // F2 CSV import
+	dataexport.Register(api.Group("/data/export"), d)  // F2 ADM-05 bulk data export
 	// ═══════════════════════════════════════════════════════════════════════════════════════════
 	for _, fn := range extra {
 		fn(api)

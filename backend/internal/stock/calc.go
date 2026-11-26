@@ -14,10 +14,14 @@ const (
 	SaleIssue        = "SALE_ISSUE"
 	Return           = "RETURN"
 	Adjustment       = "ADJUSTMENT"
+	Receipt          = "RECEIPT"      // P2: goods received (procurement / manual)
+	Issue            = "ISSUE"        // P2: issued for other use than sale
+	TransferOut      = "TRANSFER_OUT" // P2: left for another location (in transit)
+	TransferIn       = "TRANSFER_IN"  // P2: received from another location
 )
 
 // MovementTypes lists the valid kinds.
-var MovementTypes = []string{Opening, Production, DamageProduction, DamageHandling, Sample, SaleIssue, Return, Adjustment}
+var MovementTypes = []string{Opening, Production, DamageProduction, DamageHandling, Sample, SaleIssue, Return, Adjustment, Receipt, Issue, TransferOut, TransferIn}
 
 // LedgerEntry is a (summed) ledger line; Quantity is signed as stored (+ in, - out).
 type LedgerEntry struct {
@@ -37,6 +41,10 @@ type Figures struct {
 	Sample     int `json:"sample"`
 	Damage2    int `json:"damage2"`
 	Adjustment int `json:"adjustment"`
+	Received   int `json:"received"`    // receipts (P2)
+	Issued     int `json:"issued"`      // non-sale issues, shown positive (P2)
+	TransferIn int `json:"transferIn"`  // P2
+	TransferOt int `json:"transferOut"` // P2, shown positive
 	Closing    int `json:"closing"`
 }
 
@@ -55,7 +63,8 @@ type DailyDay struct {
 
 // ClosingFromColumns is the Excel closing formula extended with the signed adjustment.
 func ClosingFromColumns(r Figures) int {
-	return r.Opening + r.Production - r.Damage1 - r.Sold + r.Returned - r.Sample - r.Damage2 + r.Adjustment
+	return r.Opening + r.Production - r.Damage1 - r.Sold + r.Returned - r.Sample - r.Damage2 + r.Adjustment +
+		r.Received - r.Issued + r.TransferIn - r.TransferOt
 }
 
 func apply(f *Figures, typ string, qty int) {
@@ -76,12 +85,21 @@ func apply(f *Figures, typ string, qty int) {
 		f.Returned += qty
 	case Adjustment:
 		f.Adjustment += qty
+	case Receipt:
+		f.Received += qty
+	case Issue:
+		f.Issued -= qty
+	case TransferIn:
+		f.TransferIn += qty
+	case TransferOut:
+		f.TransferOt -= qty
 	}
 }
 
 // IsZeroRow is true when no figure is set.
 func IsZeroRow(r Figures) bool {
-	return r.Opening == 0 && r.Production == 0 && r.Damage1 == 0 && r.Sold == 0 && r.Returned == 0 && r.Sample == 0 && r.Damage2 == 0 && r.Adjustment == 0 && r.Closing == 0
+	return r.Opening == 0 && r.Production == 0 && r.Damage1 == 0 && r.Sold == 0 && r.Returned == 0 && r.Sample == 0 && r.Damage2 == 0 && r.Adjustment == 0 && r.Closing == 0 &&
+		r.Received == 0 && r.Issued == 0 && r.TransferIn == 0 && r.TransferOt == 0
 }
 
 // SumRows adds figures column-wise.
@@ -96,6 +114,10 @@ func SumRows(rows []Figures) Figures {
 		t.Sample += r.Sample
 		t.Damage2 += r.Damage2
 		t.Adjustment += r.Adjustment
+		t.Received += r.Received
+		t.Issued += r.Issued
+		t.TransferIn += r.TransferIn
+		t.TransferOt += r.TransferOt
 		t.Closing += r.Closing
 	}
 	return t

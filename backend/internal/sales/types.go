@@ -46,14 +46,18 @@ type productRef struct {
 }
 
 type customer struct {
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	TIN       *string `json:"tin"`
-	Phone     *string `json:"phone"`
-	Email     *string `json:"email"`
-	Address   *string `json:"address"`
-	IsActive  bool    `json:"isActive"`
-	CreatedAt jsTime  `json:"createdAt"`
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	TIN         *string `json:"tin"`
+	Phone       *string `json:"phone"`
+	Email       *string `json:"email"`
+	Address     *string `json:"address"`
+	IsActive    bool    `json:"isActive"`
+	CreatedAt   jsTime  `json:"createdAt"`
+	ClientType  *string `json:"clientType"`
+	Status      string  `json:"status"`
+	Notes       *string `json:"notes"`
+	PaymentTerm *string `json:"paymentTerm"`
 }
 
 type saleLineOut struct {
@@ -69,6 +73,16 @@ type saleLineOut struct {
 	NeedsGmApproval bool       `json:"needsGmApproval"`
 	Delivered       int64      `json:"delivered"`
 	Remaining       int64      `json:"remaining"`
+	Gross           int64      `json:"gross"`
+	DiscountPercent *float64   `json:"discountPercent"`
+	DiscountAmount  int64      `json:"discountAmount"`
+	Fulfilment      *string    `json:"fulfilment"`
+}
+
+type chargeLineOut struct {
+	ID          string  `json:"id"`
+	Description *string `json:"description"`
+	Amount      int64   `json:"amount"`
 }
 
 type deliveryLineOut struct {
@@ -93,6 +107,11 @@ type deliveryOut struct {
 	CreatedAt   jsTime            `json:"createdAt"`
 	TotalQty    int64             `json:"totalQty"`
 	Lines       []deliveryLineOut `json:"lines"`
+	Destination *string           `json:"destination"`
+	Transport   string            `json:"transportMode"`
+	Note        *string           `json:"deliveryNote"`
+	HasPhoto    bool              `json:"hasPhoto"`
+	Offline     bool              `json:"capturedOffline"`
 }
 
 type paymentOut struct {
@@ -104,6 +123,7 @@ type paymentOut struct {
 	Reference   *string `json:"reference"`
 	ReceivedBy  *person `json:"receivedBy"`
 	CreatedAt   jsTime  `json:"createdAt"`
+	Kind        string  `json:"kind"`
 }
 
 type returnOut struct {
@@ -134,6 +154,10 @@ type saleTotals struct {
 	Delivered int64 `json:"delivered"`
 	Remaining int64 `json:"remaining"`
 	Returned  int64 `json:"returned"`
+	Gross     int64 `json:"gross"`
+	Discount  int64 `json:"discount"`
+	Charge    int64 `json:"charge"`
+	Subtotal  int64 `json:"subtotal"` // net product lines
 }
 
 type saleDetail struct {
@@ -164,6 +188,49 @@ type saleDetail struct {
 	DeliveryStatus     string          `json:"deliveryStatus"`
 	NeedsGmApproval    bool            `json:"needsGmApproval"`
 	MaxDiscountPercent float64         `json:"maxDiscountPercent"`
+
+	// lifecycle (ORD-04), terms (ORD-03/06), delivery (DEL-01/02), versions (ORD-10)
+	LegacyStatus     string         `json:"legacyStatus"`
+	NextStatuses     []string       `json:"nextStatuses"`
+	PaymentTerm      *string        `json:"paymentTerm"`
+	PaymentTermName  *string        `json:"paymentTermName"`
+	DepositAmount    int64          `json:"depositAmount"`
+	DepositStatus    string         `json:"depositStatus"`
+	DueDate          *string        `json:"dueDate"`
+	Overdue          bool           `json:"overdue"`
+	TransportMode    string         `json:"transportMode"`
+	DeliveryAddress  *string        `json:"deliveryAddress"`
+	DeliverySite     *string        `json:"deliverySite"`
+	RequestedDate    *string        `json:"requestedDate"`
+	DeliveryZone     *string        `json:"deliveryZone"`
+	DeliveryZoneName *string        `json:"deliveryZoneName"`
+	DistanceKm       *float64       `json:"distanceKm"`
+	DeliveryCharge   int64          `json:"deliveryCharge"`
+	ChargeLine       *chargeLineOut `json:"chargeLine"`
+	ValidUntil       *string        `json:"validUntil"`
+	QuotedBy         *person        `json:"quotedBy"`
+	QuotedAt         *jsTime        `json:"quotedAt"`
+	ReadyAt          *jsTime        `json:"readyAt"`
+	ClosedBy         *person        `json:"closedBy"`
+	ClosedAt         *jsTime        `json:"closedAt"`
+	Version          int            `json:"version"`
+	CapturedOffline  bool           `json:"capturedOffline"`
+	Locked           bool           `json:"locked"`
+	PendingApproval  *approvalOut   `json:"pendingApproval"`
+	Approvals        []*approvalOut `json:"approvals"`
+	Amendments       []amendmentOut `json:"amendments"`
+	Versions         []versionOut   `json:"versions"`
+	History          []historyOut   `json:"history"`
+	Communications   []commOut      `json:"communications"`
+	ServerVersion    int64          `json:"serverVersion"`
+}
+
+type historyOut struct {
+	From *string `json:"from"`
+	To   string  `json:"to"`
+	By   *person `json:"by"`
+	At   jsTime  `json:"at"`
+	Note *string `json:"note"`
 }
 
 type stockWarning struct {

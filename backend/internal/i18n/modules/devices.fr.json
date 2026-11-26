@@ -1,0 +1,16 @@
+{
+  "auth.token_expired": "Votre session doit être actualisée. Veuillez réessayer.",
+  "auth.device_revoked": "Cet appareil a été déconnecté. Reconnectez-vous pour continuer.",
+  "auth.refresh_invalid": "Votre session a pris fin. Veuillez vous reconnecter.",
+  "auth.device_mismatch": "Cette demande provient d'un autre appareil que celui qui est connecté.",
+  "auth.device_required": "Cette action nécessite un appareil enregistré. Déconnectez-vous puis reconnectez-vous sur cet appareil.",
+  "auth.device_already_revoked": "Cet appareil est déjà déconnecté.",
+  "auth.reset_link_invalid": "Ce lien de réinitialisation est invalide, a expiré ou a déjà été utilisé. Veuillez en demander un nouveau.",
+  "auth.reset_done": "Votre mot de passe a été modifié. Connectez-vous avec votre nouveau mot de passe.",
+  "auth.reset_generic_link": "Si un compte existe pour cette adresse, nous avons envoyé un lien et un code de réinitialisation.",
+  "entity.device": "Appareil",
+  "mail.reset_link_intro": "Utilisez le bouton ci-dessous pour choisir un nouveau mot de passe.",
+  "mail.reset_link_button": "Réinitialiser mon mot de passe",
+  "mail.reset_link_expiry": "Le lien expire dans {minutes} minutes et ne fonctionne qu'une seule fois.",
+  "mail.reset_or_code": "Ou saisissez ce code sur la page de réinitialisation :"
+}

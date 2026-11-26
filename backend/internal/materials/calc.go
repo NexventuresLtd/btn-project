@@ -20,10 +20,11 @@ const (
 	TypeTransferIn  = "TRANSFER_IN"
 	TypeConsumption = "CONSUMPTION"
 	TypeAdjustment  = "ADJUSTMENT"
+	TypeIssue       = "ISSUE" // P2: issued for non-production use (shown with "Used")
 )
 
 // MovementTypes lists the valid values in legacy order.
-var MovementTypes = []string{TypeOpening, TypeReceipt, TypeTransferOut, TypeTransferIn, TypeConsumption, TypeAdjustment}
+var MovementTypes = []string{TypeOpening, TypeReceipt, TypeTransferOut, TypeTransferIn, TypeConsumption, TypeAdjustment, TypeIssue}
 
 func toMilli(n float64) int64   { return int64(math.Round(n * 1000)) }
 func fromMilli(m int64) float64 { return float64(m) / 1000 }
@@ -149,7 +150,7 @@ func buildDailyReport(dates []string, materials []MaterialInfo, openingBefore ma
 		case TypeTransferOut:
 			a.out += -q
 			a.outTo[cp] += -q
-		case TypeConsumption:
+		case TypeConsumption, TypeIssue:
 			a.used += -q
 		case TypeAdjustment:
 			a.adj += q

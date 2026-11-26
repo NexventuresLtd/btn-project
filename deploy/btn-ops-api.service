@@ -1,4 +1,5 @@
 # /etc/systemd/system/btn-ops-api.service — BTN Operations API (Go) on a VM / bare metal.
+# deploy/deploy.sh installs this unit itself (replacing /opt/btn-ops and the User/Group when overridden); by hand:
 #
 # Build on any machine with Go:  cd backend && CGO_ENABLED=0 go build -trimpath -tags timetzdata \
 #                                   -ldflags="-s -w" -o bin/ ./cmd/server ./cmd/migrate ./cmd/seed ./cmd/import

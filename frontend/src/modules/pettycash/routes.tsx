@@ -7,7 +7,7 @@ export const pettycashRoutes: RouteObject[] = [
   {
     path: "/petty-cash",
     element: (
-      <RequirePermission permission="pettycash.view">
+      <RequirePermission permission={["pettycash.view", "pettycash.record", "pettycash.approve", "pettycash.custodian"]}>
         <PettyCashPage />
       </RequirePermission>
     ),

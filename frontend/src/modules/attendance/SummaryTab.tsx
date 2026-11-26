@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { CalendarDays } from "lucide-react";
-import { Card, ErrorState, PdfButton, Select, Spinner } from "@/components/ui";
+import { Card, ErrorState, ExportMenu, PdfButton, Select, Spinner, DateInput } from "@/components/ui";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/cn";
 import { formatInt, formatQty } from "@/lib/format";
@@ -25,13 +24,12 @@ export function SummaryTab({ site }: { site: Site }) {
           {site.plants.map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}
         </Select>
         <div className="flex items-center gap-1 rounded-xl border border-line bg-white px-2">
-          <CalendarDays className="ml-1 size-4 text-slate-400" />
-          <input type="date" value={from} max={to} onChange={(e) => e.target.value && setFrom(e.target.value)} className="h-9 bg-transparent px-1 text-sm text-slate-700 outline-none" aria-label={t("attendance.date")} />
+          <DateInput variant="bare" value={from} max={to} onChange={(v) => v && setFrom(v)} aria-label={t("attendance.date")} />
           <span className="text-slate-300">–</span>
-          <input type="date" value={to} min={from} max={todayISO()} onChange={(e) => e.target.value && setTo(e.target.value)} className="h-9 bg-transparent px-1 text-sm text-slate-700 outline-none" aria-label={t("attendance.date")} />
+          <DateInput variant="bare" value={to} min={from} max={todayISO()} onChange={(v) => v && setTo(v)} aria-label={t("attendance.date")} />
         </div>
         <div className="ml-auto">
-          <PdfButton path="/attendance/pdf" params={{ plantId: site.plantId, from, to }} label={t("attendance.summary.pdf")} />
+          <div className="flex flex-wrap items-center gap-2"><PdfButton path="/attendance/pdf" params={{ plantId: site.plantId, from, to }} label={t("attendance.summary.pdf")} /><ExportMenu path="/attendance/summary" params={{ plantId: site.plantId, from, to }} /></div>
         </div>
       </div>
 
@@ -53,6 +51,8 @@ export function SummaryTab({ site }: { site: Site }) {
                 <th className="px-3 py-2.5 text-right">{t("attendance.summary.absent")}</th>
                 <th className="px-3 py-2.5 text-right">{t("attendance.summary.leave")}</th>
                 <th className="px-3 py-2.5 text-right">{t("attendance.summary.payable")}</th>
+                <th className="px-3 py-2.5 text-right">{t("attendance.count.overtime")}</th>
+                <th className="px-3 py-2.5 text-right">{t("attendance.count.exceptions")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
@@ -68,6 +68,8 @@ export function SummaryTab({ site }: { site: Site }) {
                   <td className="tabular px-3 py-2.5 text-right text-slate-600">{w.daysAbsent ? formatInt(w.daysAbsent) : <span className="text-slate-300">–</span>}</td>
                   <td className="tabular px-3 py-2.5 text-right text-blue-700">{w.daysLeave ? formatInt(w.daysLeave) : <span className="text-slate-300">–</span>}</td>
                   <td className="tabular px-3 py-2.5 text-right font-semibold text-slate-900">{formatQty(w.payableDays)}</td>
+                  <td className="tabular px-3 py-2.5 text-right text-violet-700">{w.overtimeHours ? formatQty(w.overtimeHours) : <span className="text-slate-300">–</span>}</td>
+                  <td className="tabular px-3 py-2.5 text-right text-red-700">{w.exceptions ? formatInt(w.exceptions) : <span className="text-slate-300">–</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -81,6 +83,8 @@ export function SummaryTab({ site }: { site: Site }) {
                   <td className="tabular px-3 py-3 text-right">{formatInt(totals.daysAbsent)}</td>
                   <td className="tabular px-3 py-3 text-right">{formatInt(totals.daysLeave)}</td>
                   <td className="tabular px-3 py-3 text-right">{formatQty(totals.payableDays)}</td>
+                  <td className="tabular px-3 py-3 text-right">{formatQty(totals.overtimeHours ?? 0)}</td>
+                  <td className="tabular px-3 py-3 text-right">{formatInt(totals.exceptions ?? 0)}</td>
                 </tr>
               </tfoot>
             ) : null}

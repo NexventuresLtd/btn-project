@@ -2,9 +2,11 @@ package reports
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 
 	"btn-ops/internal/auth"
+	"btn-ops/internal/export"
 	"btn-ops/internal/i18n"
 )
 
@@ -19,64 +21,68 @@ func keys(role auth.Role) []string {
 }
 
 func TestCatalogFiltersByRolePermission(t *testing.T) {
-	if got := keys(auth.RoleOperator); !reflect.DeepEqual(got, []string{"production-summary"}) {
-		t.Fatalf("operator %v", got)
-	}
-	if got := keys(auth.RoleGeneralManager); len(got) != len(catalog) {
-		t.Fatalf("gm %v", got)
+	op := keys(auth.RoleOperator)
+	for _, k := range op {
+		if !slices.Contains([]string{"production-summary", "production-periods", "production-targets", "production-reports", "production-corrections"}, k) {
+			t.Fatalf("operator sees %s", k)
+		}
 	}
 	if got := keys(auth.RoleSuperAdmin); len(got) != len(catalog) {
-		t.Fatalf("super admin %v", got)
+		t.Fatalf("super admin %d of %d", len(got), len(catalog))
 	}
 	sales := keys(auth.RoleSalesManager)
-	has := func(k string) bool {
-		for _, x := range sales {
-			if x == k {
-				return true
-			}
-		}
-		return false
-	}
-	if has("pettycash-statement") || !has("sales-receivables") {
+	if slices.Contains(sales, "pettycash-statement") || !slices.Contains(sales, "sales-receivables") || slices.Contains(sales, "audit-trail") {
 		t.Fatalf("sales %v", sales)
+	}
+	sys := keys(auth.RoleSystemAdmin)
+	if !reflect.DeepEqual(sys, []string{"audit-trail"}) {
+		t.Fatalf("system admin %v", sys)
 	}
 }
 
-func TestCatalogGroupOrderAndPlantRequired(t *testing.T) {
+func TestCatalogGroupOrderAndShape(t *testing.T) {
 	var groups []Group
-	for _, g := range CatalogFor(auth.RoleGeneralManager, i18n.EN) {
+	for _, g := range CatalogFor(auth.RoleSuperAdmin, i18n.EN) {
 		groups = append(groups, g.Group)
 	}
-	if !reflect.DeepEqual(groups, []Group{"Production", "Inventory", "Sales", "Finance", "Management"}) {
+	if !reflect.DeepEqual(groups, Groups) {
 		t.Fatalf("groups %v", groups)
 	}
-	if len(CatalogFor(auth.RoleSystemAdmin, i18n.EN)) != 0 {
-		t.Fatal("system admin has no report permission")
+	seen := map[string]bool{}
+	for _, x := range catalog {
+		if seen[x.Key] {
+			t.Fatalf("duplicate %s", x.Key)
+		}
+		seen[x.Key] = true
+		if x.Path == "" || x.ExportPath == "" {
+			t.Fatalf("%s: every report needs a PDF and an export (RPT-03)", x.Key)
+		}
+		if !exportRegistered(x.ExportPath) {
+			t.Fatalf("%s: export path %s is not registered with the export framework", x.Key, x.ExportPath)
+		}
 	}
-	var daily []string
-	for _, e := range catalog {
-		for _, p := range e.Params {
-			if p == "plantRequired" {
-				daily = append(daily, e.Path)
+	// formats + filters are filled per request
+	for _, g := range CatalogFor(auth.RoleGeneralManager, i18n.FR) {
+		for _, r := range g.Reports {
+			if !reflect.DeepEqual(r.Formats, []string{"pdf", "csv", "xlsx", "json"}) {
+				t.Fatalf("%s formats %v", r.Key, r.Formats)
+			}
+			if r.Key == "transfers" && (len(r.Filters) != 1 || r.Filters[0].Key != "status" || r.Filters[0].Options[0].Label == "REQUESTED") {
+				t.Fatalf("transfers filters %+v", r.Filters)
 			}
 		}
 	}
-	if !reflect.DeepEqual(daily, []string{"/stock/pdf/daily", "/materials/pdf/daily"}) {
-		t.Fatalf("plantRequired %v", daily)
-	}
+	_ = export.Reports
 }
 
 func TestCatalogTextsAreLocalised(t *testing.T) {
 	for _, l := range i18n.All {
-		for _, g := range CatalogFor(auth.RoleGeneralManager, l) {
+		for _, g := range CatalogFor(auth.RoleSuperAdmin, l) {
 			for _, e := range g.Reports {
-				if e.Title == "" || e.Title == "reports.cat."+e.Key+".title" || e.Description == "" {
+				if e.Title == "" || e.Title == "reports.cat."+e.Key+".title" || e.Description == "reports.cat."+e.Key+".description" {
 					t.Fatalf("%s %s untranslated", l, e.Key)
 				}
 			}
 		}
-	}
-	if CatalogFor(auth.RoleOperator, i18n.RW)[0].Reports[0].Title != "Incamake y'umusaruro" {
-		t.Fatal("rw title")
 	}
 }

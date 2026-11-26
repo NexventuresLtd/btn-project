@@ -92,7 +92,7 @@ func TestAccessAndOptions(t *testing.T) {
 		t.Fatal("expected ETag")
 	}
 	e.Decode(r, &opt)
-	if len(opt.Plants) != 3 || len(opt.Materials) != 6 || opt.Materials[0]["code"] != "CEMENT" || opt.Materials[0]["minLevel"].(float64) != 50 {
+	if len(opt.Plants) != 4 || len(opt.Materials) != 6 || opt.Materials[0]["code"] != "CEMENT" || opt.Materials[0]["minLevel"].(float64) != 50 {
 		t.Fatalf("options %+v", opt)
 	}
 	// a super admin passes every permission automatically
@@ -178,85 +178,54 @@ func TestReceipt(t *testing.T) {
 	}
 }
 
-func TestTransferPairAndSufficiency(t *testing.T) {
+// historicalTransfer writes a legacy instant OUT/IN pair (before the STK-04 workflow) straight into the ledger.
+func (f *fx) historicalTransfer(t *testing.T, from, to, mat, date string, qty float64) string {
+	t.Helper()
+	var g string
+	err := f.e.Pool.QueryRow(t.Context(), `WITH g AS (SELECT gen_random_uuid()::text AS id),
+		a AS (INSERT INTO "MaterialMovement" (id, "plantId","materialId",date,type,quantity,"counterpartPlantId","transferGroup","createdById")
+			SELECT gen_random_uuid()::text, $1, $3, $4::date, 'TRANSFER_OUT', -$5::numeric, $2, g.id, $6 FROM g RETURNING "transferGroup"),
+		b AS (INSERT INTO "MaterialMovement" (id, "plantId","materialId",date,type,quantity,"counterpartPlantId","transferGroup","createdById")
+			SELECT gen_random_uuid()::text, $2, $3, $4::date, 'TRANSFER_IN', $5::numeric, $1, g.id, $6 FROM g RETURNING 1)
+		SELECT (SELECT "transferGroup" FROM a) FROM b`, f.plant[from], f.plant[to], f.mat[mat], date, qty, f.pm.ID).Scan(&g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+// STK-04: instant transfers are retired (410) in favour of /api/transfers; historical pairs stay readable.
+func TestInstantTransferRetiredHistoryReadable(t *testing.T) {
 	f := setup(t)
 	e := f.e
 	f.receipt(t, "BTN-1", "CEMENT", f.d3, 100)
-	tr := map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-2"], "date": f.d3, "materialId": f.mat["CEMENT"], "quantity": "40", "note": "for block run"}
-	r := f.post("/api/materials/transfers", tr, f.pm)
-	if r.StatusCode != 201 {
-		t.Fatalf("transfer %d %s", r.StatusCode, e.Text(r))
+	tr := map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-2"], "date": f.d3, "materialId": f.mat["CEMENT"], "quantity": "40"}
+	f.wantErr(t, f.post("/api/materials/transfers", tr, f.pm), 410, "transfer_workflow")
+	g := f.historicalTransfer(t, "BTN-1", "BTN-2", "CEMENT", f.d2, 40)
+	var list struct {
+		Items []struct {
+			Type          string  `json:"type"`
+			Quantity      float64 `json:"quantity"`
+			Source        string  `json:"source"`
+			TransferGroup *string `json:"transferGroup"`
+		} `json:"items"`
 	}
-	var out struct {
-		TransferGroup string         `json:"transferGroup"`
-		Out           map[string]any `json:"out"`
-		In            map[string]any `json:"in"`
-	}
-	e.Decode(r, &out)
-	if out.TransferGroup == "" || out.Out["transferGroup"] != out.TransferGroup || out.In["transferGroup"] != out.TransferGroup ||
-		out.Out["type"] != "TRANSFER_OUT" || out.Out["quantity"].(float64) != -40 || out.Out["plantId"] != f.plant["BTN-1"] || out.Out["counterpartPlantId"] != f.plant["BTN-2"] ||
-		out.In["type"] != "TRANSFER_IN" || out.In["quantity"].(float64) != 40 || out.In["plantId"] != f.plant["BTN-2"] || out.In["counterpartPlantId"] != f.plant["BTN-1"] {
-		t.Fatalf("pair %+v", out)
-	}
-	var n int
-	_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM "AuditLog" WHERE action='materials.transfer' AND entity='MaterialTransfer' AND "entityId"=$1`, out.TransferGroup).Scan(&n)
-	if n != 1 {
-		t.Fatal("audit missing")
-	}
-	// same plant / validation
-	bad := map[string]any{}
-	for k, v := range tr {
-		bad[k] = v
-	}
-	bad["toPlantId"] = f.plant["BTN-1"]
-	_, fields := f.wantErr(t, f.post("/api/materials/transfers", bad, f.pm), 400, "bad_request")
-	if fields["toPlantId"] != "Choose a different plant from the sender" {
-		t.Fatalf("%v", fields)
-	}
-	delete(bad, "fromPlantId")
-	_, fields = f.wantErr(t, f.post("/api/materials/transfers", bad, f.pm), 400, "bad_request")
-	if fields["fromPlantId"] != "Select a sending plant" {
-		t.Fatalf("%v", fields)
-	}
-	// permissions + plant scope: BTN-1 supervisor may send, but not from BTN-2
-	if r := f.post("/api/materials/transfers", tr, f.gm); r.StatusCode != 403 {
-		t.Fatalf("gm %d", r.StatusCode)
-	}
-	from2 := map[string]any{"fromPlantId": f.plant["BTN-2"], "toPlantId": f.plant["BTN-1"], "date": f.d3, "materialId": f.mat["CEMENT"], "quantity": 1}
-	if r := f.post("/api/materials/transfers", from2, f.sup1); r.StatusCode != 403 {
-		t.Fatalf("scope %d", r.StatusCode)
-	}
-	// 60 left at BTN-1: 61 is refused with 409 and the available quantity (all three languages)
-	tr["quantity"] = 61
-	msg, fields := f.wantErr(t, f.post("/api/materials/transfers", tr, f.pm), 409, "insufficient_stock")
-	if !strings.Contains(msg, "Not enough Cement at BTN-1: only 60 BAG available") || !strings.Contains(msg, "short by 1") || fields["quantity"] != "Only 60 BAG available" {
-		t.Fatalf("msg %q %v", msg, fields)
-	}
-	rw := e.User(auth.RoleProductionManager, testutil.UserOpts{Language: "rw"})
-	msg, _ = f.wantErr(t, f.post("/api/materials/transfers", tr, rw), 409, "insufficient_stock")
-	if !strings.Contains(msg, "ntihagije") {
-		t.Fatalf("rw %q", msg)
-	}
-	tr["quantity"] = 60
-	if r := f.post("/api/materials/transfers", tr, f.pm); r.StatusCode != 201 {
-		t.Fatalf("exact %d", r.StatusCode)
-	}
-	// the receiving side shows the transfers; BTN-1 is empty
-	var b struct {
-		Cells []struct {
-			PlantID, MaterialID string
-			Balance             float64
-		} `json:"cells"`
-	}
-	e.Decode(e.Do("GET", "/api/materials/balances?date="+f.today, nil, f.pm), &b)
-	got := map[string]float64{}
-	for _, c := range b.Cells {
-		if c.MaterialID == f.mat["CEMENT"] {
-			got[c.PlantID] = c.Balance
+	e.Decode(e.Do("GET", "/api/materials/movements?from="+f.d3+"&to="+f.today, nil, f.pm), &list)
+	seen := map[string]string{}
+	for _, it := range list.Items {
+		if it.TransferGroup != nil && *it.TransferGroup == g {
+			seen[it.Type] = it.Source
 		}
 	}
-	if got[f.plant["BTN-1"]] != 0 || got[f.plant["BTN-2"]] != 100 {
-		t.Fatalf("balances %v", got)
+	if seen["TRANSFER_OUT"] != "Transfer to BTN-2" || seen["TRANSFER_IN"] != "Transfer from BTN-1" {
+		t.Fatalf("history %+v", seen)
+	}
+	// the ledger is append-only (STK-03)
+	if _, err := e.Pool.Exec(t.Context(), `UPDATE "MaterialMovement" SET quantity = 1 WHERE "transferGroup" = $1`, g); err == nil {
+		t.Fatal("ledger update must be refused")
+	}
+	if _, err := e.Pool.Exec(t.Context(), `DELETE FROM "MaterialMovement" WHERE "transferGroup" = $1`, g); err == nil {
+		t.Fatal("ledger delete must be refused")
 	}
 }
 
@@ -269,18 +238,23 @@ func TestBackdatedWithdrawalRespectsLaterMovements(t *testing.T) {
 		t.Fatalf("consumption %d %s", r.StatusCode, f.e.Text(r))
 	}
 	// 50 may not leave on d3: only 30 stays free until the later usage
-	tr := map[string]any{"fromPlantId": f.plant["BTN-3"], "toPlantId": f.plant["BTN-1"], "date": f.d3, "materialId": f.mat["CEMENT"], "quantity": 50}
-	msg, _ := f.wantErr(t, f.post("/api/materials/transfers", tr, f.pm), 409, "insufficient_stock")
-	if !strings.Contains(msg, "only 30 BAG available") || !strings.Contains(msg, "leave only 30 BAG free") {
-		t.Fatalf("msg %q", msg)
+	use := map[string]any{"plantId": f.plant["BTN-3"], "date": f.d3, "materialId": f.mat["CEMENT"], "quantity": 50, "note": "TEST backdated"}
+	msg, fields := f.wantErr(t, f.post("/api/materials/consumption", use, f.pm), 409, "insufficient_stock")
+	if !strings.Contains(msg, "only 30 BAG available") || !strings.Contains(msg, "leave only 30 BAG free") || fields["quantity"] != "Only 30 BAG available" {
+		t.Fatalf("msg %q %v", msg, fields)
 	}
-	tr["quantity"] = 30
-	if r := f.post("/api/materials/transfers", tr, f.pm); r.StatusCode != 201 {
+	rw := f.e.User(auth.RoleProductionManager, testutil.UserOpts{Language: "rw"})
+	msg, _ = f.wantErr(t, f.post("/api/materials/consumption", use, rw), 409, "insufficient_stock")
+	if !strings.Contains(msg, "ntihagije") {
+		t.Fatalf("rw %q", msg)
+	}
+	use["quantity"] = 30
+	if r := f.post("/api/materials/consumption", use, f.pm); r.StatusCode != 201 {
 		t.Fatalf("30: %d", r.StatusCode)
 	}
 }
 
-func TestConcurrentTransfersCannotOverdraw(t *testing.T) {
+func TestConcurrentWithdrawalsCannotOverdraw(t *testing.T) {
 	f := setup(t)
 	f.receipt(t, "BTN-1", "CEMENT", f.d1, 200)
 	var wg sync.WaitGroup
@@ -289,7 +263,7 @@ func TestConcurrentTransfersCannotOverdraw(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r := f.post("/api/materials/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-2"], "date": f.d1, "materialId": f.mat["CEMENT"], "quantity": 60}, f.pm)
+			r := f.post("/api/materials/consumption", map[string]any{"plantId": f.plant["BTN-1"], "date": f.d1, "materialId": f.mat["CEMENT"], "quantity": 60, "note": "TEST run"}, f.pm)
 			codes[i] = r.StatusCode
 			_, _ = io.Copy(io.Discard, r.Body)
 			r.Body.Close()
@@ -443,7 +417,7 @@ func TestBalancesAlertsDailyMovementsAndScope(t *testing.T) {
 	e := f.e
 	f.receipt(t, "BTN-1", "CEMENT", f.d2, 400)
 	f.receipt(t, "BTN-2", "CEMENT", f.d2, 30) // below min 50
-	f.post("/api/materials/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-3"], "date": f.d1, "materialId": f.mat["CEMENT"], "quantity": 100}, f.pm).Body.Close()
+	f.historicalTransfer(t, "BTN-1", "BTN-3", "CEMENT", f.d1, 100)
 	f.post("/api/materials/consumption", map[string]any{"plantId": f.plant["BTN-1"], "materialId": f.mat["CEMENT"], "date": f.d1, "quantity": 120, "note": "TEST usage"}, f.pm).Body.Close()
 
 	// balances (cache is invalidated by writes) + ETag/304
@@ -478,7 +452,7 @@ func TestBalancesAlertsDailyMovementsAndScope(t *testing.T) {
 			}{c.Balance, c.Tracked, c.BelowMin, c.Shortfall}
 		}
 	}
-	if b.Date != f.today || len(b.Plants) != 3 || cell[f.plant["BTN-1"]].bal != 180 || cell[f.plant["BTN-3"]].bal != 100 || !cell[f.plant["BTN-2"]].below || cell[f.plant["BTN-2"]].shortfall != 20 || !cell[f.plant["BTN-2"]].tracked {
+	if b.Date != f.today || len(b.Plants) != 4 || cell[f.plant["BTN-1"]].bal != 180 || cell[f.plant["BTN-3"]].bal != 100 || !cell[f.plant["BTN-2"]].below || cell[f.plant["BTN-2"]].shortfall != 20 || !cell[f.plant["BTN-2"]].tracked {
 		t.Fatalf("balances %+v %+v", b.Date, cell)
 	}
 	if r := e.Do("GET", "/api/materials/balances", nil, f.pm, "If-None-Match", etag); r.StatusCode != 304 {
@@ -533,7 +507,7 @@ func TestBalancesAlertsDailyMovementsAndScope(t *testing.T) {
 		}
 	}
 	e.Decode(e.Do("GET", "/api/materials/daily?plantId="+f.plant["BTN-1"]+"&from="+f.d2+"&to="+f.today, nil, f.pm), &d)
-	if len(d.Plants) != 1 || len(d.Plants[0].Days) != 3 || strings.Join(d.Plants[0].Destinations, ",") != "BTN-2,BTN-3" {
+	if len(d.Plants) != 1 || len(d.Plants[0].Days) != 3 || strings.Join(d.Plants[0].Destinations, ",") != "BTN-2,BTN-3,HQ" {
 		t.Fatalf("daily %+v", d)
 	}
 	day1 := d.Plants[0].Days[1] // d1

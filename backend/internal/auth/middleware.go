@@ -11,7 +11,7 @@ func RequireAuth() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		u := FromCtx(c)
 		if u == nil {
-			return httpx.Unauthorized()
+			return unauthenticated(c)
 		}
 		if u.MustChangePassword {
 			return httpx.Forbidden("error.must_change_password")
@@ -28,10 +28,10 @@ func RequirePermission(perms ...Permission) fiber.Handler {
 			panic("auth: unknown permission " + string(p))
 		}
 	}
-	return func(c *fiber.Ctx) error {
+	return documentPermissions(perms, func(c *fiber.Ctx) error { // F2: recorded for the OpenAPI document
 		u := FromCtx(c)
 		if u == nil {
-			return httpx.Unauthorized()
+			return unauthenticated(c)
 		}
 		if u.MustChangePassword {
 			return httpx.Forbidden("error.must_change_password")
@@ -42,7 +42,7 @@ func RequirePermission(perms ...Permission) fiber.Handler {
 			}
 		}
 		return httpx.Forbidden()
-	}
+	})
 }
 
 // RequireSuperAdmin allows only SUPER_ADMIN.
@@ -50,7 +50,7 @@ func RequireSuperAdmin() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		u := FromCtx(c)
 		if u == nil {
-			return httpx.Unauthorized()
+			return unauthenticated(c)
 		}
 		if u.MustChangePassword {
 			return httpx.Forbidden("error.must_change_password")
@@ -64,7 +64,7 @@ func RequireSuperAdmin() fiber.Handler {
 
 // ScopedPlantID is the only plant a plant-scoped user may touch ("" = all plants).
 func ScopedPlantID(u *User) string {
-	if IsPlantScoped(u.Role) {
+	if UserPlantScoped(u.Role, u.PlantID) {
 		if u.PlantID == "" {
 			return "__none__"
 		}

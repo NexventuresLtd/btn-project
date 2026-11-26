@@ -181,10 +181,10 @@ func TestPresentation(t *testing.T) {
 		short    bool
 		want     string
 	}{
-		{"2026-11-01", "2026-11-15", false, "1–15 November 2026"},
-		{"2026-11-16", "2026-12-15", false, "16 November – 15 December 2026"},
-		{"2026-12-16", "2027-01-15", true, "16 Dec 2026 – 15 Jan 2027"},
-		{"2026-11-03", "2026-11-03", false, "3 November 2026"},
+		{"2026-11-01", "2026-11-15", false, "01/11/2026 – 15/11/2026"},
+		{"2026-11-16", "2026-12-15", false, "16/11/2026 – 15/12/2026"},
+		{"2026-12-16", "2027-01-15", true, "16/12/2026 – 15/01/2027"},
+		{"2026-11-03", "2026-11-03", false, "03/11/2026"},
 	}
 	for _, c := range cases {
 		if got := FormatPeriodRange(i18n.EN, d(c.from), d(c.to), c.short); got != c.want {
@@ -194,7 +194,7 @@ func TestPresentation(t *testing.T) {
 	if PeriodNumber("BTN-1", d("2026-11-01")) != "WG-BTN1-20261101" {
 		t.Fatal("number")
 	}
-	if got := FormatPeriodRange(i18n.RW, d("2026-11-01"), d("2026-11-15"), false); got != "1–15 Ugushyingo 2026" {
+	if got := FormatPeriodRange(i18n.RW, d("2026-11-01"), d("2026-11-15"), false); got != "01/11/2026 – 15/11/2026" {
 		t.Fatalf("rw %q", got)
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"btn-ops/internal/db"
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/i18n"
+	"btn-ops/internal/stock"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -129,15 +130,23 @@ func getBalances(ctx context.Context, q db.DBTX, plants []PlantRef, dateISO stri
 	if err != nil {
 		return nil, err
 	}
+	overrides, err := stock.LevelOverrides(ctx, q, stock.ItemMaterial)
+	if err != nil {
+		return nil, err
+	}
 	cells := make([]BalanceCell, 0, len(plants)*len(materials))
 	for _, p := range plants {
 		for _, m := range materials {
 			v, tracked := sums[[2]string{p.ID, m.ID}]
 			bal := fromMilli(v)
-			below := isBelowMin(bal, m.MinLevel, tracked)
-			c := BalanceCell{PlantID: p.ID, MaterialID: m.ID, Balance: bal, MinLevel: m.MinLevel, Tracked: tracked, BelowMin: below}
+			min := m.MinLevel
+			if o, ok := overrides[p.ID+":"+m.ID]; ok {
+				min, tracked = o, true
+			}
+			below := isBelowMin(bal, min, tracked)
+			c := BalanceCell{PlantID: p.ID, MaterialID: m.ID, Balance: bal, MinLevel: min, Tracked: tracked, BelowMin: below}
 			if below {
-				c.Shortfall = round3(m.MinLevel - bal)
+				c.Shortfall = round3(min - bal)
 			}
 			cells = append(cells, c)
 		}
@@ -285,6 +294,8 @@ type Movement struct {
 	Source           string    `json:"source"`
 	SourceNumber     *string   `json:"sourceNumber"`
 	CreatedBy        *userRef  `json:"createdBy"`
+	LotRef           *string   `json:"lotRef"`
+	DeviceID         *string   `json:"deviceId"`
 	CreatedAt        string    `json:"createdAt"`
 }
 
@@ -304,6 +315,8 @@ type movementFilter struct {
 	materialID string
 	typ        string
 	from, to   time.Time
+	userID     string
+	lotRef     string
 }
 
 func (f movementFilter) where() (string, []any) {
@@ -316,6 +329,14 @@ func (f movementFilter) where() (string, []any) {
 	if f.typ != "" {
 		args = append(args, f.typ)
 		w += ` AND m.type = $` + strconv.Itoa(len(args)) + `::"MaterialMovementType"`
+	}
+	if f.userID != "" {
+		args = append(args, f.userID)
+		w += ` AND m."createdById" = $` + strconv.Itoa(len(args))
+	}
+	if f.lotRef != "" {
+		args = append(args, f.lotRef)
+		w += ` AND m."lotRef" = $` + strconv.Itoa(len(args))
 	}
 	return w, args
 }
@@ -335,13 +356,19 @@ func listMovements(ctx context.Context, q db.DBTX, lang i18n.Lang, f movementFil
 	args = append(args, limit, offset)
 	rows, err := q.Query(ctx, `SELECT m.id, m.date::text, m.type::text, m.quantity::text, m."unitCost", m.supplier, m.reference, m.note,
 		p.id, p.code, p.name, mt.id, mt.code, mt.name, mt.unit, cp.id, cp.code, cp.name,
-		m."transferGroup", m."sourceType", m."sourceId", pr.number, m."createdById", u.name, m."createdAt"
+		m."transferGroup", m."sourceType", m."sourceId",
+		CASE m."sourceType" WHEN 'ProductionReport' THEN pr.number WHEN 'StockTransfer' THEN tr.number WHEN 'StockTransferReversal' THEN tr.number
+			WHEN 'StockCount' THEN sc.number WHEN 'StockAdjustment' THEN sa.number ELSE NULL END,
+		m."createdById", u.name, m."createdAt", m."lotRef", m."deviceId"
 		FROM "MaterialMovement" m
 		JOIN "Plant" p ON p.id = m."plantId"
 		JOIN "Material" mt ON mt.id = m."materialId"
 		LEFT JOIN "Plant" cp ON cp.id = m."counterpartPlantId"
 		LEFT JOIN "User" u ON u.id = m."createdById"
 		LEFT JOIN "ProductionReport" pr ON m."sourceType" = 'ProductionReport' AND pr.id = m."sourceId"
+		LEFT JOIN stock_transfer tr ON m."sourceType" IN ('StockTransfer','StockTransferReversal') AND tr.id = m."sourceId"
+		LEFT JOIN stock_count sc ON m."sourceType" = 'StockCount' AND sc.id = m."sourceId"
+		LEFT JOIN stock_adjustment sa ON m."sourceType" = 'StockAdjustment' AND sa.id = m."sourceId"
 		WHERE `+where+` ORDER BY m.date DESC, m."createdAt" DESC, m.id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		return nil, 0, err
@@ -354,7 +381,7 @@ func listMovements(ctx context.Context, q db.DBTX, lang i18n.Lang, f movementFil
 		var createdAt time.Time
 		if err := rows.Scan(&m.ID, &m.Date, &m.Type, &qty, &m.UnitCost, &m.Supplier, &m.Reference, &m.Note,
 			&m.Plant.ID, &m.Plant.Code, &m.Plant.Name, &m.Material.ID, &m.Material.Code, &m.Material.Name, &m.Material.Unit,
-			&cpID, &cpCode, &cpName, &m.TransferGroup, &m.SourceType, &m.SourceID, &m.SourceNumber, &createdByID, &userName, &createdAt); err != nil {
+			&cpID, &cpCode, &cpName, &m.TransferGroup, &m.SourceType, &m.SourceID, &m.SourceNumber, &createdByID, &userName, &createdAt, &m.LotRef, &m.DeviceID); err != nil {
 			return nil, 0, err
 		}
 		m.Quantity = fromMilli(parseMilli(qty))
@@ -403,6 +430,25 @@ func sourceLabel(lang i18n.Lang, typ, sourceType, counterpart, supplier, reportN
 	}
 	if sourceType == "Import" {
 		return i18n.T(lang, "materials.source.import")
+	}
+	switch sourceType {
+	case "StockTransfer", "StockTransferReversal":
+		if reportNumber != "" {
+			if typ == TypeTransferOut {
+				return i18n.T(lang, "materials.source.transfer_to", "plant", counterpart) + " · " + reportNumber
+			}
+			if typ == TypeTransferIn && counterpart != "" {
+				return i18n.T(lang, "materials.source.transfer_from", "plant", counterpart) + " · " + reportNumber
+			}
+			return reportNumber
+		}
+	case "StockCount", "StockAdjustment":
+		if reportNumber != "" {
+			return i18n.T(lang, "materials.source.adjustment") + " · " + reportNumber
+		}
+	}
+	if typ == TypeIssue {
+		return i18n.T(lang, "materials.source.issue")
 	}
 	switch typ {
 	case TypeTransferOut:
@@ -468,9 +514,10 @@ func availableAt(ctx context.Context, tx pgx.Tx, plantID, materialID string, dat
 	return balance, availableToWithdraw(balance, later), nil
 }
 
-// fmtDate renders "14 Nov 2026" with localized month abbreviations.
+// fmtDate renders "14/11/2026" (NFR-L1).
 func fmtDate(lang i18n.Lang, t time.Time) string {
-	return strconv.Itoa(t.UTC().Day()) + " " + i18n.T(lang, "materials.month."+strconv.Itoa(int(t.UTC().Month()))) + " " + strconv.Itoa(t.UTC().Year())
+	_ = lang
+	return dates.FormatDate(t)
 }
 
 // assertAvailable returns a 409 with the available quantity if quantity cannot be withdrawn. Call after lockStock.
@@ -553,16 +600,17 @@ type MovementRow struct {
 	CounterpartPlantID *string `json:"counterpartPlantId"`
 	TransferGroup      *string `json:"transferGroup"`
 	Note               *string `json:"note"`
+	LotRef             *string `json:"lotRef"`
 	CreatedAt          string  `json:"createdAt"`
 }
 
-const returningCols = `id, "plantId", "materialId", date::text, type::text, quantity::text, "unitCost", supplier, reference, "counterpartPlantId", "transferGroup", note, "createdAt"`
+const returningCols = `id, "plantId", "materialId", date::text, type::text, quantity::text, "unitCost", supplier, reference, "counterpartPlantId", "transferGroup", note, "createdAt", "lotRef"`
 
 func scanMovementRow(r pgx.Row) (MovementRow, error) {
 	var m MovementRow
 	var qty string
 	var at time.Time
-	err := r.Scan(&m.ID, &m.PlantID, &m.MaterialID, &m.Date, &m.Type, &qty, &m.UnitCost, &m.Supplier, &m.Reference, &m.CounterpartPlantID, &m.TransferGroup, &m.Note, &at)
+	err := r.Scan(&m.ID, &m.PlantID, &m.MaterialID, &m.Date, &m.Type, &qty, &m.UnitCost, &m.Supplier, &m.Reference, &m.CounterpartPlantID, &m.TransferGroup, &m.Note, &at, &m.LotRef)
 	m.Quantity = fromMilli(parseMilli(qty))
 	m.CreatedAt = at.UTC().Format("2006-01-02T15:04:05.000Z")
 	return m, err

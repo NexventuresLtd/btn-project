@@ -19,6 +19,8 @@ import (
 func Register(r fiber.Router, d *deps.Deps) {
 	h := &handler{d}
 	r.Get("/", auth.RequirePermission("dashboard.view"), h.get)
+	r.Get("/boards", auth.RequirePermission("dashboard.view"), h.boards)       // RPT-01: boards this user may open
+	r.Get("/boards/:board", auth.RequirePermission("dashboard.view"), h.board) // RPT-01: one role dashboard
 }
 
 type handler struct{ d *deps.Deps }

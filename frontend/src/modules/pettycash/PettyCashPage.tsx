@@ -1,27 +1,36 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
-import { ArrowDownToLine, ArrowUpDown, ArrowUpFromLine, Check, Clock, FileDown, Lock, Pencil, Plus, Search, Wallet, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowDownToLine, ArrowUpDown, ArrowUpFromLine, Check, Clock, CloudOff, FileDown, Lock, Pencil, Plus, Search, Wallet, X } from "lucide-react";
 import {
-  Badge, Button, Card, CardHeader, ConfirmDialog, DataTable, ErrorState, Field, FilterBar, Input, Modal, PageHeader, Pagination, PdfButton,
-  StatCard, StatusBadge, Tabs, Textarea, useFilters, type Column,
+  Alert, Badge, Button, Card, CardHeader, ConfirmDialog, DataTable, ErrorState, Field, FilterBar, Input, Modal, PageHeader, Pagination, ExportMenu, PdfButton,
+  Select, StatCard, StatusBadge, Tabs, Textarea, useFilters, type Column,
 } from "@/components/ui";
 import { useT } from "@/i18n";
 import { useAuth } from "@/auth/AuthProvider";
 import { fieldError, useMutate } from "@/hooks/useMutate";
-import { openPdf, qs } from "@/lib/api";
+import { get, openPdf, qs } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/dates";
 import { formatInt, formatRWF } from "@/lib/format";
 import { cn } from "@/lib/cn";
-import { approveEntry, rejectEntry, useEntries, useSummary, PC_KEY, type EntryType, type PettyEntry } from "./api";
+import { useConnectivity, useOfflineList } from "@/offline/hooks";
+import { SyncBadge } from "@/offline/ui/SyncBadge";
+import { useLookups } from "@/hooks/useLookups";
+import { approveEntry, rejectEntry, useEntries, useFloats, useSummary, PC_KEY, type EntryType, type PettyEntry, type PettyFloat } from "./api";
 import { categoryLabel } from "./labels";
 import { EntryFormModal } from "./EntryFormModal";
 import { CategoryChart, PlantChart } from "./SpendingCharts";
+import { FloatsTab } from "./FloatsTab";
+import { ReconciliationsTab } from "./ReconciliationsTab";
+import { PETTY_CASH_TYPE, type LocalPettyEntry } from "./offline";
+
+type PageTab = "ledger" | "floats" | "reconciliations";
 
 type StatusTab = "ALL" | "SUBMITTED" | "APPROVED" | "REJECTED";
 const PAGE_SIZE = 50;
 
 export function PettyCashPage() {
-  const { t, tx } = useT();
+  const { t } = useT();
   const { user, can } = useAuth();
   const { filters, set, pinnedPlant, query: rangeQuery } = useFilters();
   const [params, setParams] = useSearchParams();
@@ -41,19 +50,48 @@ export function PettyCashPage() {
     setParams(next, { replace: true });
   };
 
-  const summary = useSummary(rangeQuery);
-  const entriesQuery = qs({ ...filters, status: status === "ALL" ? undefined : status, q: q || undefined, order, page, pageSize: PAGE_SIZE });
-  const entries = useEntries(entriesQuery);
+  const tab = (["floats", "reconciliations"].includes(params.get("tab") ?? "") ? params.get("tab") : "ledger") as PageTab;
+  const net = useConnectivity();
+  const { tx: tlx } = useT();
+  const { data: lookups } = useLookups();
+  const catName = useMemo(() => {
+    const m = new Map((lookups?.refdata?.expense_category ?? []).map((c) => [c.code, c.name]));
+    return (e: { expenseCategory?: string | null; category: string }) => (e.expenseCategory && m.get(e.expenseCategory)) || categoryLabel(tlx, e.category);
+  }, [lookups, tlx]);
 
-  const [form, setForm] = useState<{ type: EntryType; entry?: PettyEntry } | null>(null);
+  const floatsQ = useFloats();
+  const floats = useMemo(() => floatsQ.data?.items ?? [], [floatsQ.data]);
+  const seesAll = can("pettycash.view") || can("pettycash.record") || can("pettycash.approve");
+  const ownFloats = floats.filter((f) => f.isMine);
+  // custodians work in their own float; finance may look at all floats or one
+  const floatParam = params.get("floatId") ?? "";
+  const floatId = floatParam || (!seesAll ? (ownFloats[0]?.id ?? "") : "");
+  const currentFloat = floats.find((f) => f.id === floatId);
+
+  const summary = useSummary(rangeQuery + (floatId ? `${rangeQuery ? "&" : "?"}floatId=${encodeURIComponent(floatId)}` : ""));
+  const entriesQuery = qs({ ...filters, floatId: floatId || undefined, status: status === "ALL" ? undefined : status, q: q || undefined, order, page, pageSize: PAGE_SIZE });
+  const entries = useEntries(entriesQuery);
+  // entries captured on this device that the server has not confirmed yet (SRS §5.2)
+  const local = useOfflineList<LocalPettyEntry>(PETTY_CASH_TYPE, (r) => r._status === "pending" || r._status === "rejected" || r._status === "conflict");
+
+  const [form, setForm] = useState<{ type: EntryType; entry?: PettyEntry; floatId?: string; amount?: number } | null>(null);
   const [approving, setApproving] = useState<PettyEntry | null>(null);
   const [rejecting, setRejecting] = useState<PettyEntry | null>(null);
 
-  const canRecord = can("pettycash.record");
+  const canRecord = can("pettycash.record") || (can("pettycash.custodian") && ownFloats.length > 0);
   const canApprove = can("pettycash.approve");
   const isOwn = (e: PettyEntry) => e.createdBy.id === user?.id;
+  const isCustodianOf = (e: PettyEntry) => !!e.float?.custodianId && e.float.custodianId === user?.id;
   const canEdit = (e: PettyEntry) => canRecord && isOwn(e) && !e.readOnly && (e.status === "SUBMITTED" || e.status === "REJECTED");
-  const canReview = (e: PettyEntry) => canApprove && !isOwn(e) && e.status === "SUBMITTED";
+  // separation of duties: never the person who recorded it, never the custodian approving their own float's top-up
+  const canReview = (e: PettyEntry) => canApprove && !isOwn(e) && !(e.isTopUp && isCustodianOf(e)) && e.status === "SUBMITTED";
+
+  // deep link from a notification: /petty-cash?entry=<id>
+  const entryParam = params.get("entry");
+  const focused = useQuery({ queryKey: [...PC_KEY, "entry", entryParam], queryFn: ({ signal }) => get<PettyEntry>(`/pettycash/entries/${entryParam}`, signal), enabled: !!entryParam });
+  useEffect(() => {
+    if (focused.data && canReview(focused.data)) setApproving(focused.data);
+  }, [focused.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const s = summary.data;
   const counts = entries.data?.statusCounts ?? {};
@@ -77,8 +115,10 @@ export function PettyCashPage() {
         <div>
           <p className="text-slate-800">{e.description}</p>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            <Badge tone={e.type === "DEPOSIT" ? "green" : "slate"}>{categoryLabel(tx, e.category)}</Badge>
+            <Badge tone={e.type === "DEPOSIT" ? "green" : "slate"}>{e.isTopUp ? t("pettycash.topUpBadge") : catName(e)}</Badge>
+            {e.float && !floatId ? <Badge tone="blue">{e.float.code}</Badge> : null}
             {e.plant ? <Badge tone="navy">{e.plant.code}</Badge> : null}
+            {e.capturedOffline ? <Badge tone="slate"><CloudOff className="size-3" />{t("pettycash.capturedOffline")}</Badge> : null}
             {e.readOnly ? <Badge tone="purple"><Lock className="size-3" />{t("pettycash.badge.payroll")}</Badge> : null}
             {e.invoiceRef ? <span className="text-xs text-slate-500">{t("pettycash.invoiceShort", { ref: e.invoiceRef })}</span> : null}
           </div>
@@ -129,6 +169,8 @@ export function PettyCashPage() {
             <p className="mt-1 line-clamp-2 text-xs text-red-700" title={e.reviewComment}>“{e.reviewComment}”</p>
           ) : e.status === "SUBMITTED" && isOwn(e) && canApprove ? (
             <p className="mt-1 text-xs text-slate-500">{t("pettycash.needsOtherApprover")}</p>
+          ) : e.status === "SUBMITTED" && e.isTopUp && isCustodianOf(e) && canApprove ? (
+            <p className="mt-1 text-xs text-slate-500">{t("pettycash.custodianCannotApprove")}</p>
           ) : null}
         </div>
       ),
@@ -141,8 +183,8 @@ export function PettyCashPage() {
         <div className="flex items-center justify-end gap-1.5">
           {canReview(e) ? (
             <>
-              <Button size="sm" variant="success" icon={<Check className="size-3.5" />} onClick={() => setApproving(e)}>{t("common.approve")}</Button>
-              <Button size="sm" variant="secondary" icon={<X className="size-3.5" />} onClick={() => setRejecting(e)} className="text-red-700">{t("common.reject")}</Button>
+              <Button size="sm" variant="success" icon={<Check className="size-3.5" />} onClick={() => setApproving(e)} disabled={!net.reachable} title={!net.reachable ? t("pettycash.offline.approvalOnline") : undefined}>{t("common.approve")}</Button>
+              <Button size="sm" variant="secondary" icon={<X className="size-3.5" />} onClick={() => setRejecting(e)} className="text-red-700" disabled={!net.reachable} title={!net.reachable ? t("pettycash.offline.approvalOnline") : undefined}>{t("common.reject")}</Button>
             </>
           ) : null}
           {canEdit(e) ? (
@@ -174,24 +216,53 @@ export function PettyCashPage() {
         description={t("pettycash.page.description")}
         actions={
           <>
-            <PdfButton path="/pettycash/pdf/statement" params={{ from: filters.from, to: filters.to, plantId: filters.plantId || undefined }} label={t("pettycash.page.statementPdf")} />
+            <div className="flex flex-wrap items-center gap-2"><PdfButton path="/pettycash/pdf/statement" params={{ from: filters.from, to: filters.to, plantId: filters.plantId || undefined, floatId: floatId || undefined }} label={t("pettycash.page.statementPdf")} /><ExportMenu path="/pettycash/entries" params={{ from: filters.from, to: filters.to, plantId: filters.plantId || undefined, floatId: floatId || undefined }} /></div>
             {canRecord ? (
               <>
-                <Button variant="secondary" icon={<ArrowDownToLine className="size-4" />} onClick={() => setForm({ type: "DEPOSIT" })}>{t("pettycash.form.recordDeposit")}</Button>
-                <Button icon={<Plus className="size-4" />} onClick={() => setForm({ type: "EXPENSE" })}>{t("pettycash.form.recordExpense")}</Button>
+                <Button variant="secondary" icon={<ArrowDownToLine className="size-4" />} onClick={() => setForm({ type: "DEPOSIT", floatId: floatId || undefined, amount: currentFloat?.topUpSuggestion || undefined })}>{t("pettycash.form.requestTopUp")}</Button>
+                <Button icon={<Plus className="size-4" />} onClick={() => setForm({ type: "EXPENSE", floatId: floatId || undefined })}>{t("pettycash.form.recordExpense")}</Button>
               </>
             ) : null}
           </>
         }
       />
 
-      <FilterBar filters={filters} onChange={set} pinnedPlant={pinnedPlant} className="mb-5" />
+      <Tabs
+        tabs={[{ value: "ledger" as PageTab, label: t("pettycash.tab.ledger") }, { value: "floats" as PageTab, label: t("pettycash.tab.floats"), count: floats.length || undefined }, { value: "reconciliations" as PageTab, label: t("pettycash.tab.reconciliations") }]}
+        value={tab}
+        onChange={(v) => setParam({ tab: v === "ledger" ? undefined : v, float: undefined, rec: undefined })}
+        className="mb-5 max-w-full overflow-x-auto"
+      />
+      {!net.reachable ? <div className="mb-5"><Alert tone="amber" title={t("pettycash.offline.title")}>{t("pettycash.offline.banner")}</Alert></div> : null}
+
+      {tab === "floats" ? (
+        <FloatsTab data={floatsQ.data} isLoading={floatsQ.isLoading} error={floatsQ.error} retry={() => floatsQ.refetch()} focusId={params.get("float")}
+          actions={{
+            topUp: (f: PettyFloat) => setForm({ type: "DEPOSIT", floatId: f.id, amount: f.topUpSuggestion || undefined }),
+            spend: (f: PettyFloat) => setForm({ type: "EXPENSE", floatId: f.id }),
+            ledger: (f: PettyFloat) => setParam({ tab: undefined, floatId: f.id, float: undefined }),
+          }} />
+      ) : tab === "reconciliations" ? (
+        <ReconciliationsTab floats={floats} floatId={floatParam || (!seesAll ? floatId : "")} onFloat={(id) => setParam({ floatId: id || undefined }, true)}
+          openId={params.get("rec")} onOpen={(id) => setParam({ rec: id ?? undefined }, true)} />
+      ) : (
+      <>
+      <div className="mb-5 flex flex-wrap items-end gap-3">
+        <FilterBar filters={filters} onChange={set} pinnedPlant={pinnedPlant} className="min-w-0 flex-1" />
+        {floats.length > 0 ? (
+          <Select value={floatId} onChange={(e) => setParam({ floatId: e.target.value || undefined })} className="h-9 w-full sm:w-64" aria-label={t("pettycash.float.filter")}>
+            {seesAll ? <option value="">{t("pettycash.float.all")}</option> : null}
+            {floats.map((f) => <option key={f.id} value={f.id}>{f.code} · {f.name}</option>)}
+          </Select>
+        ) : null}
+      </div>
+      {!seesAll && !ownFloats.length && !floatsQ.isLoading ? <div className="mb-5"><Alert tone="blue">{t("pettycash.float.noneAssigned")}</Alert></div> : null}
 
       {summary.isError ? (
         <Card className="mb-5"><ErrorState error={summary.error} retry={() => summary.refetch()} /></Card>
       ) : (
         <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard label={t("pettycash.kpi.currentBalance")} value={kpi(s?.currentBalance)} icon={<Wallet />} tone={s && s.currentBalance < 0 ? "red" : "navy"} hint={t("pettycash.kpi.currentBalanceHint")} />
+          <StatCard label={currentFloat ? t("pettycash.kpi.floatBalance", { code: currentFloat.code }) : t("pettycash.kpi.currentBalance")} value={kpi(s?.currentBalance)} icon={<Wallet />} tone={s && s.currentBalance < 0 ? "red" : "navy"} hint={currentFloat ? t("pettycash.kpi.floatBalanceHint") : t("pettycash.kpi.currentBalanceHint")} />
           <StatCard label={t("pettycash.kpi.deposits")} value={kpi(s?.deposits)} icon={<ArrowDownToLine />} tone="green" hint={s ? t("pettycash.kpi.depositsHint", { topups: t("pettycash.topups", { count: s.depositCount }), opening: formatRWF(s.opening) }) : undefined} />
           <StatCard label={t("pettycash.kpi.expenses")} value={kpi(s?.expensesTotal)} icon={<ArrowUpFromLine />} tone="amber" hint={s ? t("pettycash.kpi.expensesHint", { payments: t("pettycash.payments", { count: s.expenseCount }), charges: formatRWF(s.charges) }) : undefined} />
           <StatCard
@@ -208,6 +279,20 @@ export function PettyCashPage() {
         <CategoryChart data={s} loading={summary.isLoading} error={summary.error} retry={() => summary.refetch()} />
         <PlantChart data={s} loading={summary.isLoading} error={summary.error} retry={() => summary.refetch()} />
       </div>
+
+      {local.data?.length ? (
+        <Card className="mb-5">
+          <CardHeader title={t("pettycash.local.title")} description={t("pettycash.local.desc")} />
+          <ul className="divide-y divide-line px-5 pb-4">
+            {local.data.map((r) => (
+              <li key={r._key} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                <span className="min-w-0 text-slate-800">{formatDate(r.date)} · {r.type === "DEPOSIT" ? t("pettycash.topUpBadge") : catName({ expenseCategory: r.category, category: r.category ?? "OTHER" })} · {r.description}</span>
+                <span className="flex items-center gap-2"><span className="tabular font-semibold">{formatRWF(r.amount + (r.momoCharge ?? 0))}</span><SyncBadge status={r._status} /></span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader
@@ -268,16 +353,23 @@ export function PettyCashPage() {
           </>
         )}
       </Card>
+      </>
+      )}
 
       <EntryFormModal
         open={!!form}
         onClose={() => setForm(null)}
         type={form?.type ?? "EXPENSE"}
         entry={form?.entry}
-        currentBalance={s?.currentBalance}
+        floats={floats}
+        defaultFloatId={form?.floatId ?? (floatId || undefined)}
+        defaultAmount={form?.amount}
         approvalLimit={s?.approvalLimit}
       />
-      <ApproveDialog entry={approving} balance={s?.currentBalance} onClose={() => setApproving(null)} />
+      <ApproveDialog entry={approving} balance={approving ? floats.find((f) => f.id === approving.floatId)?.balance : undefined} onClose={() => {
+        setApproving(null);
+        if (entryParam) setParam({ entry: undefined }, true);
+      }} />
       <RejectDialog entry={rejecting} onClose={() => setRejecting(null)} />
     </>
   );
@@ -292,7 +384,7 @@ function EntrySummary({ e }: { e: PettyEntry }) {
       <dt className="text-slate-500">{e.type === "DEPOSIT" ? t("pettycash.summary.deposit") : t("pettycash.summary.paidTo")}</dt>
       <dd className="text-slate-900">{e.type === "DEPOSIT" ? t("pettycash.summary.floatTopup") : `${e.payeeName ?? "—"}${e.momoNumber ? ` · ${e.momoNumber}` : ""}`}</dd>
       <dt className="text-slate-500">{t("pettycash.summary.for")}</dt>
-      <dd className="text-slate-900">{e.description} <span className="text-slate-500">({categoryLabel(tx, e.category)}{e.plant ? `, ${e.plant.code}` : ""})</span></dd>
+      <dd className="text-slate-900">{e.description} <span className="text-slate-500">({categoryLabel(tx, e.category)}{e.plant ? `, ${e.plant.code}` : ""}{e.float ? ` · ${e.float.code}` : ""})</span></dd>
       <dt className="text-slate-500">{t("common.amount")}</dt>
       <dd className="tabular font-semibold text-slate-900">
         {formatRWF(e.amount)}

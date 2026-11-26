@@ -3,7 +3,7 @@
 package pettycash
 
 import (
-	"fmt"
+	"btn-ops/internal/dates"
 	"regexp"
 	"strings"
 )
@@ -112,28 +112,74 @@ func normaliseMomo(in string) string {
 
 var enMonths = []string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"}
 
-// formatRangeLabel: "1–30 Nov 2026", "28 Oct – 3 Nov 2026", "28 Dec 2025 – 3 Jan 2026", "14 Nov 2026".
-// months are the 12 month abbreviations of the output language.
+// formatRangeLabel: "01/11/2026 – 30/11/2026" or "14/11/2026" (NFR-L1). months is kept for callers' signature.
 func formatRangeLabel(fromISO, toISO string, months []string) string {
-	var fy, fm, fd, ty, tm, td int
-	fmt.Sscanf(fromISO, "%d-%d-%d", &fy, &fm, &fd)
-	fmt.Sscanf(toISO, "%d-%d-%d", &ty, &tm, &td)
-	if fm < 1 || fm > 12 || tm < 1 || tm > 12 {
-		return fromISO + " – " + toISO
-	}
-	switch {
-	case fromISO == toISO:
-		return fmt.Sprintf("%d %s %d", fd, months[fm-1], fy)
-	case fy == ty && fm == tm:
-		return fmt.Sprintf("%d–%d %s %d", fd, td, months[fm-1], fy)
-	case fy == ty:
-		return fmt.Sprintf("%d %s – %d %s %d", fd, months[fm-1], td, months[tm-1], fy)
-	}
-	return fmt.Sprintf("%d %s %d – %d %s %d", fd, months[fm-1], fy, td, months[tm-1], ty)
+	_ = months
+	return dates.FormatISORange(fromISO, toISO)
 }
 
 // likePattern escapes %, _ and \ so user text matches literally inside ILIKE '%...%'.
 func likePattern(q string) string {
 	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	return "%" + r.Replace(q) + "%"
+}
+
+// ── floats, top-ups, reconciliation (SRS FIN-02, §7.3) ─────────────────────────
+
+// Reconciliation statuses.
+const (
+	RecBalanced      = "BALANCED"
+	RecPendingReview = "PENDING_REVIEW"
+	RecReviewed      = "REVIEWED"
+
+	// ReconciliationSource marks adjustment entries posted when a reconciliation difference is accepted.
+	ReconciliationSource = "PettyCashReconciliation"
+	// ExpenseSource marks entries posted when an expense (internal/expenses) is paid from a float.
+	ExpenseSource = "Expense"
+)
+
+// ReconcileDifference compares the cash counted with the book balance: difference = counted − book
+// (negative = shortage, positive = surplus). Any difference needs a review by someone other than the counter.
+func ReconcileDifference(counted, book int64) (int64, string) {
+	d := counted - book
+	if d == 0 {
+		return 0, RecBalanced
+	}
+	return d, RecPendingReview
+}
+
+// TopUpApproval enforces separation of duties on a float top-up (and any other entry): the approver can be neither
+// the person who recorded it nor the custodian of the float it pays into. ok=false → reason is an i18n key.
+func TopUpApproval(approverID, creatorID string, custodianID *string, isTopUp bool) (bool, string) {
+	if approverID == creatorID {
+		return false, "pettycash.err.self_review"
+	}
+	if isTopUp && custodianID != nil && *custodianID == approverID {
+		return false, "pettycash.err.custodian_topup"
+	}
+	return true, ""
+}
+
+// FloatLow reports whether a float's balance is below its alert threshold (0 = no alert).
+func FloatLow(balance, threshold int64) bool { return threshold > 0 && balance < threshold }
+
+// TopUpSuggestion is the amount that restores the imprest level (0 when at or above it).
+func TopUpSuggestion(imprest, balance int64) int64 {
+	if imprest <= 0 || balance >= imprest {
+		return 0
+	}
+	return imprest - balance
+}
+
+// ReconcileDue reports whether a float must be counted: never counted, or the last count is everyDays or more ago.
+func ReconcileDue(lastISO string, everyDays int, todayISO string) bool {
+	if lastISO == "" {
+		return true
+	}
+	last, err1 := dates.ParseISO(lastISO)
+	today, err2 := dates.ParseISO(todayISO)
+	if err1 != nil || err2 != nil {
+		return true
+	}
+	return int(today.Sub(last).Hours()/24) >= everyDays
 }

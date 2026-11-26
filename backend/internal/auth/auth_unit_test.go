@@ -68,6 +68,9 @@ func TestTempPasswordMeetsPolicy(t *testing.T) {
 func TestPermissions(t *testing.T) {
 	// Operations advisor is read-only (spec §4 note).
 	for _, r := range Matrix {
+		if r.P == "data.export" { // SRS §8 / ADM-05: read-only bulk export
+			continue
+		}
 		if !strings.HasSuffix(string(r.P), ".view") && Can(RoleOperationsAdvisor, r.P) {
 			t.Errorf("advisor must not hold %s", r.P)
 		}
@@ -95,6 +98,101 @@ func TestPermissions(t *testing.T) {
 	}
 	if Can("UNKNOWN", "dashboard.view") != true || Can(RoleOperator, "nope") {
 		t.Error("dashboard.view is for all; unknown permission is denied")
+	}
+}
+
+// TestNewRoleMatrix pins the SRS §8 grants of docs/SRS_BUILD_PLAN.md "Roles and permissions" exactly.
+func TestNewRoleMatrix(t *testing.T) {
+	want := map[Permission][]Role{
+		"admin.monitor":       {SYS},
+		"data.export":         {SYS, MD, GM, OA, FM},
+		"devices.manage":      {SYS, GM, MD},
+		"reports.schedule":    {SYS, GM, MD},
+		"sync.resolve":        {PM, SUP, GM},
+		"production.targets":  {PM, GM},
+		"production.close":    {PM, GM},
+		"stock.record":        {STO, SUP, PM},
+		"transfers.view":      {PM, STO, SUP, LEAD, GM, MD, OA, FM, SM, PRO},
+		"transfers.request":   {SUP, STO, PM},
+		"transfers.approve":   {PM, GM},
+		"transfers.dispatch":  {STO, SUP, PM},
+		"transfers.receive":   {STO, SUP, PM},
+		"stockcount.record":   {STO, SUP, PM},
+		"stockcount.approve":  {PM, GM},
+		"sales.approve":       {SM, GM, MD},
+		"attendance.approve":  {PM, GM},
+		"wages.view":          {FM, PM, GM, MD, OA},
+		"expenses.view":       {FM, GM, MD, OA, PRO},
+		"expenses.record":     {FM, PM, SUP, STO},
+		"expenses.approve":    {FM, GM, MD},
+		"pettycash.custodian": {FM, SUP, PM},
+		"budgets.view":        {FM, GM, MD, OA, PM},
+		"budgets.manage":      {FM},
+		"budgets.approve":     {GM, MD},
+		"procurement.view":    {PM, FM, PRO, GM, MD, OA, STO},
+		"procurement.request": {SUP, PM, STO, PRO, FM},
+		"procurement.approve": {PM, FM, GM, MD},
+		"procurement.manage":  {PRO, FM},
+		"procurement.receive": {STO, PRO, SUP, PM},
+	}
+	for p, roles := range want {
+		if !Known(p) {
+			t.Errorf("%s missing from Matrix", p)
+			continue
+		}
+		set := map[Role]bool{}
+		for _, r := range roles {
+			set[r] = true
+		}
+		for _, r := range AllRoles {
+			if r == RoleSuperAdmin {
+				if !Can(r, p) {
+					t.Errorf("super admin lacks %s", p)
+				}
+				continue
+			}
+			if Can(r, p) != set[r] {
+				t.Errorf("%s for %s: got %v want %v", p, r, Can(r, p), set[r])
+			}
+		}
+	}
+	// New roles: exact permission sets (view grants per §8 + the table above).
+	sto := []string{"dashboard.view", "production.view", "stock.view", "stock.record", "transfers.view", "transfers.request",
+		"transfers.dispatch", "transfers.receive", "stockcount.record", "materials.view", "sales.view", "expenses.record",
+		"procurement.view", "procurement.request", "procurement.receive", "reports.view"}
+	pro := []string{"dashboard.view", "transfers.view", "expenses.view", "procurement.view", "procurement.request",
+		"procurement.manage", "procurement.receive", "reports.view"}
+	for role, exp := range map[Role][]string{RoleStockOfficer: sto, RoleProcurementOfficer: pro} {
+		got := PermissionsFor(role)
+		if strings.Join(got, ",") != strings.Join(exp, ",") {
+			t.Errorf("%s permissions\n got %v\nwant %v", role, got, exp)
+		}
+		if !role.Valid() || RoleLabels[role] == "" {
+			t.Errorf("%s not registered", role)
+		}
+	}
+	// Neither new role may touch administration or approvals of money.
+	for _, r := range []Role{RoleStockOfficer, RoleProcurementOfficer} {
+		for _, p := range []Permission{"users.manage", "settings.manage", "masterdata.manage", "payroll.authorize", "pettycash.approve", "expenses.approve", "procurement.approve", "transfers.approve", "stockcount.approve", "admin.monitor"} {
+			if Can(r, p) {
+				t.Errorf("%s must not hold %s", r, p)
+			}
+		}
+	}
+	// Scoping: stock officer is pinned only when assigned a plant; procurement officer never.
+	if IsPlantScoped(RoleStockOfficer) || !UserPlantScoped(RoleStockOfficer, "p1") || UserPlantScoped(RoleStockOfficer, "") {
+		t.Error("stock officer optional scoping wrong")
+	}
+	if UserPlantScoped(RoleProcurementOfficer, "p1") {
+		t.Error("procurement officer is an HQ role, never plant-scoped")
+	}
+	so := &User{Role: RoleStockOfficer, PlantID: "p1"}
+	if PlantFilter(so, "p2") != "p1" || AssertPlantAccess(so, "p2") == nil {
+		t.Error("assigned stock officer must be pinned")
+	}
+	central := &User{Role: RoleStockOfficer}
+	if PlantFilter(central, "p2") != "p2" || AssertPlantAccess(central, "p2") != nil {
+		t.Error("central stock officer sees all locations")
 	}
 }
 

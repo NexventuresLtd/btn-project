@@ -15,6 +15,7 @@ type PlantStat struct {
 	Code        string  `json:"code"`
 	Name        string  `json:"name"`
 	Location    *string `json:"location"`
+	Kind        string  `json:"kind"`
 	IsActive    bool    `json:"isActive"`
 	WorkerCount int     `json:"workerCount"`
 	UserCount   int     `json:"userCount"`
@@ -24,7 +25,7 @@ type PlantStat struct {
 // sub-queries (no N+1). Permission is masterdata.manage (checked on the route).
 func plantStats(c *fiber.Ctx, d *deps.Deps) error {
 	ctx := httpx.Ctx(c)
-	rows, err := d.Pool.Query(ctx, `SELECT p.id, p.code, p.name, p.location, p."isActive",
+	rows, err := d.Pool.Query(ctx, `SELECT p.id, p.code, p.name, p.location, p.kind, p."isActive",
 		COALESCE(w.n, 0) AS workers, COALESCE(u.n, 0) AS users
 		FROM "Plant" p
 		LEFT JOIN (SELECT "plantId", count(*) AS n FROM "Worker" WHERE "isActive" GROUP BY "plantId") w ON w."plantId" = p.id

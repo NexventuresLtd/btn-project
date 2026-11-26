@@ -4,7 +4,7 @@ package catalog
 
 import "strings"
 
-type Plant struct{ Code, Name string }
+type Plant struct{ Code, Name, Kind string }
 
 type Product struct {
 	Code, Name   string
@@ -23,7 +23,9 @@ type Material struct {
 
 func s(v string) *string { return &v }
 
-var Plants = []Plant{{"BTN-1", "BTN 1 Plant"}, {"BTN-2", "BTN 2 Plant"}, {"BTN-3", "BTN 3 Plant"}}
+// Plants are the seeded locations: three production SITEs and the head office (STK-01; kind SITE | HQ | WAREHOUSE).
+var Plants = []Plant{{"BTN-1", "BTN 1 Plant", "SITE"}, {"BTN-2", "BTN 2 Plant", "SITE"}, {"BTN-3", "BTN 3 Plant", "SITE"},
+	{"HQ", "BTN Headquarters", "HQ"}}
 
 var Products = []Product{
 	{"HB20", "Hollow Block 20", s("20 x 20 x 40 cm"), 1500, 10, []string{"HOLLOW BLOCK 20", "HOLLOW BLOCK 20-20-40 CM"}},

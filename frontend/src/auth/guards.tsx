@@ -4,11 +4,13 @@ import { ShieldAlert } from "lucide-react";
 import { useAuth } from "./AuthProvider";
 import { EmptyState, PageLoader } from "@/components/ui";
 import { useT } from "@/i18n";
+import { OfflineUnlockScreen } from "@/offline/ui/OfflineUnlockScreen";
 
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, offline } = useAuth();
   const location = useLocation();
   if (loading) return <PageLoader />;
+  if (!user && offline) return <OfflineUnlockScreen />;
   if (!user) return <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search)}`} replace />;
   if (user.mustChangePassword && location.pathname !== "/account/password") return <Navigate to="/account/password" replace />;
   return <>{children}</>;

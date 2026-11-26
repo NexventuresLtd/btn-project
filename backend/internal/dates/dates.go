@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -88,19 +89,49 @@ func EachDay(from, to time.Time) []time.Time {
 	return out
 }
 
-// FormatDate renders "14 Nov 2026" (English month abbreviations, Latin digits, all languages).
-func FormatDate(t time.Time) string { return fixSept(t.UTC().Format("02 Jan 2006")) }
+// DisplayLayout / DisplayTimeLayout are the NFR-L1 display formats (DD/MM/YYYY, 24-hour clock) used by
+// every PDF, e-mail and export cell meant for people. The API wire format stays ISO (YYYY-MM-DD / RFC 3339).
+const (
+	DisplayLayout     = "02/01/2006"
+	DisplayTimeLayout = "02/01/2006 15:04"
+)
 
-// en-GB (ICU) abbreviates September as "Sept"; keep parity with the Node output.
-func fixSept(s string) string {
-	if len(s) >= 6 && s[3:6] == "Sep" {
-		return s[:6] + "t" + s[6:]
+// FormatDate renders a business date as "14/11/2026" (NFR-L1; same in every language, Latin digits).
+func FormatDate(t time.Time) string { return t.UTC().Format(DisplayLayout) }
+
+// FormatDateTime renders the Kigali wall clock: "14/11/2026 16:05".
+func FormatDateTime(t time.Time) string { return t.In(kigali).Format(DisplayTimeLayout) }
+
+// FormatISO renders an ISO business date string ("2026-11-14") as "14/11/2026"; invalid input is returned unchanged.
+func FormatISO(iso string) string {
+	t, err := ParseISO(iso)
+	if err != nil {
+		return iso
 	}
-	return s
+	return FormatDate(t)
 }
 
-// FormatDateTime renders the Kigali wall clock: "14 Nov 2026, 16:05".
-func FormatDateTime(t time.Time) string { return fixSept(t.In(kigali).Format("02 Jan 2006, 15:04")) }
+// FormatRange renders an inclusive date range "01/11/2026 – 30/11/2026" ("14/11/2026" for a single day).
+func FormatRange(from, to time.Time) string {
+	if ToISO(from) == ToISO(to) {
+		return FormatDate(from)
+	}
+	return FormatDate(from) + " – " + FormatDate(to)
+}
+
+// FormatISORange is FormatRange for ISO strings.
+func FormatISORange(fromISO, toISO string) string {
+	if fromISO == toISO {
+		return FormatISO(fromISO)
+	}
+	return FormatISO(fromISO) + " – " + FormatISO(toISO)
+}
+
+// ParseDisplay parses "14/11/2026" (also "14-11-2026", "14.11.2026", "1/2/2026") as a business date.
+func ParseDisplay(s string) (time.Time, error) {
+	s = strings.TrimSpace(strings.NewReplacer("-", "/", ".", "/").Replace(s))
+	return time.ParseInLocation("2/1/2006", s, time.UTC)
+}
 
 // Range is a resolved inclusive date range.
 type Range struct {

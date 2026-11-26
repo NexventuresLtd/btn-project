@@ -14,12 +14,12 @@ require (
 
 require (
 	github.com/andybalholm/brotli v1.3.0 // indirect
-	github.com/go-pdf/fpdf v0.9.0 // indirect
+	github.com/go-pdf/fpdf v0.9.0
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/go-webauthn/x v0.3.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
-	github.com/google/uuid v1.6.0 // indirect
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.3 // indirect
@@ -43,8 +43,8 @@ require (
 	github.com/xuri/excelize/v2 v2.11.1
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/image v0.48.0 // indirect
+	golang.org/x/image v0.48.0
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
-	golang.org/x/text v0.44.0 // indirect
+	golang.org/x/text v0.44.0
 )

@@ -9,6 +9,7 @@ import (
 	"btn-ops/internal/deps"
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/i18n"
+	"btn-ops/internal/refdata"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
@@ -20,6 +21,7 @@ type lkPlant struct {
 	ID   string `json:"id"`
 	Code string `json:"code"`
 	Name string `json:"name"`
+	Kind string `json:"kind"` // SITE | HQ | WAREHOUSE — production/attendance pickers show SITE only
 }
 type lkProduct struct {
 	ID           string  `json:"id"`
@@ -57,7 +59,7 @@ func collectAll[T any](ctx context.Context, d *deps.Deps, sql string, args ...an
 }
 
 func buildLookups(ctx context.Context, d *deps.Deps, scoped string, lang i18n.Lang, super bool) ([]byte, error) {
-	plantSQL, plantArgs := `SELECT id, code, name FROM "Plant" WHERE "isActive"`, []any{}
+	plantSQL, plantArgs := `SELECT id, code, name, kind FROM "Plant" WHERE "isActive"`, []any{}
 	if scoped != "" {
 		plantSQL += ` AND id=$1`
 		plantArgs = append(plantArgs, scoped)
@@ -86,7 +88,12 @@ func buildLookups(ctx context.Context, d *deps.Deps, scoped string, lang i18n.La
 		}
 		roles = append(roles, lkRole{Value: string(r), Label: i18n.T(lang, "role."+string(r))})
 	}
-	return json.Marshal(fiber.Map{"plants": plants, "products": products, "materials": materials, "customers": customers, "roles": roles})
+	ref, err := refdata.ListAll(ctx, d.Pool, lang)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(fiber.Map{"plants": plants, "products": products, "materials": materials, "customers": customers, "roles": roles,
+		"refdata": ref, "locationKinds": LocationKinds})
 }
 
 // Everything dropdowns need, in one round trip (cached; ETag/304; plant list respects plant scope).
@@ -95,7 +102,7 @@ func lookups(c *fiber.Ctx, d *deps.Deps) error {
 	lang := httpx.Lang(c)
 	scoped := auth.ScopedPlantID(u)
 	super := u.IsSuperAdmin()
-	key := "lookups:" + scoped + ":" + string(lang) + ":" + strconv.FormatBool(super)
+	key := "lookups:" + scoped + ":" + string(lang) + ":" + strconv.FormatBool(super) + ":" + strconv.FormatInt(refdata.Version(), 10)
 	body, err := lookupsCache.GetOrLoad(httpx.Ctx(c), key, func(ctx context.Context) ([]byte, error) {
 		return buildLookups(ctx, d, scoped, lang, super)
 	})

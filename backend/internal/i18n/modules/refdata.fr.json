@@ -1,0 +1,9 @@
+{
+  "approvals.max_gt_min": "La limite supérieure doit être supérieure à la limite inférieure",
+  "approvals.unknown_permission": "Permission inconnue",
+  "approvals.unknown_role": "Rôle inconnu",
+  "masterdata.location_kind": "Choisissez site, siège ou entrepôt",
+  "refdata.code_format": "Utilisez 1 à 40 majuscules, chiffres, _ ou - (par exemple BROKEN_MACHINE)",
+  "refdata.code_immutable": "Le code ne peut pas être modifié ; créez un nouvel élément et désactivez celui-ci",
+  "refdata.metadata_object": "Les métadonnées doivent être un objet JSON (4 000 caractères au maximum)"
+}

@@ -31,10 +31,12 @@ func Register(r fiber.Router, d *deps.Deps) {
 	r.Patch("/workers/:id", auth.RequirePermission("workers.manage"), h.updateWorker)
 
 	r.Get("/periods", auth.RequirePermission("payroll.view"), h.listPeriods)
+	r.Get("/summary", auth.RequirePermission("payroll.view"), h.summaryJSON) // F2: labour summary JSON (exportable)
 	r.Post("/periods", auth.RequirePermission("payroll.prepare"), h.createPeriod)
 	r.Get("/periods/:id", auth.RequirePermission("payroll.view"), h.getPeriod)
 	r.Get("/periods/:id/attendance", auth.RequirePermission("payroll.view"), h.periodAttendance)
 	r.Put("/periods/:id/lines", auth.RequirePermission("payroll.prepare"), h.saveLines)
+	r.Post("/periods/:id/calculate", auth.RequirePermission("payroll.prepare"), h.calculate)
 	for _, st := range []Step{StepPrepare, StepCheck, StepVerify, StepAuthorize} {
 		st := st
 		r.Post("/periods/:id/"+string(st), auth.RequirePermission(auth.Permission(StepPermission[st])), func(c *fiber.Ctx) error { return h.advance(c, st) })

@@ -35,7 +35,11 @@ func (h *handler) pdfReport(c *fiber.Ctx) error {
 		return err
 	}
 	T := func(k string, a ...any) string { return i18n.T(lang, k, a...) }
-	d := serialize(r, u, lang)
+	dp, err := detailFrom(ctx, h.d.Pool, r, u, lang)
+	if err != nil {
+		return err
+	}
+	d := *dp
 	t := d.Totals
 	date := dates.FormatDate(r.Date)
 	shift := T("production.shift_label." + r.Shift)
@@ -56,10 +60,19 @@ func (h *handler) pdfReport(c *fiber.Ctx) error {
 		return err
 	}
 	approved := r.Status == "APPROVED"
-	if approved {
+	switch {
+	case approved:
 		doc.Badge(T("production.pdf.badge_posted"), tone)
-	} else {
+	case r.Status == "SUBMITTED":
+		doc.Badge(T("production.pdf.badge_posted_pending"), tone)
+	default:
 		doc.Badge(T("production.pdf.badge_not_posted", "status", strings.ToUpper(statusLabel)), tone)
+	}
+	if d.Day.Status == "CLOSED" {
+		doc.Badge(T("production.pdf.badge_day_closed"), pdf.Navy)
+	}
+	if d.Variance.Flagged {
+		doc.Badge(T("production.pdf.badge_variance", "pct", format.Qty(d.Variance.TolerancePct)), pdf.Red)
 	}
 	doc.KpiRow([]pdf.Kpi{
 		{Label: T("production.pdf.col_target"), Value: fi(t.Target)},
@@ -67,9 +80,11 @@ func (h *handler) pdfReport(c *fiber.Ctx) error {
 		{Label: T("production.pdf.col_good"), Value: fi(t.GoodOutput), Hint: T("production.pdf.hint_good")},
 		{Label: T("production.pdf.kpi_achievement"), Value: pct(d.KPIs.Achievement), Hint: T("production.pdf.hint_achievement")},
 		{Label: T("production.pdf.kpi_rejection"), Value: pct(d.KPIs.RejectionRate), Hint: T("production.pdf.hint_rejection")},
+		{Label: T("production.pdf.kpi_yield"), Value: pct(d.KPIs.Yield), Hint: T("production.pdf.hint_yield")},
 	})
 	cols := []pdf.Column{
-		{Header: T("production.pdf.col_product"), Width: 3},
+		{Header: T("production.pdf.col_product"), Width: 2.4},
+		{Header: T("production.pdf.col_batch"), Width: 1.2},
 		{Header: T("production.pdf.col_unit"), Width: 0.7},
 		{Header: T("production.pdf.col_target"), Width: 1, Align: pdf.Right},
 		{Header: T("production.pdf.col_produced"), Width: 1, Align: pdf.Right},
@@ -87,20 +102,80 @@ func (h *handler) pdfReport(c *fiber.Ctx) error {
 	}
 	var rows [][]any
 	for _, l := range d.Lines {
-		rows = append(rows, []any{l.Product.Name, l.Product.Unit, nz(l.TargetQty), nz(l.ProducedQty), nz(l.DamageProdQty), nz(l.DamageHandQty), nz(l.SampleQty), fi(l.GoodOutput), achieved(l.TargetQty, l.ProducedQty)})
+		batch := l.BatchRef
+		if l.AdditionalBatch {
+			batch += " (" + T("production.pdf.additional") + ")"
+		}
+		rows = append(rows, []any{l.Product.Name, batch, l.Product.Unit, nz(l.TargetQty), nz(l.ProducedQty), nz(l.DamageProdQty), nz(l.DamageHandQty), nz(l.SampleQty), fi(l.GoodOutput), achieved(l.TargetQty, l.ProducedQty)})
 	}
 	doc.Section(T("production.pdf.section_lines")).Table(cols, rows,
-		[]any{T("production.pdf.total"), nil, fi(t.Target), fi(t.Produced), fi(t.DamageProd), fi(t.DamageHand), fi(t.Samples), fi(t.GoodOutput), achieved(t.Target, t.Produced)},
+		[]any{T("production.pdf.total"), nil, nil, fi(t.Target), fi(t.Produced), fi(t.DamageProd), fi(t.DamageHand), fi(t.Samples), fi(t.GoodOutput), achieved(t.Target, t.Produced)},
 		T("production.pdf.empty_lines"))
+	var drows [][]any
+	for _, l := range d.Lines {
+		for _, df := range l.Defects {
+			note := "—"
+			if df.Note != nil {
+				note = *df.Note
+			}
+			drows = append(drows, []any{l.Product.Name + " · " + l.BatchRef, df.Reason, T("production.stage." + df.Stage), fi(df.Qty), note})
+		}
+		if l.Unclassified > 0 {
+			drows = append(drows, []any{l.Product.Name + " · " + l.BatchRef, T("production.unclassified"), "—", fi(l.Unclassified), "—"})
+		}
+	}
+	doc.Section(T("production.pdf.section_defects")).Table([]pdf.Column{
+		{Header: T("production.pdf.col_product"), Width: 2.4}, {Header: T("production.pdf.col_reason"), Width: 2},
+		{Header: T("production.pdf.col_stage"), Width: 1.2}, {Header: T("production.pdf.col_qty"), Width: 0.8, Align: pdf.Right}, {Header: T("production.pdf.col_detail"), Width: 2.4},
+	}, drows, nil, T("production.pdf.empty_defects"))
+	// materials: recorded use vs recipe expectation (PRD-03 / PRD-10)
+	vByMat := map[string]varianceItem{}
+	for _, vr := range d.Variance.Rows {
+		vByMat[vr.MaterialID] = vr
+	}
 	var mrows [][]any
+	shown := map[string]bool{}
+	vcell := func(vr varianceItem, ok bool) []any {
+		if !ok {
+			return []any{"—", "—", "—"}
+		}
+		vp := "—"
+		if vr.Pct != nil {
+			vp = format.Percent(vr.Pct, 1)
+		} else if vr.Unexpected {
+			vp = T("production.pdf.unexpected")
+		}
+		var cell any = vp
+		if vr.Flagged {
+			cell = pdf.B(vp, pdf.Red)
+		}
+		return []any{format.Qty(vr.Expected), format.Qty(vr.Variance), cell}
+	}
 	for _, m := range d.MaterialUse {
-		mrows = append(mrows, []any{m.Material.Name, m.Material.Unit, format.Qty(m.Quantity)})
+		vr, ok := vByMat[m.MaterialID]
+		shown[m.MaterialID] = true
+		mrows = append(mrows, append([]any{m.Material.Name, m.Material.Unit, format.Qty(m.Quantity)}, vcell(vr, ok)...))
+	}
+	for _, vr := range d.Variance.Rows {
+		if !shown[vr.MaterialID] {
+			mrows = append(mrows, append([]any{vr.Material.Name, vr.Material.Unit, format.Qty(0)}, vcell(vr, true)...))
+		}
 	}
 	doc.Section(T("production.pdf.section_materials")).Table([]pdf.Column{
 		{Header: T("production.pdf.col_material"), Width: 3},
 		{Header: T("production.pdf.col_unit"), Width: 1},
 		{Header: T("production.pdf.col_qty_used"), Width: 1.2, Align: pdf.Right},
+		{Header: T("production.pdf.col_expected"), Width: 1.2, Align: pdf.Right},
+		{Header: T("production.pdf.col_variance"), Width: 1.2, Align: pdf.Right},
+		{Header: T("production.pdf.col_variance_pct"), Width: 1, Align: pdf.Right},
 	}, mrows, nil, T("production.pdf.empty_materials"))
+	if len(d.Variance.MissingRecipes) > 0 {
+		names := []string{}
+		for _, p := range d.Variance.MissingRecipes {
+			names = append(names, p.Name)
+		}
+		doc.Note(T("production.pdf.missing_recipes", "products", strings.Join(names, ", ")))
+	}
 
 	downtime := T("production.pdf.none")
 	if r.DowntimeMins > 0 {
@@ -114,6 +189,16 @@ func (h *handler) pdfReport(c *fiber.Ctx) error {
 		notes = *r.Notes
 	}
 	items := [][]any{{T("production.pdf.item_downtime"), downtime}, {T("production.pdf.item_notes"), notes}}
+	for _, f := range d.ExceptionFlags {
+		txt := f.Name
+		if f.Note != nil {
+			txt += " — " + *f.Note
+		}
+		items = append(items, []any{T("production.pdf.item_flag"), txt})
+	}
+	for _, n := range d.NoteList {
+		items = append(items, []any{T("production.pdf.item_note_by", "by", n.By), n.Body})
+	}
 	if r.ReviewComment != nil {
 		label := T("production.pdf.item_reviewer_comment")
 		if r.Status == "REJECTED" {
@@ -141,8 +226,7 @@ func (h *handler) pdfReport(c *fiber.Ctx) error {
 		}
 	}
 	doc.Signatures(append(sigs, appr))
-	_ = ctx
-	return pdf.Send(c, doc, fmt.Sprintf("%s_Shift-Report_%s_%s.pdf", r.PlantCode, d.Date, r.Shift), c.Query("download") == "1")
+	return pdf.Send(c, doc, fmt.Sprintf("%s_Shift-Report_%s.pdf", r.PlantCode, strings.TrimPrefix(r.Number, "PR-")), c.Query("download") == "1")
 }
 
 func (h *handler) pdfSummary(c *fiber.Ctx) error {

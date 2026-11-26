@@ -5,20 +5,33 @@ import { NAMESPACES } from "./ns";
 import { en as enT } from "./en";
 import { am as amT } from "./am";
 import { rw as rwT } from "./rw";
+import { fr as frT } from "./fr";
 import { CATALOGS, tr, setLang, setOverrides, trx } from "./index";
 import { HELP_GUIDES, TOUR_STEPS } from "@/components/guide/steps";
 
 const en: Record<string, string> = enT;
 const am: Record<string, string> = amT;
 const rw: Record<string, string> = rwT;
-const langs: Record<string, Record<string, string>> = { en, am, rw };
+const fr: Record<string, string> = frT;
+const langs: Record<string, Record<string, string>> = { en, am, rw, fr };
 const placeholders = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!).sort().join(",");
 
 describe("catalog completeness", () => {
-  it("has the same keys in en, am and rw", () => {
+  it("has the same keys in en, am, rw and fr", () => {
     const e = Object.keys(en).sort();
     expect(Object.keys(am).sort()).toEqual(e);
     expect(Object.keys(rw).sort()).toEqual(e);
+    expect(Object.keys(fr).sort()).toEqual(e);
+  });
+
+  it("ships all four languages", () => {
+    expect(Object.keys(CATALOGS).sort()).toEqual(["am", "en", "fr", "rw"]);
+  });
+
+  it("really translates French (few values equal English)", () => {
+    const same = Object.keys(en).filter((k) => fr[k] === en[k]).length;
+    expect(same / Object.keys(en).length).toBeLessThan(0.08);
+    expect(fr["common.save"]).toBe("Enregistrer");
   });
 
   it("has no empty values", () => {
@@ -28,7 +41,7 @@ describe("catalog completeness", () => {
   it("namespaces own their key prefix and never collide", () => {
     const seen = new Set<string>();
     for (const [name, ns] of Object.entries(NAMESPACES)) {
-      for (const l of ["en", "am", "rw"] as const) {
+      for (const l of ["en", "am", "rw", "fr"] as const) {
         const keys = Object.keys(ns[l]);
         expect(keys.sort(), `${name}.${l} vs en`).toEqual(Object.keys(ns.en).sort());
       }
@@ -44,6 +57,7 @@ describe("catalog completeness", () => {
     for (const k of Object.keys(en)) {
       expect(placeholders(am[k]!), `am:${k}`).toBe(placeholders(en[k]!));
       expect(placeholders(rw[k]!), `rw:${k}`).toBe(placeholders(en[k]!));
+      expect(placeholders(fr[k]!), `fr:${k}`).toBe(placeholders(en[k]!));
     }
   });
 

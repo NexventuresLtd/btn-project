@@ -30,6 +30,14 @@ func (s *Service) Routes(r fiber.Router) {
 	r.Put("/language", s.setLanguage)
 	r.Post("/passkey/begin", s.passkeyLoginBegin)
 	r.Post("/passkey/finish", s.passkeyLoginFinish)
+	// F3: tokens, reset links, offline unlock.
+	r.Post("/refresh", s.refresh)
+	r.Post("/password/reset-link/check", s.resetLinkCheck)
+	r.Post("/password/reset-link", s.resetLinkConsume)
+	r.Get("/offline-key", s.offlineKey)
+	r.Post("/offline-package", s.offlinePackage)
+	r.Put("/offline-pin", s.offlinePin)
+	r.Delete("/offline-pin", s.offlinePin)
 }
 
 // UserPayload is the /api/auth/me user object.
@@ -201,18 +209,20 @@ func (s *Service) otpVerify(c *fiber.Ctx) error {
 		return httpx.NewKey(410, "code_expired", key)
 	}
 	s.ClearOTPCookie(c)
-	if _, err := s.CreateSession(c, res.UserID); err != nil {
+	dev, tp, err := s.CreateSession(c, res.UserID, "password_otp")
+	if err != nil {
 		return err
 	}
 	if _, err := s.Pool.Exec(ctx, `UPDATE "User" SET "lastLoginAt"=now() WHERE id=$1`, res.UserID); err != nil {
 		return err
 	}
-	_ = audit.Log(ctx, s.Pool, audit.Actor{UserID: res.UserID, IP: c.IP()}, audit.Input{Action: "auth.login", Entity: "User", EntityID: res.UserID, Summary: "Signed in with password + email code"})
+	_ = audit.Log(ctx, s.Pool, audit.Actor{UserID: res.UserID, IP: c.IP(), DeviceID: dev.DeviceID}, audit.Input{Action: "auth.login", Entity: "User", EntityID: res.UserID, Summary: "Signed in with password + email code"})
 	p, err := s.userPayload(ctx, httpx.Lang(c), res.UserID)
 	if err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"user": p})
+	dev.Current = true
+	return c.JSON(fiber.Map{"user": p, "device": dev, "accessExpiresAt": tp.AccessExpiresAt})
 }
 
 func (s *Service) otpResend(c *fiber.Ctx) error {
@@ -240,14 +250,20 @@ func (s *Service) otpResend(c *fiber.Ctx) error {
 func (s *Service) me(c *fiber.Ctx) error {
 	u := FromCtx(c)
 	if u == nil {
-		return httpx.Unauthorized()
+		return unauthenticated(c)
 	}
 	httpx.NoStore(c)
 	p, err := s.userPayload(c.UserContext(), httpx.Lang(c), u.ID)
 	if err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"user": p})
+	out := fiber.Map{"user": p, "device": nil, "accessExpiresAt": u.AccessExpiresAt}
+	if u.DeviceRowID != "" {
+		if d, err := s.DeviceByRow(c.UserContext(), u.DeviceRowID, u.DeviceRowID); err == nil {
+			out["device"] = d
+		}
+	}
+	return c.JSON(out)
 }
 
 func (s *Service) logout(c *fiber.Ctx) error {
@@ -284,7 +300,11 @@ func (s *Service) passwordForgot(c *fiber.Ctx) error {
 		return err
 	}
 	if user != nil && user.IsActive {
-		if err := s.IssueOTP(c, struct{ ID, Email, Name, Language string }{user.ID, user.Email, user.Name, user.Language}, "PASSWORD_RESET"); err != nil {
+		link, lerr := s.issueResetLink(ctx, s.Pool, user.ID, ip)
+		if lerr != nil {
+			return lerr
+		}
+		if err := s.IssueOTP(c, struct{ ID, Email, Name, Language string }{user.ID, user.Email, user.Name, user.Language}, "PASSWORD_RESET", s.ResetLinkURL(link)); err != nil {
 			if _, isHTTP := err.(*httpx.Error); !isHTTP {
 				slog.Error("reset code send failed", "err", err)
 			}
@@ -293,7 +313,7 @@ func (s *Service) passwordForgot(c *fiber.Ctx) error {
 	} else {
 		fake() // same cookie and answer whether or not the account exists
 	}
-	return c.JSON(fiber.Map{"ok": true, "message": i18n.T(httpx.Lang(c), "auth.reset_generic")})
+	return c.JSON(fiber.Map{"ok": true, "message": i18n.T(httpx.Lang(c), "auth.reset_generic_link")})
 }
 
 func (s *Service) passwordReset(c *fiber.Ctx) error {
@@ -324,6 +344,9 @@ func (s *Service) passwordReset(c *fiber.Ctx) error {
 		res.UserID, HashPassword(password)); err != nil {
 		return err
 	}
+	if err := s.InvalidateResetLinks(ctx, s.Pool, res.UserID); err != nil {
+		return err
+	}
 	if err := s.RevokeAllSessions(ctx, res.UserID, ""); err != nil {
 		return err
 	}
@@ -335,7 +358,7 @@ func (s *Service) passwordChange(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	u := FromCtx(c)
 	if u == nil {
-		return httpx.Unauthorized()
+		return unauthenticated(c)
 	}
 	v, err := httpx.Body(c)
 	if err != nil {
@@ -363,6 +386,9 @@ func (s *Service) passwordChange(c *fiber.Ctx) error {
 	if err := s.RevokeAllSessions(ctx, u.ID, u.SessionID); err != nil {
 		return err
 	}
+	if err := s.InvalidateResetLinks(ctx, s.Pool, u.ID); err != nil {
+		return err
+	}
 	_ = audit.Record(c, s.Pool, audit.Input{Action: "auth.password_change", Entity: "User", EntityID: u.ID})
 	p, err := s.userPayload(ctx, lang, u.ID)
 	if err != nil {
@@ -371,7 +397,7 @@ func (s *Service) passwordChange(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"user": p})
 }
 
-// PUT /api/auth/language {language: "en"|"am"|"rw"}
+// PUT /api/auth/language {language: "en"|"am"|"rw"|"fr"}
 func (s *Service) setLanguage(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	u := FromCtx(c)
@@ -382,7 +408,7 @@ func (s *Service) setLanguage(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	lang := v.Str("language").Trim().Lower().OneOf([]string{"en", "am", "rw"}, "v.language").Get()
+	lang := v.Str("language").Trim().Lower().OneOf(i18n.Codes(), "v.language").Get()
 	if err := v.Err(); err != nil {
 		return err
 	}

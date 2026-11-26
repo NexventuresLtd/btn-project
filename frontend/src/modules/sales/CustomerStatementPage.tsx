@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { CalendarDays, Pencil } from "lucide-react";
-import { Button, Card, CardHeader, DataTable, EmptyState, ErrorState, PageHeader, PageLoader, PdfButton, StatCard } from "@/components/ui";
+import { Pencil } from "lucide-react";
+import { Button, Card, CardHeader, DataTable, EmptyState, ErrorState, PageHeader, PageLoader, ExportMenu, PdfButton, StatCard, DateInput } from "@/components/ui";
 import { Can } from "@/auth/guards";
 import { formatDate, todayISO } from "@/lib/dates";
 import { formatInt, formatRWF } from "@/lib/format";
@@ -32,10 +32,10 @@ export function CustomerStatementPage() {
       <PageHeader
         title={c.name}
         description={[c.tin ? t("sales.customer.tinValue", { tin: c.tin }) : null, c.phone, c.email, c.address].filter(Boolean).join(" · ") || t("sales.statement.account")}
-        breadcrumbs={[{ label: t("sales.title"), to: "/sales" }, { label: t("sales.customers.title"), to: "/sales/customers" }, { label: c.name }]}
+        breadcrumbs={[{ label: t("sales.title"), to: "/sales" }, { label: t("sales.customers.title"), to: "/sales/customers" }, { label: c.name, to: `/sales/customers/${c.id}` }, { label: t("orders.client.statement") }]}
         actions={
           <>
-            <PdfButton path={`/sales/pdf/statement/${c.id}`} params={{ from, to }} label={t("sales.statement.pdf")} />
+            <div className="flex flex-wrap items-center gap-2"><PdfButton path={`/sales/pdf/statement/${c.id}`} params={{ from, to }} label={t("sales.statement.pdf")} /><ExportMenu path={`/sales/customers/${c.id}`} params={{ from, to }} /></div>
             <Button variant="secondary" onClick={() => navigate(`/sales?customerId=${c.id}&from=${from}&to=${to}`)}>{t("sales.statement.viewSales")}</Button>
             <Can permission="customers.manage">
               <Button variant="secondary" icon={<Pencil className="size-4" />} onClick={() => setEditing(true)}>{t("common.edit")}</Button>
@@ -57,10 +57,9 @@ export function CustomerStatementPage() {
             description={t("sales.statement.desc")}
             actions={
               <div className="flex items-center gap-1 rounded-xl border border-line bg-white px-2">
-                <CalendarDays className="ml-1 size-4 text-slate-400" />
-                <input type="date" value={from} max={to} onChange={(e) => e.target.value && set("from", e.target.value)} className="h-9 bg-transparent px-1 text-sm text-slate-700 outline-none" aria-label={t("common.fromDate")} />
+                <DateInput variant="bare" value={from} max={to} onChange={(v) => v && set("from", v)} aria-label={t("common.fromDate")} />
                 <span className="text-slate-300">–</span>
-                <input type="date" value={to} min={from} max={today} onChange={(e) => e.target.value && set("to", e.target.value)} className="h-9 bg-transparent px-1 text-sm text-slate-700 outline-none" aria-label={t("common.toDate")} />
+                <DateInput variant="bare" value={to} min={from} max={today} onChange={(v) => v && set("to", v)} aria-label={t("common.toDate")} />
               </div>
             }
           />
@@ -122,7 +121,7 @@ export function CustomerStatementPage() {
           </Card>
         </div>
       </div>
-      <CustomerModal open={editing} customer={c} onClose={() => setEditing(false)} />
+      <CustomerModal open={editing} customerId={c.id} onClose={() => setEditing(false)} />
     </>
   );
 }

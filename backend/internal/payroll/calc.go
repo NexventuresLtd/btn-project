@@ -4,6 +4,7 @@ package payroll
 // No database access, so every rule is unit-tested (calc_test.go).
 
 import (
+	"btn-ops/internal/dates"
 	"fmt"
 	"math"
 	"regexp"
@@ -362,25 +363,10 @@ func phrase(lang i18n.Lang, status string) string {
 
 // ───────────────────────────── Presentation helpers ─────────────────────────────
 
-// FormatPeriodRange: "1–15 November 2026", "16 November – 15 December 2026" (month names localised).
+// FormatPeriodRange: "01/11/2026 – 15/11/2026" (NFR-L1 DD/MM/YYYY; lang/short kept for callers).
 func FormatPeriodRange(lang i18n.Lang, start, end time.Time, short bool) string {
-	key := "payroll.month."
-	if short {
-		key = "payroll.month_short."
-	}
-	mn := func(m time.Month) string { return i18n.T(lang, key+fmt.Sprint(int(m))) }
-	sd, sm, sy := start.Day(), start.Month(), start.Year()
-	ed, em, ey := end.Day(), end.Month(), end.Year()
-	switch {
-	case sy == ey && sm == em:
-		if sd == ed {
-			return fmt.Sprintf("%d %s %d", sd, mn(sm), sy)
-		}
-		return fmt.Sprintf("%d–%d %s %d", sd, ed, mn(sm), sy)
-	case sy == ey:
-		return fmt.Sprintf("%d %s – %d %s %d", sd, mn(sm), ed, mn(em), ey)
-	}
-	return fmt.Sprintf("%d %s %d – %d %s %d", sd, mn(sm), sy, ed, mn(em), ey)
+	_, _ = lang, short
+	return dates.FormatRange(start, end)
 }
 
 var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)

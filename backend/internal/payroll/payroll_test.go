@@ -54,6 +54,25 @@ func lineFor(t *testing.T, period M, workerID string) M {
 
 func num(v any) float64 { return v.(float64) }
 
+// withReason: these tests enter days by hand, which is a manual override of the calculation (WRK-03) and
+// needs a reason; the calculation itself is covered in wages_test.go.
+func withReason(lines []M) []M {
+	out := make([]M, len(lines))
+	for i, l := range lines {
+		c := M{}
+		for k, v := range l {
+			c[k] = v
+		}
+		if _, ok := c["daysWorked"]; ok {
+			if _, has := c["overrideReason"]; !has {
+				c["overrideReason"] = "manual entry from the paper sheet"
+			}
+		}
+		out[i] = c
+	}
+	return out
+}
+
 func TestWorkers(t *testing.T) {
 	e := apptest.New(t)
 	fm := e.User(auth.RoleFinanceManager)
@@ -235,7 +254,7 @@ func (f *fx) createPeriod(t *testing.T, start, end string) M {
 
 func (f *fx) saveLines(t *testing.T, id string, lines []M, u *testutil.TestUser) M {
 	t.Helper()
-	r := f.e.Do("PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": lines}, u)
+	r := f.e.Do("PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": withReason(lines)}, u)
 	if r.StatusCode != 200 {
 		t.Fatalf("save lines %d %s", r.StatusCode, f.e.Text(r))
 	}
@@ -279,7 +298,7 @@ func TestPeriodCreateAndLines(t *testing.T) {
 	}
 
 	p := f.createPeriod(t, "2026-11-01", "2026-11-15")
-	if p["number"] != "WG-BTN1-20261101" || p["status"] != "DRAFT" || p["periodDays"].(float64) != 15 || p["label"] != "1–15 November 2026" || len(p["lines"].([]any)) != 3 {
+	if p["number"] != "WG-BTN1-20261101" || p["status"] != "DRAFT" || p["periodDays"].(float64) != 15 || p["label"] != "01/11/2026 – 15/11/2026" || len(p["lines"].([]any)) != 3 {
 		t.Fatalf("period %v", p)
 	}
 	if tot := p["totals"].(M); tot["lines"].(float64) != 3 || tot["workers"].(float64) != 0 {
@@ -297,7 +316,7 @@ func TestPeriodCreateAndLines(t *testing.T) {
 		t.Fatalf("dup %d %s", r.StatusCode, msg)
 	}
 	r = e.Do("POST", "/api/payroll/periods", M{"plantId": f.b1, "startDate": "2026-11-10", "endDate": "2026-11-20"}, f.fm1)
-	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || !strings.Contains(msg, "overlap WG-BTN1-20261101 (1–15 November 2026) for BTN-1") {
+	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || !strings.Contains(msg, "overlap WG-BTN1-20261101 (01/11/2026 – 15/11/2026) for BTN-1") {
 		t.Fatalf("overlap %d %s", r.StatusCode, msg)
 	}
 	// a plant-scoped user from another plant cannot read the sheet
@@ -311,7 +330,7 @@ func TestPeriodCreateAndLines(t *testing.T) {
 
 	// line validation (messages name the worker; several errors -> "(and N more)")
 	put := func(lines []M) (int, string, map[string]string) {
-		r := e.Do("PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": lines}, f.fm1)
+		r := e.Do("PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": withReason(lines)}, f.fm1)
 		_, msg, fl := e.ErrorOf(r)
 		return r.StatusCode, msg, fl
 	}
@@ -366,11 +385,12 @@ func TestPeriodCreateAndLines(t *testing.T) {
 	if n < 1 {
 		t.Fatal("audit lines")
 	}
-	// the sheet's wage snapshot survives a later wage change on the worker
+	// a DRAFT sheet follows the rates in force (WRK-03): a wage change on the worker re-prices the draft;
+	// sheets beyond DRAFT keep their calculation (covered in the workflow test)
 	e.Do("PATCH", "/api/payroll/workers/"+f.w[0], M{"dailyWage": 9999}, f.fm1)
 	d = f.saveLines(t, id, []M{{"workerId": f.w[0], "daysWorked": 10}, {"workerId": f.w[1], "daysWorked": 1}}, f.fm1)
-	if num(lineFor(t, d, f.w[0])["dailyWage"]) != 5800 || num(lineFor(t, d, f.w[0])["grossAmount"]) != 58_000 || len(d["lines"].([]any)) != 2 {
-		t.Fatalf("snapshot %v", d["lines"])
+	if l := lineFor(t, d, f.w[0]); num(l["dailyWage"]) != 9999 || num(l["grossAmount"]) != 99_990 || l["isOverride"] != true || len(d["lines"].([]any)) != 2 {
+		t.Fatalf("rates %v", d["lines"])
 	}
 	// inactive worker cannot be added
 	e.Do("PATCH", "/api/payroll/workers/"+f.w[2], M{"isActive": false}, f.fm1)
@@ -488,7 +508,7 @@ func TestWorkflowSeparationOfDutiesAndPay(t *testing.T) {
 		if err := rows.Scan(&num, &typ, &cat, &st, &amt, &payee, &srcT, &srcID, &by, &rev, &desc, &inv); err != nil {
 			t.Fatal(err)
 		}
-		if typ != "EXPENSE" || cat != "WAGES" || st != "APPROVED" || srcT != "PayrollPeriod" || srcID != id || by != f.fm3.ID || rev != f.gm.ID || !strings.HasPrefix(desc, "WAGES BTN-1 1–15 Nov 2026 — ") {
+		if typ != "EXPENSE" || cat != "WAGES" || st != "APPROVED" || srcT != "PayrollPeriod" || srcID != id || by != f.fm3.ID || rev != f.gm.ID || !strings.HasPrefix(desc, "WAGES BTN-1 01/11/2026 – 15/11/2026 — ") {
 			t.Fatalf("entry %s %s %s %s %s %s %s %s", num, typ, cat, st, srcT, by, rev, desc)
 		}
 		got = append(got, fmt.Sprintf("%s:%d:%s:%v", num, amt, payee, inv != nil))
@@ -627,7 +647,7 @@ func TestPeriodListTotalsAndCache(t *testing.T) {
 	r := e.Do("GET", "/api/payroll/periods", nil, f.gm)
 	etag := r.Header.Get("ETag")
 	e.Decode(r, &l)
-	if l.Total != 1 || l.Page != 1 || l.PageSize != 25 || l.StatusCounts["DRAFT"] != 1 || l.Items[0]["label"] != "1–15 November 2026" {
+	if l.Total != 1 || l.Page != 1 || l.PageSize != 25 || l.StatusCounts["DRAFT"] != 1 || l.Items[0]["label"] != "01/11/2026 – 15/11/2026" {
 		t.Fatalf("list %+v", l)
 	}
 	tt := l.Items[0]["totals"].(M)
@@ -739,18 +759,18 @@ func TestLocalizedErrors(t *testing.T) {
 	e := f.e
 	am := e.User(auth.RoleFinanceManager, testutil.UserOpts{Language: "am"})
 	p := f.createPeriod(t, "2026-11-01", "2026-11-15")
-	r := e.Do("PUT", "/api/payroll/periods/"+p["id"].(string)+"/lines", M{"lines": []M{{"workerId": f.w[0], "daysWorked": 99}}}, am)
+	r := e.Do("PUT", "/api/payroll/periods/"+p["id"].(string)+"/lines", M{"lines": withReason([]M{{"workerId": f.w[0], "daysWorked": 99}})}, am)
 	_, msg, _ := e.ErrorOf(r)
 	if r.StatusCode != 400 || !strings.Contains(msg, "ALINE UWASE") || !strings.Contains(msg, "ቀናት") {
 		t.Fatalf("am error %q", msg)
 	}
 	r = e.Do("POST", "/api/payroll/periods?lang=rw", M{"plantId": f.b1, "startDate": "2026-11-01", "endDate": "2026-11-15"}, f.fm1)
 	_, msg, _ = e.ErrorOf(r)
-	if r.StatusCode != 409 || !strings.Contains(msg, "rusanzwe ruriho") || !strings.Contains(msg, "Ugushyingo") {
+	if r.StatusCode != 409 || !strings.Contains(msg, "rusanzwe ruriho") || !strings.Contains(msg, "01/11/2026") {
 		t.Fatalf("rw conflict %q", msg)
 	}
 	d := e.Map(e.Do("GET", "/api/payroll/periods/"+p["id"].(string), nil, am))
-	if !strings.Contains(d["label"].(string), "ኖቬምበር") {
+	if d["label"] != "01/11/2026 – 15/11/2026" { // NFR-L1: DD/MM/YYYY in every language
 		t.Fatalf("am label %v", d["label"])
 	}
 }

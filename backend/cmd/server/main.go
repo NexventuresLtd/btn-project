@@ -59,6 +59,7 @@ func main() {
 		return
 	}
 	a := app.New(d)
+	jobsDone := startJobs(ctx, d) // F1: background job scheduler (advisory-lock leader), stops with ctx
 
 	errc := make(chan error, 1)
 	go func() { errc <- a.Listen(fmt.Sprintf(":%d", cfg.Port)) }()
@@ -72,6 +73,7 @@ func main() {
 		if err := a.ShutdownWithTimeout(10 * time.Second); err != nil {
 			slog.Error("shutdown", "err", err)
 		}
+		<-jobsDone // running jobs get up to 30 s to finish, then their contexts are cancelled
 	}
 }
 

@@ -2,10 +2,11 @@ import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { en, type MessageKey } from "./en";
 import { am } from "./am";
 import { rw } from "./rw";
+import { fr } from "./fr";
 
-export type Lang = "en" | "am" | "rw";
-export const LANGS: readonly Lang[] = ["en", "am", "rw"];
-export const LANG_NAMES: Record<Lang, string> = { en: "English", am: "አማርኛ", rw: "Kinyarwanda" };
+export type Lang = "en" | "am" | "rw" | "fr";
+export const LANGS: readonly Lang[] = ["en", "am", "rw", "fr"];
+export const LANG_NAMES: Record<Lang, string> = { en: "English", am: "አማርኛ", rw: "Kinyarwanda", fr: "Français" };
 export type { MessageKey };
 
 /** Keys without the plural suffix: t("sales.items", { count }) resolves sales.items_one / _other. */
@@ -13,11 +14,12 @@ type BaseKey<K> = K extends `${infer B}_one` | `${infer B}_other` ? B : K;
 export type TKey = BaseKey<MessageKey>;
 export type Vars = Record<string, string | number | null | undefined>;
 
-export const CATALOGS: Record<Lang, Record<string, string>> = { en, am, rw };
-const LOCALES: Record<Lang, string> = { en: "en-GB", am: "am-ET", rw: "rw-RW" };
+export const CATALOGS: Record<Lang, Record<string, string>> = { en, am, rw, fr };
+/** Intl locales: French as used in Rwanda (fr-RW; Intl falls back to fr when a runtime lacks it). */
+const LOCALES: Record<Lang, string> = { en: "en-GB", am: "am-ET", rw: "rw-RW", fr: "fr-RW" };
 
 const LS_KEY = "btn.lang";
-export const isLang = (v: unknown): v is Lang => v === "en" || v === "am" || v === "rw";
+export const isLang = (v: unknown): v is Lang => v === "en" || v === "am" || v === "rw" || v === "fr";
 
 function readStored(): Lang | null {
   try {
@@ -30,7 +32,7 @@ function readStored(): Lang | null {
 
 /* ---- store: current language + super-admin overrides ------------------------------------ */
 let current: Lang = readStored() ?? "en";
-let overrides: Record<Lang, Record<string, string>> = { en: {}, am: {}, rw: {} };
+let overrides: Record<Lang, Record<string, string>> = { en: {}, am: {}, rw: {}, fr: {} };
 let stamp = 0;
 const listeners = new Set<() => void>();
 const emit = () => {

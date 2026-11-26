@@ -1,11 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router";
-import { Building2, MapPin, Pencil, Plus, Power, Users } from "lucide-react";
+import { Building2, Landmark, MapPin, Pencil, Plus, Power, Users, Warehouse } from "lucide-react";
 import { useT, type T } from "@/i18n";
-import { Alert, Button, Card, Checkbox, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Spinner, StatusBadge } from "@/components/ui";
+import { Alert, Badge, Button, Card, Checkbox, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Select, Spinner, StatusBadge } from "@/components/ui";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { formatInt } from "@/lib/format";
-import { ADMIN_KEY, saveMasterRow, usePlantStats, type PlantStat } from "./api";
+import { ADMIN_KEY, LOCATION_KINDS, saveMasterRow, usePlantStats, type LocationKind, type PlantStat } from "./api";
+
+const KIND_ICON: Record<LocationKind, typeof Building2> = { SITE: Building2, HQ: Landmark, WAREHOUSE: Warehouse };
+const KIND_TONE = { SITE: "navy", HQ: "amber", WAREHOUSE: "green" } as const;
 
 const INVALIDATE = [[...ADMIN_KEY, "plantStats"], [...ADMIN_KEY, "masterdata", "plants"], ["lookups"]];
 
@@ -19,7 +22,9 @@ export function SitesPage() {
     invalidate: INVALIDATE,
   });
 
-  const sites = query.data ?? [];
+  const [kind, setKind] = useState<LocationKind | "">("");
+  const all = query.data ?? [];
+  const sites = kind ? all.filter((s) => (s.kind ?? "SITE") === kind) : all;
 
   return (
     <>
@@ -30,7 +35,13 @@ export function SitesPage() {
         actions={<Button icon={<Plus className="size-4" />} onClick={() => setEditing("new")}>{t("admin.sites.new")}</Button>}
       />
 
-      <div className="mb-5"><Alert tone="blue">{t("admin.sites.helper")}</Alert></div>
+      <div className="mb-5 space-y-3">
+        <Alert tone="blue">{t("admin.sites.helper")} {t("admin.sites.kindHint")}</Alert>
+        <Select value={kind} onChange={(e) => setKind(e.target.value as LocationKind | "")} className="w-56" aria-label={t("admin.sites.kind")}>
+          <option value="">{t("admin.sites.filterAll")}</option>
+          {LOCATION_KINDS.map((k) => <option key={k} value={k}>{t(`admin.sites.kind.${k}`)}</option>)}
+        </Select>
+      </div>
 
       {query.isError ? (
         <Card><ErrorState error={query.error} retry={() => query.refetch()} /></Card>
@@ -40,7 +51,10 @@ export function SitesPage() {
         <Card><EmptyState icon={<Building2 />} title={t("admin.sites.empty")} action={<Button onClick={() => setEditing("new")}>{t("admin.sites.new")}</Button>} /></Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {sites.map((s) => (
+          {sites.map((s) => {
+            const k: LocationKind = s.kind ?? "SITE";
+            const KindIcon = KIND_ICON[k];
+            return (
             <Card key={s.plantId} className="flex flex-col p-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -49,8 +63,9 @@ export function SitesPage() {
                     <StatusBadge status={s.isActive ? "ACTIVE" : "INACTIVE"} />
                   </div>
                   <p className="mt-0.5 truncate text-sm text-slate-600">{s.name}</p>
+                  <Badge tone={KIND_TONE[k]} className="mt-1.5">{t(`admin.sites.kind.${k}`)}</Badge>
                 </div>
-                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-navy-50 text-navy-700"><Building2 className="size-5" /></span>
+                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-navy-50 text-navy-700"><KindIcon className="size-5" aria-hidden="true" /></span>
               </div>
 
               <p className="mt-3 flex items-center gap-1.5 text-sm text-slate-500">
@@ -80,7 +95,8 @@ export function SitesPage() {
                 ) : null}
               </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -103,10 +119,10 @@ function Stat({ icon, value, label, tone = "slate" }: { icon: React.ReactNode; v
 
 // ───────────────────────────── add / edit modal ─────────────────────────────
 
-interface Values { code: string; name: string; location: string; isActive: boolean }
+interface Values { code: string; name: string; location: string; kind: LocationKind; isActive: boolean }
 
 function initial(site: PlantStat | null): Values {
-  return { code: site?.code ?? "", name: site?.name ?? "", location: site?.location ?? "", isActive: site ? site.isActive : true };
+  return { code: site?.code ?? "", name: site?.name ?? "", location: site?.location ?? "", kind: site?.kind ?? "SITE", isActive: site ? site.isActive : true };
 }
 
 function validate(v: Values, t: T): Record<string, string> {
@@ -140,7 +156,7 @@ function SiteModal({ open, site, onClose }: { open: boolean; site: PlantStat | n
     e.preventDefault();
     setTouched(true);
     if (Object.keys(errors).length) return;
-    save.mutate({ code: values.code.trim().toUpperCase(), name: values.name.trim(), location: values.location.trim() || null, isActive: values.isActive });
+    save.mutate({ code: values.code.trim().toUpperCase(), name: values.name.trim(), location: values.location.trim() || null, kind: values.kind, isActive: values.isActive });
   }
 
   const generalError = save.error && !["code", "name", "location"].some((k) => fieldError(save.error, k)) ? save.error.message : null;
@@ -168,6 +184,11 @@ function SiteModal({ open, site, onClose }: { open: boolean; site: PlantStat | n
         </Field>
         <Field label={t("admin.sites.location")} error={err("location")} htmlFor="site-location" className="sm:col-span-2">
           <Input id="site-location" value={values.location} onChange={(e) => set("location", e.target.value)} placeholder={t("admin.sites.locationPlaceholder")} invalid={!!err("location")} autoComplete="off" />
+        </Field>
+        <Field label={t("admin.sites.kind")} required error={err("kind")} htmlFor="site-kind" hint={t("admin.sites.kindHint")} className="sm:col-span-2">
+          <Select id="site-kind" value={values.kind} onChange={(e) => set("kind", e.target.value)}>
+            {LOCATION_KINDS.map((k) => <option key={k} value={k}>{t(`admin.sites.kind.${k}`)}</option>)}
+          </Select>
         </Field>
         <div className="sm:col-span-2">
           <Checkbox label={t("admin.sites.activeLabel")} checked={values.isActive} onChange={(e) => set("isActive", e.target.checked)} />

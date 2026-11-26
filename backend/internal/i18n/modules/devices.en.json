@@ -1,0 +1,16 @@
+{
+  "auth.token_expired": "Your session needs to be refreshed. Please try again.",
+  "auth.device_revoked": "This device has been signed out. Sign in again to continue.",
+  "auth.refresh_invalid": "Your session has ended. Please sign in again.",
+  "auth.device_mismatch": "This request came from a different device than the one that is signed in.",
+  "auth.device_required": "This action needs a registered device. Sign out and sign in again on this device.",
+  "auth.device_already_revoked": "This device is already signed out.",
+  "auth.reset_link_invalid": "This reset link is invalid, has expired or was already used. Please request a new one.",
+  "auth.reset_done": "Your password has been changed. Sign in with your new password.",
+  "auth.reset_generic_link": "If an account exists for that email, we have sent a reset link and a code.",
+  "entity.device": "Device",
+  "mail.reset_link_intro": "Use the button below to choose a new password.",
+  "mail.reset_link_button": "Reset my password",
+  "mail.reset_link_expiry": "The link expires in {minutes} minutes and works only once.",
+  "mail.reset_or_code": "Or enter this code on the reset page:"
+}

@@ -1,0 +1,10 @@
+{
+ "cutoff.label": "የመረጃ መቁረጫ ጊዜ",
+ "cutoff.note": "የመረጃ መቁረጫ፦ {at} (የኪጋሊ ሰዓት)። አሃዞቹ እስከዚህ ጊዜ ድረስ አገልጋዩ የተቀበላቸውን ሁሉንም መዝገቦች ያካትታሉ።",
+ "cutoff.note_none": "ያልተመሳሰለ መረጃ እንዳለው የሚያሳውቅ መሣሪያ የለም።",
+ "cutoff.note_pending": "ከመስመር ውጭ ያሉ መሣሪያዎች በ{devices} መሣሪያ(ዎች) ላይ {records} ያልተመሳሰሉ መዝገቦችን ይዘዋል፦ {list}። እስኪመሳሰሉ ድረስ የእነዚህ ሳይቶች አሃዞች ያልተሟሉ ሊሆኑ ይችላሉ።",
+ "cutoff.sites_one": "{count} ሳይት ({codes})",
+ "cutoff.sites_other": "{count} ሳይቶች ({codes})",
+ "cutoff.unassigned": "ሳይት የሌላቸው ተጠቃሚዎች {count} መሣሪያ(ዎች)",
+ "cutoff.unsynced_label": "ያልተመሳሰለ መረጃ"
+}

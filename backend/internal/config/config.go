@@ -40,6 +40,9 @@ type Config struct {
 	AssetsDir       string // optional override dir for logo files (backend/assets)
 	GlobalRateLimit int    // requests per minute per IP
 	AuthRateLimit   int    // requests per minute per IP on /api/auth/*
+	OpsAlertEmail   string // F1: critical alerts (job failures, server errors, health) are also emailed here; "" = in-app only
+	DataDir         string // F1: directory whose free disk space the health check reports (default ".")
+	JobsEnabled     bool   // F1: run the background job scheduler in this process (JOBS_ENABLED, default true)
 }
 
 func (c *Config) IsProd() bool { return c.AppEnv == "production" }
@@ -157,6 +160,9 @@ func FromEnv() (*Config, error) {
 		AssetsDir:       get("ASSETS_DIR", ""),
 		GlobalRateLimit: atoi("RATE_LIMIT_GLOBAL_PER_MIN", 600),
 		AuthRateLimit:   atoi("RATE_LIMIT_AUTH_PER_MIN", 30),
+		OpsAlertEmail:   strings.TrimSpace(get("OPS_ALERT_EMAIL", "")),
+		DataDir:         get("DATA_DIR", "."),
+		JobsEnabled:     get("JOBS_ENABLED", "true") != "false",
 	}
 	if c.IsProd() {
 		c.AuthDevLogOTP = false // never print codes in production

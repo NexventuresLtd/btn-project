@@ -141,6 +141,7 @@ type Localized struct {
 	EN string `json:"en"`
 	AM string `json:"am"`
 	RW string `json:"rw"`
+	FR string `json:"fr,omitempty"`
 }
 
 // Get returns the text for lang, falling back to English.
@@ -153,6 +154,10 @@ func (l Localized) Get(lang i18n.Lang) string {
 	case i18n.RW:
 		if l.RW != "" {
 			return l.RW
+		}
+	case i18n.FR:
+		if l.FR != "" {
+			return l.FR
 		}
 	}
 	return l.EN
@@ -178,12 +183,13 @@ type Branding struct {
 var DefaultBranding = Branding{
 	Name: "BTN Manufacturing", LegalName: "BTN Manufacturing Ltd",
 	PrimaryColor: "#0C234B", AccentColor: "#F59E0B", FontFamily: "Inter", BaseFontSize: 16,
-	LoginHeadline: Localized{EN: "Operations, in one place.", AM: "ሥራዎች ሁሉ በአንድ ቦታ።", RW: "Imikorere yose ahantu hamwe."},
+	LoginHeadline: Localized{EN: "Operations, in one place.", AM: "ሥራዎች ሁሉ በአንድ ቦታ።", RW: "Imikorere yose ahantu hamwe.", FR: "Toutes vos opérations, au même endroit."},
 	LoginSubtitle: Localized{
 		EN: "Production, stock, sales, petty cash and payroll for BTN Manufacturing.",
 		AM: "የቢቲኤን ማኑፋክቸሪንግ ምርት፣ ክምችት፣ ሽያጭ፣ አነስተኛ ገንዘብ እና ደመወዝ።",
-		RW: "Umusaruro, ububiko, ibicuruzwa, amafaranga mato n'imishahara bya BTN Manufacturing."},
-	FooterText:      Localized{EN: "BTN Manufacturing Ltd · Kigali, Rwanda", AM: "ቢቲኤን ማኑፋክቸሪንግ ኃ.የተ.የግ.ማ. · ኪጋሊ፣ ሩዋንዳ", RW: "BTN Manufacturing Ltd · Kigali, u Rwanda"},
+		RW: "Umusaruro, ububiko, ibicuruzwa, amafaranga mato n'imishahara bya BTN Manufacturing.",
+		FR: "Production, stocks, ventes, petite caisse et paie de BTN Manufacturing."},
+	FooterText:      Localized{EN: "BTN Manufacturing Ltd · Kigali, Rwanda", AM: "ቢቲኤን ማኑፋክቸሪንግ ኃ.የተ.የግ.ማ. · ኪጋሊ፣ ሩዋንዳ", RW: "BTN Manufacturing Ltd · Kigali, u Rwanda", FR: "BTN Manufacturing Ltd · Kigali, Rwanda"},
 	DefaultLanguage: "en",
 }
 

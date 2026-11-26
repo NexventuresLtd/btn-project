@@ -1,0 +1,16 @@
+{
+  "auth.token_expired": "ክፍለ ጊዜዎ መታደስ አለበት። እባክዎ እንደገና ይሞክሩ።",
+  "auth.device_revoked": "ይህ መሣሪያ ከመለያው ወጥቷል። ለመቀጠል እንደገና ይግቡ።",
+  "auth.refresh_invalid": "ክፍለ ጊዜዎ አብቅቷል። እባክዎ እንደገና ይግቡ።",
+  "auth.device_mismatch": "ይህ ጥያቄ ከገባው መሣሪያ የተለየ መሣሪያ ነው የመጣው።",
+  "auth.device_required": "ይህ ተግባር የተመዘገበ መሣሪያ ይፈልጋል። ወጥተው በዚህ መሣሪያ እንደገና ይግቡ።",
+  "auth.device_already_revoked": "ይህ መሣሪያ አስቀድሞ ከመለያው ወጥቷል።",
+  "auth.reset_link_invalid": "ይህ የመለወጫ አገናኝ ትክክል አይደለም፣ ጊዜው አልፏል ወይም ጥቅም ላይ ውሏል። እባክዎ አዲስ ይጠይቁ።",
+  "auth.reset_done": "የይለፍ ቃልዎ ተቀይሯል። በአዲሱ የይለፍ ቃል ይግቡ።",
+  "auth.reset_generic_link": "በዚህ ኢሜይል መለያ ካለ፣ የመለወጫ አገናኝ እና ኮድ ልከናል።",
+  "entity.device": "መሣሪያ",
+  "mail.reset_link_intro": "አዲስ የይለፍ ቃል ለመምረጥ ከታች ያለውን ቁልፍ ይጫኑ።",
+  "mail.reset_link_button": "የይለፍ ቃሌን ቀይር",
+  "mail.reset_link_expiry": "አገናኙ በ{minutes} ደቂቃ ውስጥ ያበቃል እና አንድ ጊዜ ብቻ ይሠራል።",
+  "mail.reset_or_code": "ወይም ይህን ኮድ በመለወጫ ገጹ ላይ ያስገቡ፦"
+}

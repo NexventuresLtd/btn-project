@@ -767,6 +767,7 @@ func New(c *fiber.Ctx, d *deps.Deps, o Options) (*Report, error) {
 	if err := fillBranding(ctx, d.Settings, &o); err != nil {
 		return nil, err
 	}
+	o.Meta = append(o.Meta, hookMeta(c, o.Lang)...) // RPT-06 data cut-off (hooks.go)
 	return NewReport(o), nil
 }
 

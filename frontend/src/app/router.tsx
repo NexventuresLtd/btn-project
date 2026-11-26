@@ -19,6 +19,19 @@ import { adminRoutes } from "@/modules/admin/routes";
 import { superadminRoutes } from "@/modules/superadmin/routes";
 import { accountRoutes } from "@/modules/account/routes";
 import { helpRoutes } from "@/modules/help/routes";
+import { syncIssuesRoutes } from "@/offline/routes";
+import { transfersRoutes } from "@/modules/transfers/routes";
+import { stockcountRoutes } from "@/modules/stockcount/routes";
+import { procurementRoutes } from "@/modules/procurement/routes";
+import { expensesRoutes } from "@/modules/expenses/routes";
+import { budgetsRoutes } from "@/modules/budgets/routes";
+import { financeRoutes } from "@/modules/finance/routes"; // P5 finance dashboard + purchase trace
+import { workforceRoutes } from "@/modules/workforce/routes";
+import { privacyRoutes } from "@/modules/privacy/routes"; // F2 NFR-D2
+import { notificationsRoutes } from "@/modules/notifications/routes";
+import { sessionRoutes } from "@/modules/session/routes"; // F3: devices, sync review, sync monitor
+import { dataimportRoutes } from "@/modules/dataimport/routes"; // F2 §6.3 CSV import
+import { dataexportRoutes } from "@/modules/dataexport/routes"; // F2 ADM-05 data export
 import { NotFound } from "./NotFound";
 
 export const router = createBrowserRouter([
@@ -43,6 +56,19 @@ export const router = createBrowserRouter([
       ...superadminRoutes,
       ...accountRoutes,
       ...helpRoutes,
+      ...syncIssuesRoutes,
+      ...transfersRoutes,
+      ...stockcountRoutes,
+      ...procurementRoutes,
+      ...expensesRoutes,
+      ...budgetsRoutes,
+      ...financeRoutes,
+      ...workforceRoutes,
+      ...privacyRoutes,
+      ...dataimportRoutes,
+      ...dataexportRoutes,
+      ...sessionRoutes,
+      ...notificationsRoutes, // F1: /notifications, /notifications/preferences, /admin/jobs, /admin/monitoring
       { path: "*", element: <NotFound /> },
     ],
   },

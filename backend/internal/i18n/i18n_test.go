@@ -8,7 +8,10 @@ import (
 
 func TestCatalogsHaveIdenticalKeys(t *testing.T) {
 	en := Keys(EN)
-	for _, l := range []Lang{AM, RW} {
+	if len(All) != 4 {
+		t.Fatalf("expected en, am, rw, fr; got %v", All)
+	}
+	for _, l := range []Lang{AM, RW, FR} {
 		got := Keys(l)
 		if len(got) != len(en) {
 			t.Errorf("%s has %d keys, en has %d", l, len(got), len(en))
@@ -54,7 +57,7 @@ func TestPlaceholdersMatchAndNoEmpty(t *testing.T) {
 		en := Static(EN)[k]
 		want := placeholder.FindAllString(en, -1)
 		sort.Strings(want)
-		for _, l := range []Lang{AM, RW} {
+		for _, l := range []Lang{AM, RW, FR} {
 			v := Static(l)[k]
 			if v == "" {
 				t.Errorf("%s/%s empty", l, k)
@@ -110,7 +113,11 @@ func TestResolve(t *testing.T) {
 	}{
 		{"am", "rw", "en", AM},
 		{"", "rw", "am", RW},
-		{"", "", "fr;q=0.9, rw-RW;q=0.8, en;q=0.7", RW},
+		{"", "", "de;q=0.9, rw-RW;q=0.8, en;q=0.7", RW},
+		{"", "", "fr-FR,fr;q=0.9,en;q=0.8", FR},
+		{"", "", "fr-RW", FR},
+		{"FR", "", "", FR},
+		{"", "fr", "rw", FR},
 		{"xx", "", "", EN},
 		{"", "", "am-ET,am;q=0.9", AM},
 	}
@@ -118,5 +125,22 @@ func TestResolve(t *testing.T) {
 		if got := Resolve(c.q, c.u, c.a, EN); got != c.want {
 			t.Errorf("%+v => %s", c, got)
 		}
+	}
+}
+
+// French must really be French: most values differ from English (brand names, codes and units may match).
+func TestFrenchIsTranslated(t *testing.T) {
+	en, fr := Static(EN), Static(FR)
+	same := 0
+	for k, v := range en {
+		if fr[k] == v {
+			same++
+		}
+	}
+	if share := float64(same) / float64(len(en)); share > 0.12 {
+		t.Errorf("%.0f%% of French strings equal English (%d of %d)", share*100, same, len(en))
+	}
+	if T(FR, "v.required") == T(EN, "v.required") {
+		t.Error("v.required not translated")
 	}
 }

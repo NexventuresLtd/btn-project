@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router";
-import { Pencil, Search, TriangleAlert, UserPlus } from "lucide-react";
-import { Alert, Badge, Button, Card, DataTable, ErrorState, FilterBar, Input, PageHeader, Pagination, StatusBadge, Tabs, useFilters, type Column } from "@/components/ui";
+import { Link, useSearchParams } from "react-router";
+import { History, Pencil, Search, TriangleAlert, UserPlus } from "lucide-react";
+import { Alert, Badge, Button, Card, DataTable, ErrorState, FilterBar, Input, PageHeader, Pagination, Select, Tabs, useFilters, type Column, ExportMenu } from "@/components/ui";
 import { useT } from "@/i18n";
 import { useAuth } from "@/auth/AuthProvider";
 import { formatInt } from "@/lib/format";
-import { useWorkers, type Worker } from "./api";
+import { formatDate } from "@/lib/dates";
+import { EMPLOYMENT_STATUSES, RATE_BASES, useWorkers, type EmploymentStatus, type Worker } from "./api";
 import { WorkerModal } from "./WorkerModal";
 
 type ActiveFilter = "true" | "false" | "all";
@@ -20,14 +21,29 @@ export function MismatchBadge() {
   );
 }
 
+const STATUS_TONE: Record<EmploymentStatus, "green" | "slate" | "red"> = { ACTIVE: "green", INACTIVE: "slate", LEFT: "red" };
+
+/** WRK-01 employment status (active / inactive / left). */
+export function EmploymentBadge({ status, leftDate }: { status: EmploymentStatus; leftDate?: string | null }) {
+  const { tx, t } = useT();
+  return (
+    <Badge tone={STATUS_TONE[status] ?? "slate"} dot>
+      {tx(`payroll.wrk.status.${status}`)}{status === "LEFT" && leftDate ? ` · ${t("payroll.wrk.leftOn", { date: formatDate(leftDate) })}` : ""}
+    </Badge>
+  );
+}
+
 export function WorkersPage() {
-  const { t } = useT();
+  const { t, tx } = useT();
   const { can } = useAuth();
   const canManage = can("workers.manage");
+  const canWages = can("wages.view");
   const { filters, set, pinnedPlant } = useFilters();
   const [params, setParams] = useSearchParams();
   const active = (ACTIVE_VALUES.find((v) => v === params.get("active")) ?? "true") as ActiveFilter;
   const page = Math.max(1, Number(params.get("page")) || 1);
+  const status = EMPLOYMENT_STATUSES.find((s) => s === params.get("status"));
+  const rateBasis = RATE_BASES.find((b) => b === params.get("rateBasis"));
   const [search, setSearch] = useState(params.get("q") ?? "");
   const q = params.get("q") ?? "";
   const [editing, setEditing] = useState<Worker | null>(null);
@@ -50,7 +66,8 @@ export function WorkersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
-  const workers = useWorkers({ plantId: filters.plantId || undefined, q: q || undefined, active, page, pageSize: 50 });
+  // an explicit employment status filter replaces the active/inactive tabs
+  const workers = useWorkers({ plantId: filters.plantId || undefined, q: q || undefined, active: status ? "all" : active, status, rateBasis, page, pageSize: 50 });
   const data = workers.data;
 
   const openNew = () => {
@@ -75,7 +92,9 @@ export function WorkersPage() {
     },
     { key: "plant", header: t("common.plant"), cell: (w) => <span className="whitespace-nowrap">{w.plant.code}</span> },
     { key: "job", header: t("payroll.col.jobTitle"), hideOnMobile: true, cell: (w) => w.jobTitle },
-    { key: "wage", header: t("payroll.col.dailyWage"), align: "right", cell: (w) => formatInt(w.dailyWage) },
+    { key: "basis", header: t("payroll.wrk.rateBasis"), hideOnMobile: true, cell: (w) => <Badge tone={w.rateBasis === "DAILY" ? "navy" : w.rateBasis === "PIECE" ? "purple" : "blue"}>{tx(`payroll.wrk.basis.${w.rateBasis ?? "DAILY"}`)}</Badge> },
+    { key: "wage", header: t("payroll.col.dailyWage"), align: "right", cell: (w) => (w.rateBasis === "PIECE" && !w.dailyWage ? <span className="text-slate-400">—</span> : formatInt(w.dailyWage)) },
+    { key: "phone", header: t("payroll.wrk.phone"), hideOnMobile: true, cell: (w) => <span className="tabular whitespace-nowrap">{w.phone ?? "—"}</span> },
     { key: "momo", header: t("payroll.col.momoNumber"), hideOnMobile: true, cell: (w) => <span className="tabular whitespace-nowrap">{w.momoNumber ?? "—"}</span> },
     {
       key: "momoName",
@@ -88,7 +107,21 @@ export function WorkersPage() {
         </div>
       ),
     },
-    { key: "status", header: t("common.status"), cell: (w) => <StatusBadge status={w.isActive ? "ACTIVE" : "INACTIVE"} /> },
+    { key: "status", header: t("common.status"), cell: (w) => <EmploymentBadge status={w.employmentStatus ?? (w.isActive ? "ACTIVE" : "INACTIVE")} leftDate={w.leftDate} /> },
+    ...(canWages
+      ? [
+          {
+            key: "history",
+            header: <span className="sr-only">{t("payroll.wrk.history")}</span>,
+            align: "right" as const,
+            cell: (w: Worker) => (
+              <Link to={`/workforce/workers/${w.id}`} onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-semibold whitespace-nowrap text-navy-700 hover:bg-navy-50" aria-label={t("payroll.wrk.historyAria", { name: w.fullName })}>
+                <History className="size-3.5" /> {t("payroll.wrk.history")}
+              </Link>
+            ),
+          },
+        ]
+      : []),
     ...(canManage
       ? [
           {
@@ -111,7 +144,7 @@ export function WorkersPage() {
         title={t("payroll.workersPage.title")}
         breadcrumbs={[{ label: t("payroll.title"), to: "/payroll" }, { label: t("payroll.workersPage.title") }]}
         description={t("payroll.workersPage.description")}
-        actions={canManage ? <Button icon={<UserPlus className="size-4" />} onClick={openNew}>{t("payroll.workersPage.register")}</Button> : null}
+        actions={<div className="flex flex-wrap items-center gap-2"><ExportMenu path="/payroll/workers" params={{ plantId: filters.plantId || undefined, q: q || undefined, active: status ? "all" : active, status, rateBasis }} />{canManage ? <Button icon={<UserPlus className="size-4" />} onClick={openNew}>{t("payroll.workersPage.register")}</Button> : null}</div>}
       />
 
       <FilterBar filters={filters} onChange={set} pinnedPlant={pinnedPlant} showRange={false} className="mb-5">
@@ -119,6 +152,14 @@ export function WorkersPage() {
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("payroll.workersPage.searchPlaceholder")} className="pl-9" aria-label={t("payroll.workersPage.searchAria")} />
         </div>
+        <Select value={status ?? ""} onChange={(e) => setParam("status", e.target.value || null)} className="h-10 w-full sm:w-44" aria-label={t("payroll.wrk.filterStatus")}>
+          <option value="">{t("payroll.wrk.anyStatus")}</option>
+          {EMPLOYMENT_STATUSES.map((s) => <option key={s} value={s}>{tx(`payroll.wrk.status.${s}`)}</option>)}
+        </Select>
+        <Select value={rateBasis ?? ""} onChange={(e) => setParam("rateBasis", e.target.value || null)} className="h-10 w-full sm:w-44" aria-label={t("payroll.wrk.filterBasis")}>
+          <option value="">{t("payroll.wrk.anyBasis")}</option>
+          {RATE_BASES.map((b) => <option key={b} value={b}>{tx(`payroll.wrk.basis.${b}`)}</option>)}
+        </Select>
       </FilterBar>
 
       {data && data.mismatchCount > 0 ? (

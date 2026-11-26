@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from "react-router";
-import { Badge, Card, DataTable, ErrorState, FilterBar, PageHeader, Pagination, Select, useFilters, type Column } from "@/components/ui";
+import { Badge, Card, DataTable, ErrorState, FilterBar, PageHeader, Pagination, Select, useFilters, type Column, ExportMenu } from "@/components/ui";
 import { useLookups } from "@/hooks/useLookups";
 import { cn } from "@/lib/cn";
 import { formatDate, formatDateTime } from "@/lib/dates";
@@ -64,6 +64,7 @@ export function StockMovementsPage() {
         title={t("stock.movements.title")}
         description={t("stock.movements.subtitle")}
         breadcrumbs={[{ label: t("stock.title"), to: "/stock" }, { label: t("stock.movements.breadcrumb") }]}
+        actions={<ExportMenu path="/stock/movements" params={{ ...filters, productId, type }} />}
       />
       <FilterBar filters={filters} onChange={set} pinnedPlant={pinnedPlant} className="mb-5">
         <Select value={productId} onChange={(e) => setParam("productId", e.target.value)} className="h-10 w-52" aria-label={t("stock.movements.product")}>

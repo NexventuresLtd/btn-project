@@ -1,13 +1,15 @@
 import type { ReactNode } from "react";
 import { Banknote, Boxes, Factory, Gauge, HandCoins, ReceiptText, ShieldCheck, Wallet } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
-import { Card, ErrorState, FilterBar, PageHeader, PdfButton, Spinner, StatCard, useFilters } from "@/components/ui";
+import { Card, ErrorState, FilterBar, PageHeader, ExportMenu, PdfButton, Spinner, StatCard, useFilters } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { formatDate, TIMEZONE } from "@/lib/dates";
+import { formatDate, TIMEZONE, todayISO } from "@/lib/dates";
 import { localeOf, useT, type T } from "@/i18n";
 import { formatInt, formatRWF } from "@/lib/format";
 import { PasskeyBanner } from "@/components/PasskeyBanner";
 import { useDashboard, type Dashboard, type Kpi, type KpiKey } from "./api";
+import { useSearchParams } from "react-router";
+import { BoardSkeleton, BoardView, useBoard, useBoards, type BoardKey } from "./boards";
 import {
   ActionsCard, ActivityCard, CashLabourCard, DeltaPill, FinishedGoodsCard, GettingStarted, GridRow, KpiScorecard, LowStockCard, PlantPerformanceCard,
   ProductMixCard, ProductionTrendCard, SalesTrendCard, formatKpi, kpiLabel,
@@ -86,7 +88,8 @@ function SkeletonDashboard() {
   );
 }
 
-const longDate = () => new Intl.DateTimeFormat(`${localeOf()}-u-nu-latn`, { timeZone: TIMEZONE, weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date());
+/** "Monday 23/11/2026" — weekday localized, date DD/MM/YYYY (NFR-L1). */
+const longDate = () => `${new Intl.DateTimeFormat(`${localeOf()}-u-nu-latn`, { timeZone: TIMEZONE, weekday: "long" }).format(new Date())} ${formatDate(todayISO())}`;
 
 function greetingText(t: T) {
   const h = Number(new Intl.DateTimeFormat("en-GB", { timeZone: TIMEZONE, hour: "2-digit", hour12: false }).format(new Date()));
@@ -97,7 +100,14 @@ export function DashboardPage() {
   const { t, tx } = useT();
   const { user, can } = useAuth();
   const { filters, set, pinnedPlant, query } = useFilters();
-  const { data: d, isLoading, isFetching, error, refetch } = useDashboard(query);
+  const [params, setParams] = useSearchParams();
+  const boards = useBoards();
+  const requested = params.get("board");
+  const view: BoardKey | "overview" | null = requested === "overview" ? "overview"
+    : (boards.data?.boards.find((b) => b.key === requested)?.key ?? boards.data?.default ?? (boards.isError ? "overview" : null));
+  const board = useBoard(view && view !== "overview" ? view : null, query);
+  const { data: d, isLoading, isFetching, error, refetch } = useDashboard(query, view === "overview");
+  const pickView = (v: string) => setParams((p) => { p.set("board", v); return p; }, { replace: true });
   const firstName = user?.name.split(/\s+/)[0] ?? "";
   const scope = d?.plant ? d.plant.code : pinnedPlant ? user?.plant?.code : t("common.allPlants");
 
@@ -118,7 +128,7 @@ export function DashboardPage() {
             <span>{user ? tx(`enums.role.${user.role}`, undefined, user.roleLabel) : null}{user?.plant ? ` · ${user.plant.code}` : ""}</span>
           </span>
         }
-        actions={can("reports.view") ? <PdfButton path="/reports/pdf/management" params={{ from: filters.from, to: filters.to, plantId: filters.plantId || undefined }} label={t("dashboard.managementPdf")} variant="primary" /> : null}
+        actions={can("reports.view") ? <div className="flex flex-wrap items-center gap-2"><PdfButton path="/reports/pdf/management" params={{ from: filters.from, to: filters.to, plantId: filters.plantId || undefined }} label={t("dashboard.managementPdf")} variant="primary" /><ExportMenu path="/dashboard" params={{ from: filters.from, to: filters.to, plantId: filters.plantId || undefined }} /></div> : null}
       />
 
       <PasskeyBanner />
@@ -131,7 +141,37 @@ export function DashboardPage() {
         </p>
       </div>
 
-      {isLoading ? (
+      {boards.data ? (
+        <div data-tour="board-switcher" className="mb-6 -mx-1 overflow-x-auto px-1">
+          <div role="tablist" aria-label={t("dashboard.boards.switcher")} className="inline-flex min-w-max gap-1 rounded-xl border border-line bg-white p-1">
+            {[...boards.data.boards, { key: "overview" as const, title: t("dashboard.boards.overview"), description: "" }].map((b) => (
+              <button
+                key={b.key}
+                role="tab"
+                type="button"
+                aria-selected={view === b.key}
+                title={b.description || undefined}
+                onClick={() => pickView(b.key)}
+                className={cn("h-9 rounded-lg px-3 text-sm font-semibold whitespace-nowrap transition focus-visible:ring-2 focus-visible:ring-navy-300 focus-visible:outline-none",
+                  view === b.key ? "bg-navy-800 text-white" : "text-slate-600 hover:bg-slate-50")}
+              >
+                {b.title}
+              </button>
+            ))}
+          </div>
+          {view && view !== "overview" && board.data ? <p className="mt-2 text-xs text-slate-500">{board.data.description}</p> : null}
+        </div>
+      ) : null}
+
+      {view && view !== "overview" ? (
+        board.isLoading || !view ? <BoardSkeleton /> : board.error || !board.data ? (
+          <Card><ErrorState error={board.error} retry={() => void board.refetch()} /></Card>
+        ) : (
+          <div className={cn("transition-opacity", board.isFetching && "opacity-80")}><BoardView board={board.data} /></div>
+        )
+      ) : view === null ? (
+        <BoardSkeleton />
+      ) : isLoading ? (
         <SkeletonDashboard />
       ) : error || !d ? (
         <Card><ErrorState error={error} retry={() => void refetch()} /></Card>

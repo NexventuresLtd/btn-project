@@ -110,13 +110,13 @@ func TestBuckets(t *testing.T) {
 
 func TestRangeLabel(t *testing.T) {
 	f := func(a, b string) string { return RangeLabel(i18n.EN, dates.MustParseISO(a), dates.MustParseISO(b)) }
-	for _, c := range [][3]string{{"2026-11-01", "2026-11-21", "1–21 Nov 2026"}, {"2026-11-14", "2026-11-14", "14 Nov 2026"},
-		{"2026-10-28", "2026-11-21", "28 Oct – 21 Nov 2026"}, {"2025-12-15", "2026-01-10", "15 Dec 2025 – 10 Jan 2026"}} {
+	for _, c := range [][3]string{{"2026-11-01", "2026-11-21", "01/11/2026 – 21/11/2026"}, {"2026-11-14", "2026-11-14", "14/11/2026"},
+		{"2026-10-28", "2026-11-21", "28/10/2026 – 21/11/2026"}, {"2025-12-15", "2026-01-10", "15/12/2025 – 10/01/2026"}} {
 		if got := f(c[0], c[1]); got != c[2] {
 			t.Fatalf("%s: %s", c[2], got)
 		}
 	}
-	if got := RangeLabel(i18n.RW, dates.MustParseISO("2026-11-01"), dates.MustParseISO("2026-11-21")); got != "1–21 Ugu 2026" {
+	if got := RangeLabel(i18n.RW, dates.MustParseISO("2026-11-01"), dates.MustParseISO("2026-11-21")); got != "01/11/2026 – 21/11/2026" {
 		t.Fatal(got)
 	}
 }

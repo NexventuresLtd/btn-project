@@ -13,6 +13,8 @@ import (
 	"btn-ops/internal/db"
 	"btn-ops/internal/deps"
 	"btn-ops/internal/httpx"
+	"btn-ops/internal/i18n"
+	"btn-ops/internal/refdata"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
@@ -23,9 +25,21 @@ type Plant struct {
 	Code      string    `json:"code" db:"code"`
 	Name      string    `json:"name" db:"name"`
 	Location  *string   `json:"location" db:"location"`
+	Kind      string    `json:"kind" db:"kind"` // SITE | HQ | WAREHOUSE (STK-01)
 	IsActive  bool      `json:"isActive" db:"isActive"`
 	CreatedAt time.Time `json:"createdAt" db:"createdAt"`
 }
+
+// Location kinds (STK-01). Production and attendance happen only at SITE; stock, materials, sales and
+// procurement work at any kind.
+const (
+	KindSite      = "SITE"
+	KindHQ        = "HQ"
+	KindWarehouse = "WAREHOUSE"
+)
+
+// LocationKinds in display order.
+var LocationKinds = []string{KindSite, KindHQ, KindWarehouse}
 
 type Product struct {
 	ID           string    `json:"id" db:"id"`
@@ -33,6 +47,8 @@ type Product struct {
 	Name         string    `json:"name" db:"name"`
 	Dimensions   *string   `json:"dimensions" db:"dimensions"`
 	Unit         string    `json:"unit" db:"unit"`
+	Category     *string   `json:"category" db:"category"`         // refdata product_category (STK-02)
+	ReorderLevel int       `json:"reorderLevel" db:"reorderLevel"` // low-stock alert level (STK-07), 0 = not tracked
 	DefaultPrice int       `json:"defaultPrice" db:"defaultPrice"`
 	SortOrder    int       `json:"sortOrder" db:"sortOrder"`
 	IsActive     bool      `json:"isActive" db:"isActive"`
@@ -44,6 +60,7 @@ type Material struct {
 	Code      string    `json:"code" db:"code"`
 	Name      string    `json:"name" db:"name"`
 	Unit      string    `json:"unit" db:"unit"`
+	Category  *string   `json:"category" db:"category"` // refdata material_category (STK-02)
 	MinLevel  string    `json:"minLevel" db:"minLevel"` // Decimal as string, like Prisma
 	SortOrder int       `json:"sortOrder" db:"sortOrder"`
 	IsActive  bool      `json:"isActive" db:"isActive"`
@@ -70,6 +87,8 @@ type entity struct {
 	collect           func(rows pgx.Rows) (any, error)
 	// parse validates the body; partial=true only handles supplied keys. Returns column → value.
 	parse func(v *httpx.V, partial bool) []colVal
+	// check validates parsed values against the database (reference data codes); may normalise them.
+	check func(ctx context.Context, q db.DBTX, lang i18n.Lang, cols []colVal) error
 }
 
 type colVal struct {
@@ -109,7 +128,7 @@ func has(v *httpx.V, partial bool, key string) bool { return !partial || v.Has(k
 var entities = []*entity{
 	{
 		path: "plants", name: "Plant", table: `"Plant"`, perm: "masterdata.manage", orderBy: `code ASC`,
-		selectCols: `id, code, name, location, "isActive", "createdAt"`,
+		selectCols: `id, code, name, location, kind, "isActive", "createdAt"`,
 		collect:    collect[Plant](nil),
 		parse: func(v *httpx.V, partial bool) []colVal {
 			var out []colVal
@@ -122,6 +141,13 @@ var entities = []*entity{
 			if has(v, partial, "location") {
 				out = append(out, colVal{"location", optText(v, "location")})
 			}
+			if has(v, partial, "kind") {
+				k := v.OptStr("kind").Trim().Upper().OneOf(LocationKinds, "masterdata.location_kind")
+				if !partial {
+					k.Default(KindSite)
+				}
+				out = append(out, colVal{"kind", k.Get()})
+			}
 			if b := boolField(v, partial); b != nil {
 				out = append(out, *b)
 			}
@@ -130,8 +156,9 @@ var entities = []*entity{
 	},
 	{
 		path: "products", name: "Product", table: `"Product"`, perm: "masterdata.manage", orderBy: `"sortOrder" ASC, name ASC`,
-		selectCols: `id, code, name, dimensions, unit, "defaultPrice", "sortOrder", "isActive", "createdAt"`,
+		selectCols: `id, code, name, dimensions, unit, category, "reorderLevel", "defaultPrice", "sortOrder", "isActive", "createdAt"`,
 		collect:    collect[Product](nil),
+		check:      refCheck(refdata.KindProductCategory),
 		parse: func(v *httpx.V, partial bool) []colVal {
 			var out []colVal
 			if has(v, partial, "code") {
@@ -149,6 +176,16 @@ var entities = []*entity{
 					s.Default("Pcs")
 				}
 				out = append(out, colVal{"unit", s.Get()})
+			}
+			if has(v, partial, "category") {
+				out = append(out, colVal{"category", v.NullStr("category").Trim().Upper().Max(40).NilIfEmpty()})
+			}
+			if has(v, partial, "reorderLevel") {
+				n := v.OptNum("reorderLevel").Coerce().Whole().Min(0).Max(100_000_000)
+				if !partial {
+					n.Default(0)
+				}
+				out = append(out, colVal{"reorderLevel", n.I()})
 			}
 			if has(v, partial, "defaultPrice") {
 				out = append(out, colVal{"defaultPrice", v.Num("defaultPrice").Coerce().Whole("v.whole_francs").Min(0).I()})
@@ -168,8 +205,9 @@ var entities = []*entity{
 	},
 	{
 		path: "materials", name: "Material", table: `"Material"`, perm: "masterdata.manage", orderBy: `"sortOrder" ASC, name ASC`,
-		selectCols: `id, code, name, unit, "minLevel"::text AS "minLevel", "sortOrder", "isActive", "createdAt"`,
+		selectCols: `id, code, name, unit, category, "minLevel"::text AS "minLevel", "sortOrder", "isActive", "createdAt"`,
 		collect:    collect[Material](func(m *Material) { m.MinLevel = db.TrimDecimal(m.MinLevel) }),
+		check:      refCheck(refdata.KindMaterialCategory),
 		parse: func(v *httpx.V, partial bool) []colVal {
 			var out []colVal
 			if has(v, partial, "code") {
@@ -180,6 +218,9 @@ var entities = []*entity{
 			}
 			if has(v, partial, "unit") {
 				out = append(out, colVal{"unit", v.Str("unit").Trim().Min(1).Max(20).Get()})
+			}
+			if has(v, partial, "category") {
+				out = append(out, colVal{"category", v.NullStr("category").Trim().Upper().Max(40).NilIfEmpty()})
 			}
 			if has(v, partial, "minLevel") {
 				n := v.OptNum("minLevel").Coerce().Min(0)
@@ -316,6 +357,11 @@ func create(c *fiber.Ctx, d *deps.Deps, e *entity) error {
 	if err := v.Err(); err != nil {
 		return err
 	}
+	if e.check != nil {
+		if err := e.check(ctx, d.Pool, httpx.Lang(c), cols); err != nil {
+			return err
+		}
+	}
 	row, err := db.TxVal(ctx, d.Pool, func(tx pgx.Tx) (any, error) {
 		names, ph, args := make([]string, len(cols)), make([]string, len(cols)), make([]any, len(cols))
 		for i, cv := range cols {
@@ -349,6 +395,11 @@ func patch(c *fiber.Ctx, d *deps.Deps, e *entity) error {
 	if err := v.Err(); err != nil {
 		return err
 	}
+	if e.check != nil {
+		if err := e.check(ctx, d.Pool, httpx.Lang(c), cols); err != nil {
+			return err
+		}
+	}
 	row, err := db.TxVal(ctx, d.Pool, func(tx pgx.Tx) (any, error) {
 		before, err := one(ctx, tx, e, id)
 		if err != nil {
@@ -375,4 +426,46 @@ func patch(c *fiber.Ctx, d *deps.Deps, e *entity) error {
 	}
 	InvalidateLookups()
 	return c.JSON(row)
+}
+
+// refCheck (STK-02): the unit must be an active "unit" reference-data code (matched case-insensitively against
+// the code or its symbol, stored as given so legacy values like "Pcs" keep working) and the category an active
+// code of categoryKind.
+func refCheck(categoryKind string) func(ctx context.Context, q db.DBTX, lang i18n.Lang, cols []colVal) error {
+	return func(ctx context.Context, q db.DBTX, lang i18n.Lang, cols []colVal) error {
+		fields := map[string]string{}
+		for _, cv := range cols {
+			switch cv.col {
+			case "unit":
+				u, _ := cv.val.(string)
+				if u == "" {
+					continue
+				}
+				var ok bool
+				if err := q.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM refdata_item WHERE kind = 'unit' AND is_active
+					AND (upper(code) = upper($1) OR lower(COALESCE(metadata->>'symbol','')) = lower($1)))`, u).Scan(&ok); err != nil {
+					return err
+				}
+				if !ok {
+					fields["unit"] = i18n.T(lang, "masterdata.unit_unknown")
+				}
+			case "category":
+				p, _ := cv.val.(*string)
+				if p == nil {
+					continue
+				}
+				ok, err := refdata.Valid(ctx, q, categoryKind, *p)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					fields["category"] = i18n.T(lang, "masterdata.category_unknown")
+				}
+			}
+		}
+		if len(fields) > 0 {
+			return httpx.BadRequest("error.validation", fields)
+		}
+		return nil
+	}
 }

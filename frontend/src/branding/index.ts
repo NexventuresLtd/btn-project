@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { generateScale, darken, isHex, SHADES } from "./colors";
 import { setDefaultLang, isLang, type Lang } from "@/i18n";
 
-export type LocalText = { en: string; am: string; rw: string };
+export type LocalText = { en: string; am: string; rw: string; fr: string };
 
 export interface Branding {
   name: string;

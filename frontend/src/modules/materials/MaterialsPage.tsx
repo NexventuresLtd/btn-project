@@ -12,7 +12,7 @@ import {
   ErrorState,
   FilterBar,
   PageHeader,
-  PdfButton,
+  ExportMenu, PdfButton,
   Spinner,
   StatCard,
   Tabs,
@@ -48,7 +48,11 @@ export function MaterialsPage() {
             </Can>
             <Can permission="materials.record">
               <Button variant="secondary" icon={<Flame className="size-4" />} onClick={() => setAction("usage")}>{t("materials.recordUsage")}</Button>
-              <Button variant="secondary" icon={<ArrowLeftRight className="size-4" />} onClick={() => setAction("transfer")}>{t("materials.transfer")}</Button>
+            </Can>
+            <Can permission="transfers.request">
+              <Button variant="secondary" icon={<ArrowLeftRight className="size-4" />} onClick={() => navigate("/transfers/new")}>{t("materials.transfer")}</Button>
+            </Can>
+            <Can permission="materials.record">
               <Button icon={<PackagePlus className="size-4" />} onClick={() => setAction("receive")}>{t("materials.receive")}</Button>
             </Can>
           </>
@@ -57,7 +61,7 @@ export function MaterialsPage() {
 
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <FilterBar filters={filters} onChange={set} pinnedPlant={pinnedPlant} />
-        <PdfButton path="/materials/pdf/position" params={{ date: filters.to }} label={t("materials.positionPdf")} />
+        <div className="flex flex-wrap items-center gap-2"><PdfButton path="/materials/pdf/position" params={{ date: filters.to }} label={t("materials.positionPdf")} /><ExportMenu path="/materials/balances" params={{ date: filters.to, plantId: filters.plantId || undefined }} /></div>
       </div>
 
       <div className="space-y-5">
@@ -206,7 +210,7 @@ function DailyCard({ query }: { query: ReturnType<typeof useDaily> }) {
       <CardHeader
         title={t("materials.dailyTitle")}
         description={data ? t("materials.dailyDesc", { from: formatDate(data.from), to: formatDate(data.to) }) : t("materials.dailyDescLoading")}
-        actions={current ? <PdfButton path="/materials/pdf/daily" params={{ plantId: current.plant.id, from: data!.from, to: data!.to }} label={t("materials.plantPdf", { plant: current.plant.code })} /> : null}
+        actions={current ? <div className="flex flex-wrap items-center gap-2"><PdfButton path="/materials/pdf/daily" params={{ plantId: current.plant.id, from: data!.from, to: data!.to }} label={t("materials.plantPdf", { plant: current.plant.code })} /><ExportMenu path="/materials/daily" params={{ plantId: current.plant.id, from: data!.from, to: data!.to }} /></div> : null}
       />
       {error ? (
         <ErrorState error={error} retry={() => refetch()} />

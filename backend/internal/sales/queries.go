@@ -212,18 +212,26 @@ func (s *service) loadSale(ctx context.Context, q db.DBTX, lang i18n.Lang, id st
 	var createdAt time.Time
 	var cc customer
 	var ccCreated time.Time
-	var cfBy, ccBy *string
+	var cfBy, ccBy, qBy, clBy *string
+	var due, req, valid *time.Time
+	var quotedAt, readyAt, closedAt *time.Time
 	err := q.QueryRow(ctx, `
-		SELECT s.id, s.number, s.status::text, s.date, s."invoiceType", s."ebmInvoiceNo", s."ebmReceiptNo", s.notes,
+		SELECT s.id, s.number, s."orderStatus", s.status::text, s.date, s."invoiceType", s."ebmInvoiceNo", s."ebmReceiptNo", s.notes,
 		  p.id, p.code, p.name,
-		  c.id, c.name, c.tin, c.phone, c.email, c.address, c."isActive", c."createdAt",
-		  s."createdById", s."createdAt", s."confirmedById", s."confirmedAt", s."cancelledById", s."cancelledAt", s."cancelReason"
+		  c.id, c.name, c.tin, c.phone, c.email, c.address, c."isActive", c."createdAt", c."clientType", c.status, c.notes, c."paymentTerm",
+		  s."createdById", s."createdAt", s."confirmedById", s."confirmedAt", s."cancelledById", s."cancelledAt", s."cancelReason",
+		  s."paymentTerm", s."depositAmount", s."dueDate", s."transportMode", s."deliveryAddress", s."deliverySite", s."requestedDate", s."deliveryZone",
+		  s."distanceKm"::float8, s."deliveryCharge", s."validUntil", s."quotedById", s."quotedAt", s."readyAt", s."closedById", s."closedAt", s.version,
+		  s."capturedOffline", s.server_version
 		FROM "Sale" s JOIN "Plant" p ON p.id = s."plantId" JOIN "Customer" c ON c.id = s."customerId"
 		WHERE s.id = $1`, id).Scan(
-		&sd.ID, &sd.Number, &sd.Status, &date, &sd.InvoiceType, &sd.EbmInvoiceNo, &sd.EbmReceiptNo, &sd.Notes,
+		&sd.ID, &sd.Number, &sd.Status, &sd.LegacyStatus, &date, &sd.InvoiceType, &sd.EbmInvoiceNo, &sd.EbmReceiptNo, &sd.Notes,
 		&sd.Plant.ID, &sd.Plant.Code, &sd.Plant.Name,
-		&cc.ID, &cc.Name, &cc.TIN, &cc.Phone, &cc.Email, &cc.Address, &cc.IsActive, &ccCreated,
-		&createdBy, &createdAt, &cfBy, &confirmedAt, &ccBy, &cancelledAt, &sd.CancelReason)
+		&cc.ID, &cc.Name, &cc.TIN, &cc.Phone, &cc.Email, &cc.Address, &cc.IsActive, &ccCreated, &cc.ClientType, &cc.Status, &cc.Notes, &cc.PaymentTerm,
+		&createdBy, &createdAt, &cfBy, &confirmedAt, &ccBy, &cancelledAt, &sd.CancelReason,
+		&sd.PaymentTerm, &sd.DepositAmount, &due, &sd.TransportMode, &sd.DeliveryAddress, &sd.DeliverySite, &req, &sd.DeliveryZone,
+		&sd.DistanceKm, &sd.DeliveryCharge, &valid, &qBy, &quotedAt, &readyAt, &clBy, &closedAt, &sd.Version,
+		&sd.CapturedOffline, &sd.ServerVersion)
 	if err != nil {
 		if db.IsNoRows(err) {
 			return nil, nil
@@ -236,11 +244,23 @@ func (s *service) loadSale(ctx context.Context, q db.DBTX, lang i18n.Lang, id st
 	sd.CreatedAt = jt(createdAt)
 	sd.ConfirmedAt, sd.CancelledAt = jtp(confirmedAt), jtp(cancelledAt)
 	sd.MaxDiscountPercent = maxDiscount
+	isoPtr := func(t *time.Time) *string {
+		if t == nil {
+			return nil
+		}
+		s := dates.ToISO(*t)
+		return &s
+	}
+	sd.DueDate, sd.RequestedDate, sd.ValidUntil = isoPtr(due), isoPtr(req), isoPtr(valid)
+	sd.QuotedAt, sd.ReadyAt, sd.ClosedAt = jtp(quotedAt), jtp(readyAt), jtp(closedAt)
+	sd.NextStatuses = nextStatuses(sd.Status)
+	sd.Locked = !editable(sd.Status)
 
 	// lines with delivered quantities (active delivery notes only)
 	lrows, err := q.Query(ctx, `
 		SELECT sl.id, sl."productId", sl.quantity, sl."unitPrice", sl.amount,
-		  pr.id, pr.code, pr.name, pr.unit, pr.dimensions, pr."defaultPrice", COALESCE(dd.q, 0)::bigint
+		  pr.id, pr.code, pr.name, pr.unit, pr.dimensions, pr."defaultPrice", COALESCE(dd.q, 0)::bigint,
+		  sl."discountPercent"::float8, sl."discountAmount", sl.fulfilment
 		FROM "SaleLine" sl JOIN "Product" pr ON pr.id = sl."productId"
 		LEFT JOIN (SELECT dl."saleLineId", SUM(dl.quantity) AS q FROM "DeliveryLine" dl
 		           JOIN "Delivery" d ON d.id = dl."deliveryId" AND d.status <> 'CANCELLED'
@@ -254,14 +274,18 @@ func (s *service) loadSale(ctx context.Context, q db.DBTX, lang i18n.Lang, id st
 	for lrows.Next() {
 		var l saleLineOut
 		if err := lrows.Scan(&l.ID, &l.ProductID, &l.Quantity, &l.UnitPrice, &l.Amount,
-			&l.Product.ID, &l.Product.Code, &l.Product.Name, &l.Product.Unit, &l.Product.Dimensions, &l.Product.DefaultPrice, &l.Delivered); err != nil {
+			&l.Product.ID, &l.Product.Code, &l.Product.Name, &l.Product.Unit, &l.Product.Dimensions, &l.Product.DefaultPrice, &l.Delivered,
+			&l.DiscountPercent, &l.DiscountAmount, &l.Fulfilment); err != nil {
 			lrows.Close()
 			return nil, err
 		}
 		l.DefaultPrice = l.Product.DefaultPrice
+		l.Gross = l.Amount + l.DiscountAmount
 		l.MinPrice = minPriceWithoutApproval(l.DefaultPrice, maxDiscount)
-		l.Discount = discountRatio(l.UnitPrice, l.DefaultPrice)
-		l.NeedsGmApproval = lineNeedsGmApproval(l.UnitPrice, l.DefaultPrice, maxDiscount)
+		if l.Quantity > 0 {
+			l.Discount = discountRatio(l.Amount/l.Quantity, l.DefaultPrice)
+		}
+		l.NeedsGmApproval = netNeedsGmApproval(l.Amount, l.Quantity, l.DefaultPrice, maxDiscount)
 		l.Remaining = remainingToDeliver(l.Quantity, l.Delivered)
 		productInfo[l.ProductID] = l.Product
 		sd.Lines = append(sd.Lines, l)
@@ -277,7 +301,8 @@ func (s *service) loadSale(ctx context.Context, q db.DBTX, lang i18n.Lang, id st
 		createdBy string
 	}
 	drows, err := q.Query(ctx, `
-		SELECT d.id, d."dnNumber", d.date, p.id, p.code, p.name, d.vehicle, d.driver, d.status::text, d."deliveredAt", d."receivedBy", d."createdById", d."createdAt"
+		SELECT d.id, d."dnNumber", d.date, p.id, p.code, p.name, d.vehicle, d.driver, d.status::text, d."deliveredAt", d."receivedBy", d."createdById", d."createdAt",
+		  d.destination, d."transportMode", d."deliveryNote", EXISTS (SELECT 1 FROM delivery_photo ph WHERE ph.delivery_id = d.id), d."capturedOffline"
 		FROM "Delivery" d JOIN "Plant" p ON p.id = d."plantId"
 		WHERE d."saleId" = $1 ORDER BY d.date, d."createdAt"`, id)
 	if err != nil {
@@ -290,7 +315,8 @@ func (s *service) loadSale(ctx context.Context, q db.DBTX, lang i18n.Lang, id st
 		var dd time.Time
 		var dAt *time.Time
 		var cAt time.Time
-		if err := drows.Scan(&r.d.ID, &r.d.DNNumber, &dd, &r.d.Plant.ID, &r.d.Plant.Code, &r.d.Plant.Name, &r.d.Vehicle, &r.d.Driver, &r.d.Status, &dAt, &r.d.ReceivedBy, &r.createdBy, &cAt); err != nil {
+		if err := drows.Scan(&r.d.ID, &r.d.DNNumber, &dd, &r.d.Plant.ID, &r.d.Plant.Code, &r.d.Plant.Name, &r.d.Vehicle, &r.d.Driver, &r.d.Status, &dAt, &r.d.ReceivedBy, &r.createdBy, &cAt,
+			&r.d.Destination, &r.d.Transport, &r.d.Note, &r.d.HasPhoto, &r.d.Offline); err != nil {
 			drows.Close()
 			return nil, err
 		}
@@ -341,7 +367,7 @@ func (s *service) loadSale(ctx context.Context, q db.DBTX, lang i18n.Lang, id st
 	}
 
 	// payments
-	prows, err := q.Query(ctx, `SELECT id, date, amount, method::text, reference, "receivedById", "createdAt" FROM "Payment" WHERE "saleId"=$1 ORDER BY date, "createdAt"`, id)
+	prows, err := q.Query(ctx, `SELECT id, date, amount, method::text, reference, "receivedById", "createdAt", kind FROM "Payment" WHERE "saleId"=$1 ORDER BY date, "createdAt"`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +380,7 @@ func (s *service) loadSale(ctx context.Context, q db.DBTX, lang i18n.Lang, id st
 	for prows.Next() {
 		r := &pRow{}
 		var d, c time.Time
-		if err := prows.Scan(&r.p.ID, &d, &r.p.Amount, &r.p.Method, &r.p.Reference, &r.by, &c); err != nil {
+		if err := prows.Scan(&r.p.ID, &d, &r.p.Amount, &r.p.Method, &r.p.Reference, &r.by, &c, &r.p.Kind); err != nil {
 			prows.Close()
 			return nil, err
 		}
@@ -418,6 +444,12 @@ func (s *service) loadSale(ctx context.Context, q db.DBTX, lang i18n.Lang, id st
 	}
 
 	ids := []string{createdBy}
+	if qBy != nil {
+		ids = append(ids, *qBy)
+	}
+	if clBy != nil {
+		ids = append(ids, *clBy)
+	}
 	if cfBy != nil {
 		ids = append(ids, *cfBy)
 	}
@@ -448,6 +480,12 @@ func (s *service) loadSale(ctx context.Context, q db.DBTX, lang i18n.Lang, id st
 		return &person{ID: uid, Name: n}
 	}
 	sd.CreatedBy = who(createdBy)
+	if qBy != nil {
+		sd.QuotedBy = who(*qBy)
+	}
+	if clBy != nil {
+		sd.ClosedBy = who(*clBy)
+	}
 	if cfBy != nil {
 		sd.ConfirmedBy = who(*cfBy)
 	}
@@ -483,17 +521,36 @@ func (s *service) loadSale(ctx context.Context, q db.DBTX, lang i18n.Lang, id st
 		sd.Returnable = append(sd.Returnable, ro)
 	}
 
-	var qty, amount, delivered, remaining int64
+	var qty, amount, delivered, remaining, gross, disc int64
 	for _, l := range sd.Lines {
 		qty += l.Quantity
 		amount += l.Amount
+		gross += l.Gross
+		disc += l.DiscountAmount
 		delivered += l.Delivered
 		remaining += l.Remaining
 		if l.NeedsGmApproval {
 			sd.NeedsGmApproval = true
 		}
 	}
-	sd.Totals = saleTotals{Quantity: qty, Amount: amount, Paid: paid, Balance: outstandingOf(sd.Status, amount, paid), Delivered: delivered, Remaining: remaining, Returned: returnedTotal}
+	var ch chargeLineOut
+	if err := q.QueryRow(ctx, `SELECT id, description, amount FROM "SaleLine" WHERE "saleId" = $1 AND kind = 'DELIVERY_CHARGE' LIMIT 1`, id).Scan(&ch.ID, &ch.Description, &ch.Amount); err == nil {
+		sd.ChargeLine = &ch
+	} else if !db.IsNoRows(err) {
+		return nil, err
+	}
+	subtotal := amount
+	if sd.ChargeLine != nil {
+		amount += sd.ChargeLine.Amount
+	}
+	sd.Totals = saleTotals{Quantity: qty, Amount: amount, Paid: paid, Balance: outstandingOf(sd.LegacyStatus, amount, paid), Delivered: delivered, Remaining: remaining,
+		Returned: returnedTotal, Gross: gross, Discount: disc, Subtotal: subtotal, Charge: amount - subtotal}
+	var depPaid int64
+	for _, p := range sd.Payments {
+		depPaid += p.Amount
+	}
+	sd.DepositStatus = depositStatus(sd.DepositAmount, depPaid)
+	sd.Overdue = sd.DueDate != nil && *sd.DueDate < dates.TodayISO() && sd.Totals.Balance > 0
 	sd.PaymentStatus = paymentStatus(amount, paid)
 	sd.DeliveryStatus = deliveryStatus(qty, delivered)
 	return &sd, nil
@@ -509,6 +566,9 @@ type salesFilters struct {
 	PaymentStatus  string
 	DeliveryStatus string
 	Q              string
+	TransportMode  string
+	Pending        bool // awaiting an approval
+	Overdue        bool
 }
 
 type saleRow struct {
@@ -531,6 +591,11 @@ type saleRow struct {
 	PaymentStatus   string        `json:"paymentStatus"`
 	DeliveryStatus  string        `json:"deliveryStatus"`
 	NeedsGmApproval bool          `json:"needsGmApproval"`
+	TransportMode   string        `json:"transportMode"`
+	DueDate         *string       `json:"dueDate"`
+	Overdue         bool          `json:"overdue"`
+	PendingApproval *string       `json:"pendingApproval"` // kind of the open approval
+	Version         int           `json:"version"`
 }
 
 type idName struct {
@@ -590,8 +655,16 @@ func salesCTE(f salesFilters, q *qb) string {
 		l := q.arg(likeArg(f.Q))
 		conds = append(conds, fmt.Sprintf(`(sa.number ILIKE %[1]s OR c.name ILIKE %[1]s OR sa."ebmInvoiceNo" ILIKE %[1]s OR sa."ebmReceiptNo" ILIKE %[1]s)`, l))
 	}
+	if f.TransportMode != "" {
+		conds = append(conds, `sa."transportMode" = `+q.arg(f.TransportMode))
+	}
+	if f.Pending {
+		conds = append(conds, `EXISTS (SELECT 1 FROM sale_approval ap WHERE ap.sale_id = sa.id AND ap.status = 'PENDING')`)
+	}
 	return `WITH s AS (
-		  SELECT sa.id, sa.number, sa.date, sa.status::text AS status, sa."invoiceType", sa."ebmInvoiceNo", sa."ebmReceiptNo",
+		  SELECT sa.id, sa.number, sa.date, sa."orderStatus" AS status, sa.status::text AS legacy, sa."transportMode", sa."dueDate", sa.version,
+		    (SELECT ap.kind FROM sale_approval ap WHERE ap.sale_id = sa.id AND ap.status = 'PENDING') AS pending,
+		    sa."invoiceType", sa."ebmInvoiceNo", sa."ebmReceiptNo",
 		    pl.id AS "plantId", pl.code AS "plantCode", pl.name AS "plantName", c.id AS "customerId", c.name AS "customerName"
 		  FROM "Sale" sa JOIN "Customer" c ON c.id = sa."customerId" JOIN "Plant" pl ON pl.id = sa."plantId"
 		  WHERE ` + and(conds) + `
@@ -610,7 +683,7 @@ func salesCTE(f salesFilters, q *qb) string {
 		  SELECT base.*,
 		    CASE WHEN paid >= amount THEN 'PAID' WHEN paid > 0 THEN 'PARTIAL' ELSE 'UNPAID' END AS "paymentStatus",
 		    CASE WHEN delivered <= 0 THEN 'NOT_DELIVERED' WHEN delivered >= qty THEN 'DELIVERED' ELSE 'PARTIAL' END AS "deliveryStatus",
-		    CASE WHEN status = 'CONFIRMED' THEN GREATEST(amount - paid, 0) ELSE 0 END AS outstanding
+		    CASE WHEN legacy = 'CONFIRMED' THEN GREATEST(amount - paid, 0) ELSE 0 END AS outstanding
 		  FROM base
 		)`
 }
@@ -624,6 +697,9 @@ func (s *service) listSales(ctx context.Context, f salesFilters, pg httpx.Pager,
 	}
 	if f.DeliveryStatus != "" {
 		derivedConds = append(derivedConds, `"deliveryStatus" = `+q.arg(f.DeliveryStatus))
+	}
+	if f.Overdue {
+		derivedConds = append(derivedConds, `"dueDate" < `+q.arg(dates.TodayISO())+`::date AND outstanding > 0`)
 	}
 	derivedFilter := and(derivedConds)
 	statusFilter := "TRUE"
@@ -651,7 +727,7 @@ func (s *service) listSales(ctx context.Context, f salesFilters, pg httpx.Pager,
 	g.Go(func() error {
 		rs, err := s.pool.Query(gctx, cte+`
 			SELECT id, number, date, status, "invoiceType", "ebmInvoiceNo", "ebmReceiptNo", "plantId", "plantCode", "plantName", "customerId", "customerName",
-			  amount, qty, paid, delivered, outstanding, "paymentStatus", "deliveryStatus"
+			  amount, qty, paid, delivered, outstanding, "paymentStatus", "deliveryStatus", "transportMode", "dueDate", pending, version
 			FROM derived WHERE `+filt+` ORDER BY date DESC, number DESC LIMIT `+limit+` OFFSET `+offset, pageArgs...)
 		if err != nil {
 			return err
@@ -660,11 +736,18 @@ func (s *service) listSales(ctx context.Context, f salesFilters, pg httpx.Pager,
 		for rs.Next() {
 			var r pageRow
 			var d time.Time
+			var due *time.Time
 			if err := rs.Scan(&r.ID, &r.Number, &d, &r.Status, &r.InvoiceType, &r.EbmInvoiceNo, &r.EbmReceiptNo, &r.Plant.ID, &r.Plant.Code, &r.Plant.Name,
-				&r.Customer.ID, &r.Customer.Name, &r.Amount, &r.Quantity, &r.Paid, &r.Delivered, &r.Outstanding, &r.PaymentStatus, &r.DeliveryStatus); err != nil {
+				&r.Customer.ID, &r.Customer.Name, &r.Amount, &r.Quantity, &r.Paid, &r.Delivered, &r.Outstanding, &r.PaymentStatus, &r.DeliveryStatus,
+				&r.TransportMode, &due, &r.PendingApproval, &r.Version); err != nil {
 				return err
 			}
 			r.Date = dates.ToISO(d)
+			if due != nil {
+				ds := dates.ToISO(*due)
+				r.DueDate = &ds
+				r.Overdue = ds < dates.TodayISO() && r.Outstanding > 0
+			}
 			rows = append(rows, r)
 		}
 		return rs.Err()
@@ -676,14 +759,31 @@ func (s *service) listSales(ctx context.Context, f salesFilters, pg httpx.Pager,
 			  COALESCE(SUM(amount) FILTER (WHERE `+money+`), 0), COALESCE(SUM(qty) FILTER (WHERE `+money+`), 0),
 			  COALESCE(SUM(paid) FILTER (WHERE `+money+`), 0), COALESCE(SUM(outstanding) FILTER (WHERE `+filt+`), 0),
 			  COUNT(*) FILTER (WHERE `+derivedFilter+`),
-			  COUNT(*) FILTER (WHERE `+derivedFilter+` AND status = 'DRAFT'),
-			  COUNT(*) FILTER (WHERE `+derivedFilter+` AND status = 'CONFIRMED'),
-			  COUNT(*) FILTER (WHERE `+derivedFilter+` AND status = 'CANCELLED'),
-			  COUNT(*) FILTER (WHERE status = 'CONFIRMED'),
-			  COALESCE(SUM(amount) FILTER (WHERE status = 'CONFIRMED'), 0), COALESCE(SUM(qty) FILTER (WHERE status = 'CONFIRMED'), 0),
-			  COALESCE(SUM(paid) FILTER (WHERE status = 'CONFIRMED'), 0), COALESCE(SUM(outstanding) FILTER (WHERE status = 'CONFIRMED'), 0),
-			  COUNT(*) FILTER (WHERE status = 'DRAFT')
+			  COUNT(*) FILTER (WHERE `+derivedFilter+` AND legacy = 'DRAFT'),
+			  COUNT(*) FILTER (WHERE `+derivedFilter+` AND legacy = 'CONFIRMED'),
+			  COUNT(*) FILTER (WHERE `+derivedFilter+` AND legacy = 'CANCELLED'),
+			  COUNT(*) FILTER (WHERE legacy = 'CONFIRMED'),
+			  COALESCE(SUM(amount) FILTER (WHERE legacy = 'CONFIRMED'), 0), COALESCE(SUM(qty) FILTER (WHERE legacy = 'CONFIRMED'), 0),
+			  COALESCE(SUM(paid) FILTER (WHERE legacy = 'CONFIRMED'), 0), COALESCE(SUM(outstanding) FILTER (WHERE legacy = 'CONFIRMED'), 0),
+			  COUNT(*) FILTER (WHERE legacy = 'DRAFT')
 			FROM derived`, aggArgs...).Scan(&agg[0], &agg[1], &agg[2], &agg[3], &agg[4], &agg[5], &agg[6], &agg[7], &agg[8], &agg[9], &agg[10], &agg[11], &agg[12], &agg[13], &agg[14])
+	})
+	byStatus := map[string]int64{}
+	g.Go(func() error {
+		rs, err := s.pool.Query(gctx, cte+` SELECT status, COUNT(*) FROM derived WHERE `+derivedFilter+` GROUP BY status`, aggArgs...)
+		if err != nil {
+			return err
+		}
+		defer rs.Close()
+		for rs.Next() {
+			var st string
+			var n int64
+			if err := rs.Scan(&st, &n); err != nil {
+				return err
+			}
+			byStatus[st] = n
+		}
+		return rs.Err()
 	})
 	if err := g.Wait(); err != nil {
 		return nil, err
@@ -700,7 +800,7 @@ func (s *service) listSales(ctx context.Context, f salesFilters, pg httpx.Pager,
 	}
 	if len(ids) > 0 {
 		lr, err := s.pool.Query(ctx, `
-			SELECT sl."saleId", pr.code, pr.name, sl.quantity, sl."unitPrice", pr."defaultPrice"
+			SELECT sl."saleId", pr.code, pr.name, sl.quantity, sl."unitPrice", pr."defaultPrice", sl.amount
 			FROM "SaleLine" sl JOIN "Product" pr ON pr.id = sl."productId"
 			WHERE sl."saleId" = ANY($1) ORDER BY sl."saleId", sl.id`, ids)
 		if err != nil {
@@ -709,14 +809,14 @@ func (s *service) listSales(ctx context.Context, f salesFilters, pg httpx.Pager,
 		for lr.Next() {
 			var sid string
 			var p saleProduct
-			var def int64
-			if err := lr.Scan(&sid, &p.Code, &p.Name, &p.Quantity, &p.UnitPrice, &def); err != nil {
+			var def, amt int64
+			if err := lr.Scan(&sid, &p.Code, &p.Name, &p.Quantity, &p.UnitPrice, &def, &amt); err != nil {
 				lr.Close()
 				return nil, err
 			}
 			it := &items[idx[sid]]
 			it.Products = append(it.Products, p)
-			if lineNeedsGmApproval(p.UnitPrice, def, maxDiscount) {
+			if netNeedsGmApproval(amt, p.Quantity, def, maxDiscount) {
 				it.NeedsGmApproval = true
 			}
 		}
@@ -745,7 +845,7 @@ func (s *service) listSales(ctx context.Context, f salesFilters, pg httpx.Pager,
 
 	out := &saleList{Items: items, Total: int(agg[0]), Page: pg.Page, PageSize: pg.PageSize}
 	for _, i := range items {
-		if i.Status == "CANCELLED" && f.Status != "CANCELLED" {
+		if i.Status == StCancelled && f.Status != StCancelled {
 			continue
 		}
 		out.PageTotals.Amount += i.Amount
@@ -754,7 +854,10 @@ func (s *service) listSales(ctx context.Context, f salesFilters, pg httpx.Pager,
 		out.PageTotals.Outstanding += i.Outstanding
 	}
 	out.RangeTotals = moneyTotals{Amount: agg[1], Quantity: agg[2], Paid: agg[3], Outstanding: agg[4]}
-	out.StatusCounts = map[string]int64{"ALL": agg[5], "DRAFT": agg[6], "CONFIRMED": agg[7], "CANCELLED": agg[8]}
+	out.StatusCounts = map[string]int64{"ALL": agg[5], "OPEN_DRAFT": agg[6], "COMMITTED": agg[7]}
+	for _, st := range OrderStatuses {
+		out.StatusCounts[st] = byStatus[st]
+	}
 	out.KPIs = salesKPIs{Sales: agg[9], Amount: agg[10], Quantity: agg[11], Paid: agg[12], Outstanding: agg[13], Drafts: agg[14]}
 	out.Range.From, out.Range.To = f.From, f.To
 	return out, nil
@@ -776,6 +879,15 @@ type deliveryRow struct {
 	DeliveredAt *jsTime         `json:"deliveredAt"`
 	TotalQty    int64           `json:"totalQty"`
 	Products    json.RawMessage `json:"products"`
+	Destination *string         `json:"destination"`
+	Transport   string          `json:"transportMode"`
+	Note        *string         `json:"deliveryNote"`
+	HasPhoto    bool            `json:"hasPhoto"`
+	Offline     bool            `json:"capturedOffline"`
+}
+
+type deliveryFilters struct {
+	From, To, PlantID, CustomerID, SaleID, Status, Transport, Q string
 }
 
 type saleNum struct {
@@ -794,15 +906,25 @@ type deliveryList struct {
 	StatusCounts map[string]int64 `json:"statusCounts"`
 }
 
-func (s *service) listDeliveries(ctx context.Context, from, to, plantID, status, search string, pg httpx.Pager) (*deliveryList, error) {
+func (s *service) listDeliveries(ctx context.Context, f deliveryFilters, pg httpx.Pager) (*deliveryList, error) {
+	status := f.Status
 	q := &qb{}
-	conds := []string{fmt.Sprintf("d.date BETWEEN %s::date AND %s::date", q.arg(from), q.arg(to))}
-	if plantID != "" {
-		conds = append(conds, `d."plantId" = `+q.arg(plantID))
+	conds := []string{fmt.Sprintf("d.date BETWEEN %s::date AND %s::date", q.arg(f.From), q.arg(f.To))}
+	if f.PlantID != "" {
+		conds = append(conds, `d."plantId" = `+q.arg(f.PlantID))
 	}
-	if search != "" {
-		l := q.arg(likeArg(search))
-		conds = append(conds, fmt.Sprintf(`(d."dnNumber" ILIKE %[1]s OR sa.number ILIKE %[1]s OR c.name ILIKE %[1]s OR d.driver ILIKE %[1]s OR d.vehicle ILIKE %[1]s)`, l))
+	if f.CustomerID != "" {
+		conds = append(conds, `sa."customerId" = `+q.arg(f.CustomerID))
+	}
+	if f.SaleID != "" {
+		conds = append(conds, `d."saleId" = `+q.arg(f.SaleID))
+	}
+	if f.Transport != "" {
+		conds = append(conds, `d."transportMode" = `+q.arg(f.Transport))
+	}
+	if f.Q != "" {
+		l := q.arg(likeArg(f.Q))
+		conds = append(conds, fmt.Sprintf(`(d."dnNumber" ILIKE %[1]s OR sa.number ILIKE %[1]s OR c.name ILIKE %[1]s OR d.driver ILIKE %[1]s OR d.vehicle ILIKE %[1]s OR d.destination ILIKE %[1]s)`, l))
 	}
 	from_ := ` FROM "Delivery" d JOIN "Sale" sa ON sa.id = d."saleId" JOIN "Customer" c ON c.id = sa."customerId" JOIN "Plant" pl ON pl.id = d."plantId"`
 	where := and(conds)
@@ -820,7 +942,8 @@ func (s *service) listDeliveries(ctx context.Context, from, to, plantID, status,
 	g.Go(func() error {
 		rs, err := s.pool.Query(gctx, `
 			SELECT d.id, d."dnNumber", d.date, d.status::text, pl.id, pl.code, pl.name, sa.id, sa.number, c.id, c.name,
-			  d.vehicle, d.driver, d."receivedBy", d."deliveredAt", COALESCE(x.qty, 0)::bigint, COALESCE(x.products, '[]'::json)
+			  d.vehicle, d.driver, d."receivedBy", d."deliveredAt", COALESCE(x.qty, 0)::bigint, COALESCE(x.products, '[]'::json),
+			  d.destination, d."transportMode", d."deliveryNote", EXISTS (SELECT 1 FROM delivery_photo ph WHERE ph.delivery_id = d.id), d."capturedOffline"
 			`+from_+`
 			LEFT JOIN LATERAL (
 			  SELECT SUM(dl.quantity) AS qty,
@@ -837,7 +960,8 @@ func (s *service) listDeliveries(ctx context.Context, from, to, plantID, status,
 			var d time.Time
 			var at *time.Time
 			if err := rs.Scan(&r.ID, &r.DNNumber, &d, &r.Status, &r.Plant.ID, &r.Plant.Code, &r.Plant.Name, &r.Sale.ID, &r.Sale.Number,
-				&r.Customer.ID, &r.Customer.Name, &r.Vehicle, &r.Driver, &r.ReceivedBy, &at, &r.TotalQty, &r.Products); err != nil {
+				&r.Customer.ID, &r.Customer.Name, &r.Vehicle, &r.Driver, &r.ReceivedBy, &at, &r.TotalQty, &r.Products,
+				&r.Destination, &r.Transport, &r.Note, &r.HasPhoto, &r.Offline); err != nil {
 				return err
 			}
 			r.Date = dates.ToISO(d)
@@ -887,6 +1011,7 @@ func (s *service) listDeliveries(ctx context.Context, from, to, plantID, status,
 
 type customerRow struct {
 	customer
+	Contacts     int64   `json:"contacts"`
 	SalesCount   int64   `json:"salesCount"`
 	TotalSales   int64   `json:"totalSales"`
 	Paid         int64   `json:"paid"`
@@ -916,15 +1041,22 @@ const customerAgg = `
 	LEFT JOIN (SELECT "saleId", SUM(amount) AS paid FROM "Payment" WHERE "saleId" IN (SELECT id FROM "Sale" WHERE status = 'CONFIRMED') GROUP BY "saleId") p ON p."saleId" = sa.id
 	WHERE sa.status = 'CONFIRMED' GROUP BY sa."customerId"`
 
-func (s *service) listCustomers(ctx context.Context, search, sort string, activeOnly bool, pg httpx.Pager) (*customerList, error) {
+func (s *service) listCustomers(ctx context.Context, search, sort string, activeOnly bool, status, clientType string, pg httpx.Pager) (*customerList, error) {
 	q := &qb{}
 	var conds []string
 	if search != "" {
 		l := q.arg(likeArg(search))
-		conds = append(conds, fmt.Sprintf(`(c.name ILIKE %[1]s OR c.tin ILIKE %[1]s OR c.phone ILIKE %[1]s)`, l))
+		conds = append(conds, fmt.Sprintf(`(c.name ILIKE %[1]s OR c.tin ILIKE %[1]s OR c.phone ILIKE %[1]s OR c.email ILIKE %[1]s
+			OR EXISTS (SELECT 1 FROM customer_contact cc WHERE cc.customer_id = c.id AND (cc.name ILIKE %[1]s OR cc.phone ILIKE %[1]s OR cc.email ILIKE %[1]s)))`, l))
 	}
 	if activeOnly {
 		conds = append(conds, `c."isActive" = TRUE`)
+	}
+	if status != "" {
+		conds = append(conds, `c.status = `+q.arg(status))
+	}
+	if clientType != "" {
+		conds = append(conds, `c."clientType" = `+q.arg(clientType))
 	}
 	where := ""
 	if len(conds) > 0 {
@@ -943,7 +1075,8 @@ func (s *service) listCustomers(ctx context.Context, search, sort string, active
 	out := &customerList{Page: pg.Page, PageSize: pg.PageSize, Items: []customerRow{}}
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		rs, err := s.pool.Query(gctx, `SELECT c.id, c.name, c.tin, c.phone, c.email, c.address, c."isActive", c."createdAt",
+		rs, err := s.pool.Query(gctx, `SELECT c.id, c.name, c.tin, c.phone, c.email, c.address, c."isActive", c."createdAt", c."clientType", c.status, c.notes, c."paymentTerm",
+			(SELECT COUNT(*) FROM customer_contact cc WHERE cc.customer_id = c.id),
 			COALESCE(a.sales, 0), COALESCE(a.amount, 0), COALESCE(a.paid, 0), COALESCE(a.outstanding, 0), a."lastSaleDate"`+from+order+` LIMIT `+limit+` OFFSET `+offset, q.args...)
 		if err != nil {
 			return err
@@ -953,7 +1086,8 @@ func (s *service) listCustomers(ctx context.Context, search, sort string, active
 			var r customerRow
 			var created time.Time
 			var last *time.Time
-			if err := rs.Scan(&r.ID, &r.Name, &r.TIN, &r.Phone, &r.Email, &r.Address, &r.IsActive, &created, &r.SalesCount, &r.TotalSales, &r.Paid, &r.Outstanding, &last); err != nil {
+			if err := rs.Scan(&r.ID, &r.Name, &r.TIN, &r.Phone, &r.Email, &r.Address, &r.IsActive, &created, &r.ClientType, &r.Status, &r.Notes, &r.PaymentTerm, &r.Contacts,
+				&r.SalesCount, &r.TotalSales, &r.Paid, &r.Outstanding, &last); err != nil {
 				return err
 			}
 			r.CreatedAt = jt(created)
@@ -1024,8 +1158,9 @@ type statementOut struct {
 func (s *service) buildCustomerStatement(ctx context.Context, lang i18n.Lang, customerID, fromISO, toISO string) (*statementOut, error) {
 	var out statementOut
 	var created time.Time
-	err := s.pool.QueryRow(ctx, `SELECT id, name, tin, phone, email, address, "isActive", "createdAt" FROM "Customer" WHERE id=$1`, customerID).
-		Scan(&out.Customer.ID, &out.Customer.Name, &out.Customer.TIN, &out.Customer.Phone, &out.Customer.Email, &out.Customer.Address, &out.Customer.IsActive, &created)
+	err := s.pool.QueryRow(ctx, `SELECT id, name, tin, phone, email, address, "isActive", "createdAt", "clientType", status, notes, "paymentTerm" FROM "Customer" WHERE id=$1`, customerID).
+		Scan(&out.Customer.ID, &out.Customer.Name, &out.Customer.TIN, &out.Customer.Phone, &out.Customer.Email, &out.Customer.Address, &out.Customer.IsActive, &created,
+			&out.Customer.ClientType, &out.Customer.Status, &out.Customer.Notes, &out.Customer.PaymentTerm)
 	if err != nil {
 		if db.IsNoRows(err) {
 			return nil, httpx.NotFound("entity.customer")

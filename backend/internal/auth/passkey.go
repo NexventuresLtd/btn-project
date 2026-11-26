@@ -232,19 +232,21 @@ func (s *Service) passkeyLoginFinish(c *fiber.Ctx) error {
 		cred.ID, int64(cred.Authenticator.SignCount), cred.Flags.BackupState); err != nil {
 		return err
 	}
-	if _, err := s.CreateSession(c, owner); err != nil {
+	dev, tp, err := s.CreateSession(c, owner, "passkey")
+	if err != nil {
 		return err
 	}
 	if _, err := s.Pool.Exec(ctx, `UPDATE "User" SET "lastLoginAt"=now(), "failedLoginCount"=0 WHERE id=$1`, owner); err != nil {
 		return err
 	}
 	_ = RecordAttempt(ctx, s.Pool, "ip:"+c.IP(), KindPasskey, true)
-	_ = audit.Log(ctx, s.Pool, audit.Actor{UserID: owner, IP: c.IP()}, audit.Input{Action: "auth.passkey_login", Entity: "User", EntityID: owner, Summary: "Signed in with a passkey"})
+	_ = audit.Log(ctx, s.Pool, audit.Actor{UserID: owner, IP: c.IP(), DeviceID: dev.DeviceID}, audit.Input{Action: "auth.passkey_login", Entity: "User", EntityID: owner, Summary: "Signed in with a passkey"})
 	p, err := s.userPayload(ctx, httpx.Lang(c), owner)
 	if err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"user": p})
+	dev.Current = true
+	return c.JSON(fiber.Map{"user": p, "device": dev, "accessExpiresAt": tp.AccessExpiresAt})
 }
 
 // ── account passkey management (signed-in) ───────────────────────────────────

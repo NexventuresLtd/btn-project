@@ -1,7 +1,8 @@
 // Package sales ports the Node sales module: sales orders, delivery notes (dispatch -> stock issue), customer
 // payments, returns, customer statements, receivables ageing and their PDFs.
 //
-//	GET  /meta                         discount rule + payment methods
+//	Orders follow Figure 3 (lifecycle.go); see Register for every route. Offline: sync.go. Reports: reports.go.
+//	GET  /meta                         discount rule, payment methods, terms, zones, client types
 //	GET  /customers, /customers/:id    customers with balances / statement
 //	GET  /receivables                  ageing by customer
 //	GET  /deliveries                   delivery notes list
@@ -24,6 +25,7 @@ import (
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/i18n"
 	"btn-ops/internal/ratelimit"
+	"btn-ops/internal/refdata"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -48,28 +50,73 @@ func Register(r fiber.Router, d *deps.Deps) {
 	view := auth.RequirePermission("sales.view")
 	viewOrDispatch := auth.RequirePermission("sales.view", "deliveries.create")
 	pdf := ratelimit.Group("pdf")
+	upload := ratelimit.Group("upload")
+	registerSync()
+	registerJobs(d.Pool)
 
 	r.Get("/meta", auth.RequirePermission("sales.view", "deliveries.create", "sales.create"), h.meta)
+
+	// clients (ORD-01/02/07)
 	r.Get("/customers", view, h.customers)
+	r.Post("/customers", auth.RequirePermission("customers.manage"), h.createCustomer)
+	r.Post("/customers/duplicates", auth.RequirePermission("customers.manage", "sales.create"), h.duplicateCheck)
 	r.Get("/customers/:id", view, h.customerStatement)
+	r.Patch("/customers/:id", auth.RequirePermission("customers.manage"), h.updateCustomer)
+	r.Get("/customers/:id/profile", view, h.customerProfileH)
+	r.Get("/customers/:id/orders", view, h.customerOrders)
+	r.Get("/customers/:id/communications", view, h.customerComms)
+	r.Post("/customers/:id/communications", auth.RequirePermission("sales.create", "customers.manage", "sales.confirm"), h.addComm)
+
 	r.Get("/receivables", view, h.receivables)
+
+	// delivery charges (DEL-02)
+	r.Get("/delivery-charges", auth.RequirePermission("sales.view", "sales.create", "masterdata.manage"), h.listCharges)
+	r.Get("/delivery-charges/quote", auth.RequirePermission("sales.view", "sales.create"), h.quoteCharge)
+	r.Post("/delivery-charges", auth.RequirePermission("masterdata.manage"), h.saveCharge(false))
+	r.Patch("/delivery-charges/:id", auth.RequirePermission("masterdata.manage"), h.saveCharge(true))
+	r.Delete("/delivery-charges/:id", auth.RequirePermission("masterdata.manage"), h.deleteCharge)
+
+	// approvals (ORD-04/10)
+	r.Get("/approvals", auth.RequirePermission("sales.view", "sales.approve", "sales.cancel"), h.listApprovals)
+	r.Post("/approvals/:id/approve", auth.RequirePermission("sales.approve", "sales.cancel"), h.decide(true))
+	r.Post("/approvals/:id/reject", auth.RequirePermission("sales.approve", "sales.cancel"), h.decide(false))
+	r.Post("/approvals/:id/withdraw", auth.RequirePermission("sales.create", "sales.confirm", "sales.cancel"), h.withdraw)
+
+	// reports (ORD-09, DEL-06)
+	r.Get("/reports/orders", view, h.ordersReport)
+
+	// deliveries (DEL-03…06)
 	r.Get("/deliveries", viewOrDispatch, h.deliveries)
-	r.Post("/deliveries/:id/delivered", auth.RequirePermission("deliveries.create"), h.delivered)
+	r.Get("/deliveries/pending", viewOrDispatch, h.pendingDeliveriesH)
+	r.Post("/deliveries/:id/delivered", auth.RequirePermission("deliveries.create"), upload, h.delivered)
 	r.Post("/deliveries/:id/cancel", auth.RequirePermission("sales.cancel"), h.cancelDelivery)
+	r.Get("/deliveries/:id/photo", viewOrDispatch, h.servePhoto(false))
+	r.Get("/deliveries/:id/photo/thumb", viewOrDispatch, h.servePhoto(true))
 
 	r.Get("/pdf/report", view, pdf, h.pdfReport)
+	r.Get("/pdf/orders-report", view, pdf, h.pdfOrdersReport)
+	r.Get("/pdf/deliveries", viewOrDispatch, pdf, h.pdfDeliveries)
+	r.Get("/pdf/pending-deliveries", viewOrDispatch, pdf, h.pdfPendingDeliveries)
 	r.Get("/pdf/delivery-note/:deliveryId", viewOrDispatch, pdf, h.pdfDeliveryNote)
 	r.Get("/pdf/order/:saleId", viewOrDispatch, pdf, h.pdfOrder)
+	r.Get("/pdf/quotation/:saleId", view, pdf, h.pdfQuotation)
+	r.Get("/pdf/confirmation/:saleId", viewOrDispatch, pdf, h.pdfConfirmation)
 	r.Get("/pdf/statement/:customerId", view, pdf, h.pdfStatement)
 	r.Get("/pdf/receivables", view, pdf, h.pdfReceivables)
 
+	// orders (ORD-03…06, ORD-10)
 	r.Get("/", viewOrDispatch, h.list)
 	r.Post("/", auth.RequirePermission("sales.create"), h.create)
 	r.Get("/:id", viewOrDispatch, h.get)
 	r.Get("/:id/availability", viewOrDispatch, h.availability)
-	r.Patch("/:id", auth.RequirePermission("sales.create"), h.update)
+	r.Patch("/:id", auth.RequirePermission("sales.create", "payments.record"), h.update)
+	r.Post("/:id/quote", auth.RequirePermission("sales.create"), h.quoteH)
 	r.Post("/:id/confirm", auth.RequirePermission("sales.confirm"), h.confirm)
-	r.Post("/:id/cancel", auth.RequirePermission("sales.cancel"), h.cancel)
+	r.Post("/:id/fulfilment", auth.RequirePermission("sales.confirm", "production.targets"), h.fulfilment)
+	r.Post("/:id/ready", auth.RequirePermission("sales.confirm", "deliveries.create"), h.ready)
+	r.Post("/:id/close", auth.RequirePermission("sales.confirm", "payments.record"), h.closeH)
+	r.Post("/:id/cancel", auth.RequirePermission("sales.create", "sales.cancel"), h.cancel)
+	r.Post("/:id/amendments", auth.RequirePermission("sales.create"), h.requestAmendment)
 	r.Post("/:id/deliveries", auth.RequirePermission("deliveries.create"), h.createDelivery)
 	r.Post("/:id/returns", auth.RequirePermission("deliveries.create"), h.createReturn)
 	r.Post("/:id/payments", auth.RequirePermission("payments.record"), h.addPayment)
@@ -155,7 +202,20 @@ func (h *handler) meta(c *fiber.Ctx) error {
 	for _, m := range paymentMethods {
 		methods = append(methods, pm{m, methodLabel(r.lang, m)})
 	}
-	return c.JSON(fiber.Map{"maxDiscountPercent": pct, "canApproveDiscount": canApproveDiscount(r.u), "paymentMethods": methods})
+	terms, err := refdata.List(r.ctx, h.d.Pool, refdata.KindPaymentTerm, false, r.lang)
+	if err != nil {
+		return err
+	}
+	zones, err := refdata.List(r.ctx, h.d.Pool, refdata.KindDeliveryZone, false, r.lang)
+	if err != nil {
+		return err
+	}
+	types, err := refdata.List(r.ctx, h.d.Pool, refdata.KindClientType, false, r.lang)
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"maxDiscountPercent": pct, "canApproveDiscount": canApproveDiscount(r.u), "paymentMethods": methods,
+		"statuses": OrderStatuses, "paymentTerms": terms, "deliveryZones": zones, "clientTypes": types, "transportModes": []string{TransportClient, TransportBTN}})
 }
 
 // canApproveDiscount: the General Manager (and the Super Administrator, who holds every permission) confirms below-limit prices.
@@ -174,13 +234,15 @@ func (h *handler) customers(c *fiber.Ctx) error {
 		sort = "name"
 	}
 	active := queryEnum(q, "active", "1", "0")
+	status := queryEnum(q, "status", customerStatuses...)
+	ctype := q.OptStr("clientType").Trim().Upper().Max(40).Get()
 	if err := q.Err(); err != nil {
 		return err
 	}
 	pg := httpx.Paginate(c, 50)
-	key := strings.Join([]string{"cust", search, sort, active, strconv.Itoa(pg.Page), strconv.Itoa(pg.PageSize)}, "\x00")
+	key := strings.Join([]string{"cust", search, sort, active, status, ctype, strconv.Itoa(pg.Page), strconv.Itoa(pg.PageSize)}, "\x00")
 	body, err := respCache.GetOrLoad(r.ctx, key, func(ctx context.Context) ([]byte, error) {
-		out, err := h.s.listCustomers(ctx, search, sort, active == "1", pg)
+		out, err := h.s.listCustomers(ctx, search, sort, active == "1", status, ctype, pg)
 		if err != nil {
 			return nil, err
 		}

@@ -1,0 +1,9 @@
+{
+  "approvals.max_gt_min": "Urugero rwo hejuru rugomba kurenga urwo hasi",
+  "approvals.unknown_permission": "Uburenganzira butazwi",
+  "approvals.unknown_role": "Inshingano itazwi",
+  "masterdata.location_kind": "Hitamo site, icyicaro gikuru cyangwa ububiko",
+  "refdata.code_format": "Koresha inyuguti nkuru 1–40, imibare, _ cyangwa - (urugero BROKEN_MACHINE)",
+  "refdata.code_immutable": "Kode ntishobora guhinduka; kora ikindi gishya maze uhagarike iki",
+  "refdata.metadata_object": "Amakuru y'inyongera agomba kuba ikintu cya JSON (inyuguti 4 000 ntarengwa)"
+}

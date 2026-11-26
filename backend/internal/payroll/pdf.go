@@ -2,6 +2,7 @@ package payroll
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"btn-ops/internal/format"
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/pdf"
+	"btn-ops/internal/workforce"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
@@ -179,20 +181,23 @@ func (h *handler) pdfPeriod(c *fiber.Ctx) error {
 	if hasRefs {
 		lastCol = pdf.Column{Header: rep.T("payroll.pdf.col_ref"), Width: 1.2}
 	}
+	// WRK-03: every input of the calculation is on the sheet — days × daily rate, half days × half rate,
+	// overtime hours × overtime rate, piece-work pay and adjustments from earlier periods.
 	cols := []pdf.Column{
-		{Header: rep.T("payroll.pdf.col_no"), Width: 0.45, Align: pdf.Right},
-		{Header: rep.T("payroll.pdf.col_first"), Width: 1.25},
-		{Header: rep.T("payroll.pdf.col_last"), Width: 1.3},
-		{Header: rep.T("payroll.pdf.col_id"), Width: 1.65},
-		{Header: rep.T("payroll.pdf.col_momo_no"), Width: 1.2},
-		{Header: rep.T("payroll.pdf.col_momo_name"), Width: 1.3},
-		{Header: rep.T("payroll.pdf.col_job"), Width: 0.95},
-		{Header: rep.T("payroll.pdf.col_daily"), Width: 0.85, Align: pdf.Right},
-		{Header: rep.T("payroll.pdf.col_days"), Width: 0.6, Align: pdf.Right},
-		{Header: rep.T("payroll.pdf.col_total"), Width: 1.05, Align: pdf.Right},
-		{Header: rep.T("payroll.pdf.col_food"), Width: 0.65, Align: pdf.Right},
+		{Header: rep.T("payroll.pdf.col_no"), Width: 0.4, Align: pdf.Right},
+		{Header: rep.T("payroll.pdf.col_name"), Width: 2.0},
+		{Header: rep.T("payroll.pdf.col_id"), Width: 1.55},
+		{Header: rep.T("payroll.pdf.col_momo_no"), Width: 1.15},
+		{Header: rep.T("payroll.pdf.col_daily"), Width: 0.8, Align: pdf.Right},
+		{Header: rep.T("payroll.pdf.col_full"), Width: 0.5, Align: pdf.Right},
+		{Header: rep.T("payroll.pdf.col_half"), Width: 0.85, Align: pdf.Right},
+		{Header: rep.T("payroll.pdf.col_overtime"), Width: 0.95, Align: pdf.Right},
+		{Header: rep.T("payroll.pdf.col_piece"), Width: 0.8, Align: pdf.Right},
+		{Header: rep.T("payroll.pdf.col_adjust"), Width: 0.7, Align: pdf.Right},
+		{Header: rep.T("payroll.pdf.col_total"), Width: 0.95, Align: pdf.Right},
+		{Header: rep.T("payroll.pdf.col_food"), Width: 0.6, Align: pdf.Right},
 		{Header: rep.T("payroll.pdf.col_other"), Width: 0.6, Align: pdf.Right},
-		{Header: rep.T("payroll.pdf.col_received"), Width: 1.15, Align: pdf.Right},
+		{Header: rep.T("payroll.pdf.col_received"), Width: 1.0, Align: pdf.Right},
 		lastCol,
 	}
 	sv := func(s *string) string {
@@ -208,7 +213,8 @@ func (h *handler) pdfPeriod(c *fiber.Ctx) error {
 		return format.Int(float64(n))
 	}
 	var rows [][]any
-	var notes []string
+	var notes, overrides []string
+	var details [][]any
 	for i, l := range lines {
 		momoName := sv(l.Worker.MomoName)
 		if momoName != "" && l.Worker.MomoNameMismatch {
@@ -218,9 +224,38 @@ func (h *handler) pdfPeriod(c *fiber.Ctx) error {
 		if hasRefs {
 			last = sv(l.PaymentRef)
 		}
-		rows = append(rows, []any{i + 1, l.Worker.FirstName, l.Worker.LastName, sv(l.Worker.NationalID), sv(l.Worker.MomoNumber), momoName, l.Worker.JobTitle,
-			format.Int(float64(l.DailyWage)), format.Qty(l.DaysWorked), format.Int(float64(l.GrossAmount)), dash(l.FoodDeduction), dash(l.OtherDeduction),
+		name := l.Worker.FullName
+		if l.IsOverride {
+			name += " †"
+		}
+		momo := sv(l.Worker.MomoNumber)
+		if l.Worker.MomoNameMismatch {
+			momo += " *"
+		}
+		_ = momoName
+		half := "–"
+		if l.HalfDays > 0 {
+			half = fmt.Sprintf("%d × %s", l.HalfDays, format.Int(float64(l.HalfDayRate)))
+		}
+		ot := "–"
+		if l.OvertimeHours > 0 {
+			ot = fmt.Sprintf("%s h × %s", format.Qty(l.OvertimeHours), format.Int(float64(l.OvertimeRate)))
+		}
+		full := format.Int(float64(l.FullDays))
+		if l.IsOverride {
+			full = format.Qty(l.DaysWorked)
+		}
+		rows = append(rows, []any{i + 1, name, sv(l.Worker.NationalID), momo, format.Int(float64(l.DailyWage)), full, half, ot,
+			dash(l.PieceAmount), signed(l.AdjustmentAmount), format.Int(float64(l.GrossAmount)), dash(l.FoodDeduction), dash(l.OtherDeduction),
 			format.Int(float64(l.NetAmount)), last})
+		if l.IsOverride && l.OverrideReason != nil {
+			cg := 0
+			if l.CalculatedGross != nil {
+				cg = *l.CalculatedGross
+			}
+			overrides = append(overrides, rep.T("payroll.pdf.override_line", "name", l.Worker.FullName, "calc", format.RWF(float64(cg)), "gross", format.RWF(float64(l.GrossAmount)), "reason", *l.OverrideReason))
+		}
+		details = append(details, calcDetail(rep, l)...)
 		if l.Note != nil && *l.Note != "" {
 			notes = append(notes, l.Worker.FirstName+" "+l.Worker.LastName+": "+*l.Note)
 		}
@@ -233,8 +268,14 @@ func (h *handler) pdfPeriod(c *fiber.Ctx) error {
 		return rep.T("payroll.pdf.workers_many", "n", n)
 	}
 	var totals []any
-	totals = []any{nil, rep.T("payroll.pdf.total"), workersTxt(tt.Workers), nil, nil, nil, nil, nil, format.Qty(tt.Days), format.Int(float64(tt.Gross)),
-		format.Int(float64(tt.Food)), format.Int(float64(tt.Other)), format.Int(float64(tt.Net)), nil}
+	var sumOT, sumPiece, sumAdj float64
+	for _, l := range lines {
+		sumOT += float64(l.OvertimeAmount)
+		sumPiece += float64(l.PieceAmount)
+		sumAdj += float64(l.AdjustmentAmount)
+	}
+	totals = []any{nil, rep.T("payroll.pdf.total") + " · " + workersTxt(tt.Workers), nil, nil, nil, format.Qty(tt.Days), nil, format.Int(sumOT),
+		format.Int(sumPiece), signed(int(sumAdj)), format.Int(float64(tt.Gross)), format.Int(float64(tt.Food)), format.Int(float64(tt.Other)), format.Int(float64(tt.Net)), nil}
 	rep.Spacer(4).Table(cols, rows, totals, rep.T("payroll.pdf.empty"))
 	rep.Note(rep.T("payroll.pdf.wages_to_pay", "net", format.RWF(float64(tt.Net)), "workers", workersTxt(tt.Workers), "days", format.Qty(tt.Days),
 		"gross", format.RWF(float64(tt.Gross)), "deductions", format.RWF(float64(tt.Deductions))))
@@ -250,6 +291,19 @@ func (h *handler) pdfPeriod(c *fiber.Ctx) error {
 	}
 	if len(notes) > 0 {
 		rep.Note(rep.T("payroll.pdf.notes", "notes", joinDot(notes)))
+	}
+	rep.Note(rep.T("payroll.pdf.formula"))
+	if len(overrides) > 0 {
+		rep.Note(rep.T("payroll.pdf.overrides", "lines", joinDot(overrides)))
+	}
+	if len(details) > 0 {
+		rep.Section(rep.T("payroll.pdf.section_calc")).Table([]pdf.Column{
+			{Header: rep.T("payroll.pdf.col_name"), Width: 2.0},
+			{Header: rep.T("payroll.pdf.col_item"), Width: 2.6},
+			{Header: rep.T("payroll.pdf.col_period"), Width: 1.8},
+			{Header: rep.T("payroll.pdf.col_inputs"), Width: 3.6},
+			{Header: rep.T("payroll.pdf.col_amount"), Width: 1.1, Align: pdf.Right},
+		}, details, nil, "")
 	}
 	sign := func(roleKey, verbKey string, s *signoff) pdf.Signatory {
 		sg := pdf.Signatory{Role: rep.T(roleKey), Verb: rep.T(verbKey)}
@@ -389,4 +443,40 @@ func (h *handler) pdfSummary(c *fiber.Ctx) error {
 	}
 	rep.Note(note)
 	return pdf.Send(c, rep, fmt.Sprintf("%s_Labour-Cost-Summary_%s_to_%s.pdf", fileLabel, rg.FromISO, rg.ToISO), c.Query("download") == "1")
+}
+
+func signed(n int) string {
+	if n == 0 {
+		return "–"
+	}
+	if n > 0 {
+		return "+" + format.Int(float64(n))
+	}
+	return "−" + format.Int(float64(-n))
+}
+
+// calcDetail lists the calculation of one line: rate segments, piece work and adjustments (WRK-03 inputs).
+func calcDetail(rep *pdf.Report, l lineOut) [][]any {
+	if len(l.Calculation) == 0 {
+		return nil
+	}
+	var c workforce.Calc
+	if json.Unmarshal(l.Calculation, &c) != nil {
+		return nil
+	}
+	var out [][]any
+	for _, s := range c.Segments {
+		inputs := rep.T("payroll.pdf.seg_inputs", "full", s.FullDays, "daily", format.Int(float64(s.DailyRate)), "half", s.HalfDays,
+			"halfRate", format.Int(float64(s.HalfDayRate)), "hours", format.Qty(s.OvertimeHours), "otRate", format.Int(float64(s.OvertimeRate)))
+		out = append(out, []any{l.Worker.FullName, rep.T("payroll.pdf.seg_rule", "rule", s.RuleName), dates.FormatISORange(s.From, s.To), inputs,
+			format.Int(float64(s.Basic + s.Overtime))})
+	}
+	for _, p := range c.Pieces {
+		out = append(out, []any{l.Worker.FullName, rep.T("payroll.pdf.piece_item", "product", p.ProductCode+" "+p.ProductName), "", rep.T("payroll.pdf.piece_inputs",
+			"units", format.Int(float64(p.Units)), "rate", format.Int(float64(p.Rate))), format.Int(float64(p.Amount))})
+	}
+	for _, a := range c.Adjustments {
+		out = append(out, []any{l.Worker.FullName, rep.T("payroll.pdf.adjust_item", "source", a.SourceNo), dates.FormatISORange(a.Date, a.Date), a.Reason, signed(a.Amount)})
+	}
+	return out
 }

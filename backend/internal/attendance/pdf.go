@@ -58,8 +58,9 @@ func (h *handler) pdf(c *fiber.Ctx) error {
 	// active workers of the site (ordered) + every mark in the range — two queries, no N+1
 	type wrow struct{ id, name, job string }
 	var workers []wrow
-	wr, err := h.d.Pool.Query(ctx, `SELECT id, "firstName", "lastName", "jobTitle" FROM "Worker"
-		WHERE "plantId" = $1 AND "isActive" ORDER BY "firstName", "lastName", id`, plant.ID)
+	wr, err := h.d.Pool.Query(ctx, `SELECT w.id, w."firstName", w."lastName", w."jobTitle" FROM "Worker" w
+		WHERE (w."plantId" = $1 AND w."isActive") OR EXISTS (SELECT 1 FROM "Attendance" a WHERE a."workerId" = w.id AND a."plantId" = $1 AND a.date >= $2 AND a.date <= $3)
+		ORDER BY (w."plantId" <> $1), w."firstName", w."lastName", w.id`, plant.ID, rg.From, rg.To)
 	if err != nil {
 		return err
 	}
@@ -77,7 +78,9 @@ func (h *handler) pdf(c *fiber.Ctx) error {
 	}
 
 	marks := map[string]map[string]string{} // workerId -> dateISO -> status
-	ar, err := h.d.Pool.Query(ctx, `SELECT "workerId", date, status FROM "Attendance"
+	overtime := map[string]float64{}
+	exceptions := map[string]map[string]bool{}
+	ar, err := h.d.Pool.Query(ctx, `SELECT "workerId", date, status, "overtimeHours"::float8, exception FROM "Attendance"
 		WHERE "plantId" = $1 AND date >= $2 AND date <= $3`, plant.ID, rg.From, rg.To)
 	if err != nil {
 		return err
@@ -85,7 +88,9 @@ func (h *handler) pdf(c *fiber.Ctx) error {
 	for ar.Next() {
 		var wid, status string
 		var date time.Time
-		if err := ar.Scan(&wid, &date, &status); err != nil {
+		var ot float64
+		var exc bool
+		if err := ar.Scan(&wid, &date, &status, &ot, &exc); err != nil {
 			ar.Close()
 			return err
 		}
@@ -95,6 +100,18 @@ func (h *handler) pdf(c *fiber.Ctx) error {
 			marks[wid] = m
 		}
 		m[dates.ToISO(date)] = status
+		overtime[wid] += ot
+		if exc {
+			if exceptions[wid] == nil {
+				exceptions[wid] = map[string]bool{}
+			}
+			exceptions[wid][dates.ToISO(date)] = true
+		}
+	}
+	var approvedDays int
+	if err := h.d.Pool.QueryRow(ctx, `SELECT count(*) FROM attendance_day WHERE plant_id = $1 AND date >= $2 AND date <= $3 AND status = 'APPROVED'`,
+		plant.ID, rg.From, rg.To).Scan(&approvedDays); err != nil {
+		return err
 	}
 	ar.Close()
 	if err := ar.Err(); err != nil {
@@ -108,8 +125,9 @@ func (h *handler) pdf(c *fiber.Ctx) error {
 		Subtitle:  t2(lg, "attendance.pdf.subtitle", "range", rangeTxt, "days", len(days)),
 		Meta: []pdf.Meta{
 			{Label: t2(lg, "attendance.pdf.meta_site"), Value: plant.Code + " · " + plant.Name},
-			{Label: t2(lg, "attendance.pdf.meta_from"), Value: rg.FromISO},
-			{Label: t2(lg, "attendance.pdf.meta_to"), Value: rg.ToISO},
+			{Label: t2(lg, "attendance.pdf.meta_from"), Value: dates.FormatDate(rg.From)},
+			{Label: t2(lg, "attendance.pdf.meta_to"), Value: dates.FormatDate(rg.To)},
+			{Label: t2(lg, "attendance.pdf.meta_approved"), Value: fmt.Sprintf("%d / %d", approvedDays, len(days))},
 		},
 	})
 	if err != nil {
@@ -124,9 +142,11 @@ func (h *handler) pdf(c *fiber.Ctx) error {
 	for _, d := range days {
 		cols = append(cols, pdf.Column{Header: fmt.Sprintf("%d", d.Day()), Width: 0.5, Align: pdf.Center})
 	}
-	cols = append(cols, pdf.Column{Header: rep.T("attendance.pdf.col_payable"), Width: 1.1, Align: pdf.Right})
+	cols = append(cols, pdf.Column{Header: rep.T("attendance.pdf.col_overtime"), Width: 1.1, Align: pdf.Right},
+		pdf.Column{Header: rep.T("attendance.pdf.col_payable"), Width: 1.1, Align: pdf.Right})
 
 	var grand Counts
+	var grandOT float64
 	var rows [][]any
 	for i, w := range workers {
 		row := []any{i + 1, w.name}
@@ -134,24 +154,31 @@ func (h *handler) pdf(c *fiber.Ctx) error {
 		for _, d := range days {
 			st := marks[w.id][dates.ToISO(d)]
 			cnt.Add(st)
-			row = append(row, markCell(st))
+			cell := markCell(st)
+			if exceptions[w.id][dates.ToISO(d)] {
+				cell.Text += "*"
+			}
+			row = append(row, cell)
 		}
+		grandOT += overtime[w.id]
 		grand.Present += cnt.Present
 		grand.Half += cnt.Half
 		grand.Absent += cnt.Absent
 		grand.Leave += cnt.Leave
 		grand.Payable += cnt.Payable
-		row = append(row, pdf.Cell{Text: format.Qty(cnt.Payable), Bold: true})
+		row = append(row, format.Qty(overtime[w.id]), pdf.Cell{Text: format.Qty(cnt.Payable), Bold: true})
 		rows = append(rows, row)
 	}
 
 	totals := make([]any, len(cols))
 	totals[1] = rep.T("attendance.pdf.total")
+	totals[len(cols)-2] = format.Qty(grandOT)
 	totals[len(cols)-1] = pdf.Cell{Text: format.Qty(grand.Payable), Bold: true}
 
 	rep.Note(rep.T("attendance.pdf.legend"))
 	rep.Spacer(2).Table(cols, rows, totals, rep.T("attendance.pdf.empty"))
 	rep.Note(rep.T("attendance.pdf.counts", "present", grand.Present, "half", grand.Half, "absent", grand.Absent, "leave", grand.Leave, "payable", format.Qty(grand.Payable)))
+	rep.Note(rep.T("attendance.pdf.overtime_note", "hours", format.Qty(grandOT)))
 	rep.Signatures([]pdf.Signatory{
 		{Role: rep.T("attendance.pdf.sig_recorded")},
 		{Role: rep.T("attendance.pdf.sig_verified")},

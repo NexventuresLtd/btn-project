@@ -204,18 +204,21 @@ func TestSaleLifecycleAndDiscountRule(t *testing.T) {
 	if num(l0["amount"]) != 1_349_000 || num(l0["minPrice"]) != 1350 || l0["needsGmApproval"] != true || num(l0["defaultPrice"]) != 1500 {
 		t.Errorf("line: %v", l0)
 	}
-	// sales manager may not confirm a below-limit price; the General Manager may
-	r := e.Do("POST", "/api/sales/"+id+"/confirm", M{}, f.sm)
-	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 403 || !strings.Contains(msg, "more than 10% below") {
-		t.Fatalf("sm confirm: %d %s", r.StatusCode, msg)
+	// a sales manager's confirmation of a below-limit price waits for the General Manager (approval level)
+	cm := status(t, e, "POST", "/api/sales/"+id+"/confirm", M{}, f.sm, 200)
+	if cm["pendingApproval"] != true || cm["sale"].(M)["status"] != "DRAFT" || cm["sale"].(M)["pendingApproval"].(M)["kind"] != "CONFIRM" {
+		t.Fatalf("sm confirm: %v", cm)
 	}
-	// creating AND confirming in one call rolls everything back for an SM
-	before := f.count(`SELECT count(*) FROM "Sale"`)
-	if r := e.Do("POST", "/api/sales", f.saleBody(true, line(f.hb20, 10, 1000)), f.sm); r.StatusCode != 403 {
-		t.Fatalf("create+confirm: %d", r.StatusCode)
+	apprID := cm["sale"].(M)["pendingApproval"].(M)["id"].(string)
+	// withdraw it again (requester only) so the draft can be fixed
+	if r := e.Do("POST", "/api/sales/approvals/"+apprID+"/withdraw", M{}, f.gm); r.StatusCode != 403 {
+		t.Fatalf("withdraw by other: %d", r.StatusCode)
 	}
-	if f.count(`SELECT count(*) FROM "Sale"`) != before {
-		t.Fatal("rolled back sale must not persist")
+	status(t, e, "POST", "/api/sales/approvals/"+apprID+"/withdraw", M{}, f.sm, 200)
+	// creating AND confirming in one call opens the same approval
+	cc := status(t, e, "POST", "/api/sales", f.saleBody(true, line(f.hb20, 10, 1000)), f.sm, 201)
+	if cc["pendingApproval"] != true || cc["sale"].(M)["status"] != "DRAFT" {
+		t.Fatalf("create+confirm: %v", cc["pendingApproval"])
 	}
 	// edit the draft: fix the price
 	p := status(t, e, "PATCH", "/api/sales/"+id, M{"notes": "TEST sales edit", "lines": []M{line(f.hb20, 1000, 1400), line(f.hb15, 500, 1300)}}, f.sm, 200)["sale"].(M)
@@ -228,8 +231,8 @@ func TestSaleLifecycleAndDiscountRule(t *testing.T) {
 		t.Errorf("notes should clear: %v", p["notes"])
 	}
 	// draft only editable by sales.create
-	if r := e.Do("PATCH", "/api/sales/"+id, M{"notes": "x"}, f.fm); r.StatusCode != 403 {
-		t.Errorf("fm patch: %d", r.StatusCode)
+	if r := e.Do("PATCH", "/api/sales/"+id, M{"lines": []M{line(f.hb20, 1, 1)}}, f.fm); r.StatusCode != 403 {
+		t.Errorf("fm patch lines: %d", r.StatusCode)
 	}
 	// confirm: no stock -> warnings (not an error)
 	c := status(t, e, "POST", "/api/sales/"+id+"/confirm", M{}, f.sm, 200)
@@ -240,11 +243,12 @@ func TestSaleLifecycleAndDiscountRule(t *testing.T) {
 	if w["productCode"] != "HB20" || num(w["required"]) != 1000 || num(w["available"]) != 0 || !strings.Contains(w["message"].(string), "only 0 in stock") {
 		t.Errorf("warning: %v", w)
 	}
-	// confirmed -> not editable, not re-confirmable
-	if r := e.Do("PATCH", "/api/sales/"+id, M{"notes": "x"}, f.sm); r.StatusCode != 409 {
-		t.Errorf("patch confirmed: %d", r.StatusCode)
+	// confirmed -> commercial terms locked (ORD-10), notes still editable; not re-confirmable
+	if r := e.Do("PATCH", "/api/sales/"+id, M{"lines": []M{line(f.hb20, 1, 1400)}}, f.sm); r.StatusCode != 409 {
+		t.Errorf("patch confirmed lines: %d", r.StatusCode)
 	}
-	r = e.Do("POST", "/api/sales/"+id+"/confirm", M{}, f.gm)
+	status(t, e, "PATCH", "/api/sales/"+id, M{"notes": "TEST after confirm"}, f.sm, 200)
+	r := e.Do("POST", "/api/sales/"+id+"/confirm", M{}, f.gm)
 	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || msg != "Only draft sales can be confirmed (this one is confirmed)" {
 		t.Errorf("reconfirm: %d %s", r.StatusCode, msg)
 	}
@@ -255,14 +259,14 @@ func TestSaleLifecycleAndDiscountRule(t *testing.T) {
 		t.Errorf("confirmedBy: %v", gc["sale"].(M)["confirmedBy"])
 	}
 	// audit rows are written with the changes
-	if n := f.count(`SELECT count(*) FROM "AuditLog" WHERE action IN ('sales.create','sales.update','sales.confirm') AND "entityId"=$1`, id); n != 4 {
+	if n := f.count(`SELECT count(*) FROM "AuditLog" WHERE action IN ('sales.create','sales.update','sales.confirm') AND "entityId"=$1`, id); n != 5 {
 		t.Errorf("audit rows: %d", n)
 	}
-	// SM cannot cancel, GM can; a cancelled sale is void
+	// a draft is cancelled with a reason; a cancelled sale is void; finance cannot cancel
 	draft := f.create(f.sm, f.saleBody(false, line(f.hb20, 10, 1500)))
 	did := draft["id"].(string)
-	if r := e.Do("POST", "/api/sales/"+did+"/cancel", M{"reason": "x"}, f.sm); r.StatusCode != 403 {
-		t.Errorf("sm cancel: %d", r.StatusCode)
+	if r := e.Do("POST", "/api/sales/"+did+"/cancel", M{"reason": "x"}, f.fm); r.StatusCode != 403 {
+		t.Errorf("fm cancel: %d", r.StatusCode)
 	}
 	r = e.Do("POST", "/api/sales/"+did+"/cancel", M{}, f.gm)
 	if _, _, fields := e.ErrorOf(r); r.StatusCode != 400 || fields["reason"] != "Give a reason" {
@@ -283,6 +287,13 @@ func TestDispatchPaymentsReturnsFlow(t *testing.T) {
 	sale := f.create(f.sm, f.saleBody(true, line(f.hb20, 1000, 1500), line(f.hb15, 100, 1300)))
 	id := sale["id"].(string)
 	l0, l1 := sale["lines"].([]any)[0].(M)["id"].(string), sale["lines"].([]any)[1].(M)["id"].(string)
+	// Figure 3: a confirmed order is dispatched only once ready
+	if r := e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "dn-0", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 1}}}, f.sup1); r.StatusCode != 409 {
+		t.Fatalf("dispatch before ready: %d", r.StatusCode)
+	}
+	if rd := status(t, e, "POST", "/api/sales/"+id+"/ready", M{}, f.sup1, 200)["sale"].(M); rd["status"] != "READY" {
+		t.Fatalf("ready: %v", rd["status"])
+	}
 	dispatch := func(u *testutil.TestUser, dn string, plant string, lines ...M) *M {
 		body := M{"dnNumber": dn, "date": f.today, "vehicle": "RAB 123 A", "driver": "TEST driver", "lines": lines}
 		if plant != "" {
@@ -423,7 +434,7 @@ func TestDispatchPaymentsReturnsFlow(t *testing.T) {
 	}
 	// cancelling a sale with payments / deliveries is blocked
 	r = e.Do("POST", "/api/sales/"+id+"/cancel", M{"reason": "x"}, f.gm)
-	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || !strings.HasPrefix(msg, "Cancel the delivery notes first (DN-1") {
+	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || msg != "An order that is Dispatched cannot be cancelled" {
 		t.Errorf("cancel with dn: %d %s", r.StatusCode, msg)
 	}
 	// customers, receivables, statement
@@ -509,16 +520,22 @@ func TestPDFs(t *testing.T) {
 	sale := f.create(f.sm, f.saleBody(true, line(f.hb20, 50, 1500)))
 	id := sale["id"].(string)
 	l0 := sale["lines"].([]any)[0].(M)["id"].(string)
+	status(t, e, "POST", "/api/sales/"+id+"/ready", M{}, f.sm, 200)
 	d := status(t, e, "POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "TEST-DN", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 20}}}, f.sup1, 201)
 	dn := d["deliveryId"].(string)
 	status(t, e, "POST", "/api/sales/"+id+"/payments", M{"date": f.today, "amount": 1000, "method": "CASH"}, f.fm, 201)
 	paths := []string{
 		"/api/sales/pdf/report", "/api/sales/pdf/delivery-note/" + dn, "/api/sales/pdf/order/" + id,
-		"/api/sales/pdf/statement/" + f.cust, "/api/sales/pdf/receivables",
+		"/api/sales/pdf/statement/" + f.cust, "/api/sales/pdf/receivables", "/api/sales/pdf/quotation/" + id, "/api/sales/pdf/confirmation/" + id,
+		"/api/sales/pdf/orders-report?groupBy=product", "/api/sales/pdf/deliveries", "/api/sales/pdf/pending-deliveries",
 	}
-	for _, lang := range []string{"en", "am", "rw"} {
+	for _, lang := range []string{"en", "am", "rw", "fr"} {
 		for _, p := range paths {
-			r := e.Do("GET", p+"?lang="+lang, nil, f.sm)
+			sep := "?"
+			if strings.Contains(p, "?") {
+				sep = "&"
+			}
+			r := e.Do("GET", p+sep+"lang="+lang, nil, f.sm)
 			b, _ := io.ReadAll(r.Body)
 			if r.StatusCode != 200 || r.Header.Get("Content-Type") != "application/pdf" || !strings.HasPrefix(string(b), "%PDF") || len(b) < 2000 {
 				t.Errorf("%s lang=%s: %d len=%d", p, lang, r.StatusCode, len(b))

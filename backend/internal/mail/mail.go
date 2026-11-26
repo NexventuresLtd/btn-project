@@ -35,6 +35,8 @@ type OTP struct {
 	Minutes        int
 	IP             string
 	Lang           i18n.Lang
+	Link           string // PASSWORD_RESET only: single-use reset link (F3, AUTH-04); "" = code only
+	LinkMinutes    int
 }
 
 // Welcome describes the new-account email.
@@ -136,10 +138,29 @@ func (m *Mailer) BuildOTP(ctx context.Context, o OTP) (subject, text, htmlBody s
 		esc(i18n.T(o.Lang, "mail.code_expiry", "minutes", o.Minutes)),
 		esc(i18n.T(o.Lang, "mail.requested", "when", dates.FormatDateTime(time.Now()), "ip", o.IP)),
 		esc(i18n.T(o.Lang, "mail.not_you")))
+	if o.Link != "" && !login {
+		body = resetLinkBlock(o, primary) + body
+	}
 	htmlBody = m.layout(ctx, o.Lang, i18n.T(o.Lang, pre+"title"), body)
 	text = fmt.Sprintf("%s\n\n%s: %s\n\n%s\n%s", intro, i18n.T(o.Lang, "mail.code_label"), o.Code,
 		i18n.T(o.Lang, "mail.code_expiry", "minutes", o.Minutes), i18n.T(o.Lang, "mail.not_you"))
+	if o.Link != "" && !login {
+		text = fmt.Sprintf("%s\n%s\n%s\n\n%s\n\n", i18n.T(o.Lang, "mail.reset_link_intro"), o.Link,
+			i18n.T(o.Lang, "mail.reset_link_expiry", "minutes", o.LinkMinutes), i18n.T(o.Lang, "mail.reset_or_code")) + text
+	}
 	return
+}
+
+// resetLinkBlock is the button + plain link shown above the code in a password reset email.
+func resetLinkBlock(o OTP, primary string) string {
+	return fmt.Sprintf(`
+<p style="margin:0 0 16px;font-size:15px;line-height:1.6">%s</p>
+<p style="margin:0 0 12px;text-align:center"><a href="%s" style="display:inline-block;background:%s;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:12px 28px;border-radius:8px">%s</a></p>
+<p style="margin:0 0 6px;font-size:12px;color:#475569;word-break:break-all">%s</p>
+<p style="margin:0 0 20px;font-size:13px;color:#475569">%s</p>
+<p style="margin:0 0 12px;font-size:14px;font-weight:600">%s</p>`,
+		esc(i18n.T(o.Lang, "mail.reset_link_intro")), esc(o.Link), esc(primary), esc(i18n.T(o.Lang, "mail.reset_link_button")),
+		esc(o.Link), esc(i18n.T(o.Lang, "mail.reset_link_expiry", "minutes", o.LinkMinutes)), esc(i18n.T(o.Lang, "mail.reset_or_code")))
 }
 
 // BuildWelcome renders the welcome email.
@@ -303,6 +324,8 @@ type Noop struct {
 	mu       sync.Mutex
 	OTPs     []OTP
 	Welcomes []Welcome
+	Messages []Message         // generic notification/alert emails (message.go)
+	Attached []AttachedMessage // messages with file attachments (attachments.go, P7 scheduled reports)
 }
 
 func (n *Noop) SendOTP(_ context.Context, m OTP) error {

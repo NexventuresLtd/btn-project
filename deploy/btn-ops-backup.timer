@@ -1,0 +1,15 @@
+# /etc/systemd/system/btn-ops-backup.timer — runs btn-ops-backup.service nightly at 01:30 Kigali time.
+# Enable:  systemctl daemon-reload && systemctl enable --now btn-ops-backup.timer
+# Check:   systemctl list-timers btn-ops-backup.timer
+[Unit]
+Description=Nightly BTN Operations database backup (01:30 Africa/Kigali)
+
+[Timer]
+OnCalendar=*-*-* 01:30:00 Africa/Kigali
+# Catch up after downtime: a missed run starts at the next boot.
+Persistent=true
+AccuracySec=1min
+Unit=btn-ops-backup.service
+
+[Install]
+WantedBy=timers.target

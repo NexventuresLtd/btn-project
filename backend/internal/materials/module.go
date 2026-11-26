@@ -17,6 +17,7 @@ import (
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/i18n"
 	"btn-ops/internal/ratelimit"
+	"btn-ops/internal/stock"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
@@ -47,6 +48,7 @@ func Register(r fiber.Router, d *deps.Deps) {
 
 	r.Get("/pdf/daily", view, ratelimit.Group("pdf"), h.pdfDaily)
 	r.Get("/pdf/position", view, ratelimit.Group("pdf"), h.pdfPosition)
+	stock.InvalidateCaches = invalidate // P2 writes (transfers, counts, adjustments) refresh the cached balances
 }
 
 type handler struct{ d *deps.Deps }
@@ -206,6 +208,7 @@ func (h *handler) movements(c *fiber.Ctx) error {
 	ctx := httpx.Ctx(c)
 	v := httpx.Query(c)
 	plantID, from, to, materialID := qID(v, "plantId"), qDate(v, "from"), qDate(v, "to"), qID(v, "materialId")
+	userID, lotRef := qID(v, "userId"), v.OptStr("lotRef").Trim().Max(stock.MaxLotRef).Get()
 	typ := v.OptStr("type").Get()
 	if typ != "" {
 		ok := false
@@ -225,7 +228,7 @@ func (h *handler) movements(c *fiber.Ctx) error {
 		return err
 	}
 	pg := httpx.Paginate(c, 50)
-	items, total, err := listMovements(ctx, h.d.Pool, httpx.Lang(c), movementFilter{plantIDs: plantIDs(plants), materialID: materialID, typ: typ, from: r.From, to: r.To}, pg.Limit, pg.Offset)
+	items, total, err := listMovements(ctx, h.d.Pool, httpx.Lang(c), movementFilter{plantIDs: plantIDs(plants), materialID: materialID, typ: typ, from: r.From, to: r.To, userID: userID, lotRef: lotRef}, pg.Limit, pg.Offset)
 	if err != nil {
 		return err
 	}
@@ -445,6 +448,7 @@ func (h *handler) receipt(c *fiber.Ctx) error {
 	qty := qtyField(v, "quantity", qtyPositive)
 	unitCost := unitCostField(v, "unitCost")
 	supplier, reference, note := optText(v, lang, "supplier", 120), optText(v, lang, "reference", 80), optText(v, lang, "note", 500)
+	lotRef := optText(v, lang, "lotRef", stock.MaxLotRef)
 	if err := v.Err(); err != nil {
 		return err
 	}
@@ -461,9 +465,9 @@ func (h *handler) receipt(c *fiber.Ctx) error {
 		if err != nil {
 			return MovementRow{}, err
 		}
-		m, err := scanMovementRow(tx.QueryRow(ctx, `INSERT INTO "MaterialMovement" ("plantId","materialId",date,type,quantity,"unitCost",supplier,reference,note,"createdById")
-			VALUES ($1,$2,$3,'RECEIPT',$4::numeric,$5,$6,$7,$8,$9) RETURNING `+returningCols,
-			plant.ID, mat.ID, date, fmt3(qty), unitCost, supplier, reference, note, userID))
+		m, err := scanMovementRow(tx.QueryRow(ctx, `INSERT INTO "MaterialMovement" ("plantId","materialId",date,type,quantity,"unitCost",supplier,reference,note,"createdById","lotRef","deviceId","sourceType")
+			VALUES ($1,$2,$3,'RECEIPT',$4::numeric,$5,$6,$7,$8,$9,$10,$11,'Manual') RETURNING `+returningCols,
+			plant.ID, mat.ID, date, fmt3(qty), unitCost, supplier, reference, note, userID, lotRef, deviceOf(c)))
 		if err != nil {
 			return m, err
 		}
@@ -471,8 +475,14 @@ func (h *handler) receipt(c *fiber.Ctx) error {
 		if supplier != nil {
 			from = " from " + *supplier
 		}
-		return m, audit.Record(c, tx, audit.Input{Action: "materials.receive", Entity: "MaterialMovement", EntityID: m.ID,
-			Summary: "Received " + fmtQty(qty) + " " + mat.Unit + " " + mat.Name + " at " + plant.Code + " on " + dateISO + from, After: m})
+		if lotRef != nil {
+			from += " (lot " + *lotRef + ")"
+		}
+		if err := audit.Record(c, tx, audit.Input{Action: "materials.receive", Entity: "MaterialMovement", EntityID: m.ID,
+			Summary: "Received " + fmtQty(qty) + " " + mat.Unit + " " + mat.Name + " at " + plant.Code + " on " + dateISO + from, After: m}); err != nil {
+			return m, err
+		}
+		return m, stock.CheckLowStock(ctx, tx, plant.ID, stock.ItemMaterial, []string{mat.ID})
 	})
 	if err != nil {
 		return err
@@ -481,88 +491,25 @@ func (h *handler) receipt(c *fiber.Ctx) error {
 	return c.Status(201).JSON(row)
 }
 
+// transfer: instant material transfers were replaced by the transfer request workflow (SRS STK-04,
+// /api/transfers: request → approval → dispatch → receipt). Historical OUT/IN pairs stay readable in the ledger.
 func (h *handler) transfer(c *fiber.Ctx) error {
-	ctx := httpx.Ctx(c)
-	u := auth.MustUser(c)
-	lang := httpx.Lang(c)
-	v, err := httpx.Body(c)
-	if err != nil {
-		return err
+	return httpx.NewKey(410, "transfer_workflow", "materials.err.use_transfers")
+}
+
+// deviceOf is the client device of the request (X-Device-Id / session device), nil when unknown.
+func deviceOf(c *fiber.Ctx) *string {
+	d, _ := c.Locals("deviceId").(string)
+	if d == "" {
+		d = strings.TrimSpace(c.Get("X-Device-Id"))
 	}
-	fromID := idField(v, "fromPlantId", "materials.v.select_sender")
-	toID := idField(v, "toPlantId", "materials.v.select_receiver")
-	dateISO, date := writeDate(v, "date")
-	materialID := idField(v, "materialId", "materials.v.select_material")
-	qty := qtyField(v, "quantity", qtyPositive)
-	note := optText(v, lang, "note", 500)
-	if !v.Failed() && fromID == toID {
-		v.Fail("toPlantId", "materials.v.different_plant")
+	if d == "" {
+		return nil
 	}
-	if err := v.Err(); err != nil {
-		return err
+	if len(d) > 100 {
+		d = d[:100]
 	}
-	if err := auth.AssertPlantAccess(u, fromID); err != nil { // plant-scoped users may only send from their own plant
-		return err
-	}
-	userID := u.ID
-	type result struct {
-		TransferGroup string      `json:"transferGroup"`
-		Out           MovementRow `json:"out"`
-		In            MovementRow `json:"in"`
-	}
-	res, err := db.TxVal(ctx, h.d.Pool, func(tx pgx.Tx) (result, error) {
-		var out result
-		from, err := requirePlant(ctx, tx, lang, fromID, "fromPlantId")
-		if err != nil {
-			return out, err
-		}
-		to, err := requirePlant(ctx, tx, lang, toID, "toPlantId")
-		if err != nil {
-			return out, err
-		}
-		mat, err := requireMaterial(ctx, tx, lang, materialID, "materialId")
-		if err != nil {
-			return out, err
-		}
-		if err := lockStock(ctx, tx, from.ID, mat.ID); err != nil {
-			return out, err
-		}
-		if err := assertAvailable(ctx, tx, lang, from, mat, date, qty, ""); err != nil {
-			return out, err
-		}
-		if err := tx.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&out.TransferGroup); err != nil {
-			return out, err
-		}
-		rows, err := tx.Query(ctx, `INSERT INTO "MaterialMovement" ("plantId","materialId",date,type,quantity,"counterpartPlantId","transferGroup",note,"createdById")
-			VALUES ($1,$2,$3,'TRANSFER_OUT',$4::numeric,$5,$6,$7,$8), ($5,$2,$3,'TRANSFER_IN',$9::numeric,$1,$6,$7,$8)
-			RETURNING `+returningCols, from.ID, mat.ID, date, fmt3(-qty), to.ID, out.TransferGroup, note, userID, fmt3(qty))
-		if err != nil {
-			return out, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			m, err := scanMovementRow(rows)
-			if err != nil {
-				return out, err
-			}
-			if m.Type == TypeTransferOut {
-				out.Out = m
-			} else {
-				out.In = m
-			}
-		}
-		if err := rows.Err(); err != nil {
-			return out, err
-		}
-		rows.Close()
-		return out, audit.Record(c, tx, audit.Input{Action: "materials.transfer", Entity: "MaterialTransfer", EntityID: out.TransferGroup,
-			Summary: "Transferred " + fmtQty(qty) + " " + mat.Unit + " " + mat.Name + " from " + from.Code + " to " + to.Code + " on " + dateISO, After: out})
-	})
-	if err != nil {
-		return err
-	}
-	invalidate()
-	return c.Status(201).JSON(res)
+	return &d
 }
 
 func (h *handler) consumption(c *fiber.Ctx) error {
@@ -578,6 +525,7 @@ func (h *handler) consumption(c *fiber.Ctx) error {
 	materialID := idField(v, "materialId", "materials.v.select_material")
 	qty := qtyField(v, "quantity", qtyPositive)
 	note := reqText(v, lang, "note", "materials.v.usage_note_required", "materials.v.usage_note_min")
+	lotRef := optText(v, lang, "lotRef", stock.MaxLotRef)
 	if err := v.Err(); err != nil {
 		return err
 	}
@@ -600,13 +548,16 @@ func (h *handler) consumption(c *fiber.Ctx) error {
 		if err := assertAvailable(ctx, tx, lang, plant, mat, date, qty, ""); err != nil {
 			return MovementRow{}, err
 		}
-		m, err := scanMovementRow(tx.QueryRow(ctx, `INSERT INTO "MaterialMovement" ("plantId","materialId",date,type,quantity,note,"sourceType","createdById")
-			VALUES ($1,$2,$3,'CONSUMPTION',$4::numeric,$5,'Manual',$6) RETURNING `+returningCols, plant.ID, mat.ID, date, fmt3(-qty), note, userID))
+		m, err := scanMovementRow(tx.QueryRow(ctx, `INSERT INTO "MaterialMovement" ("plantId","materialId",date,type,quantity,note,"sourceType","createdById","lotRef","deviceId")
+			VALUES ($1,$2,$3,'CONSUMPTION',$4::numeric,$5,'Manual',$6,$7,$8) RETURNING `+returningCols, plant.ID, mat.ID, date, fmt3(-qty), note, userID, lotRef, deviceOf(c)))
 		if err != nil {
 			return m, err
 		}
-		return m, audit.Record(c, tx, audit.Input{Action: "materials.consume", Entity: "MaterialMovement", EntityID: m.ID,
-			Summary: "Recorded usage of " + fmtQty(qty) + " " + mat.Unit + " " + mat.Name + " at " + plant.Code + " on " + dateISO + ": " + note, After: m})
+		if err := audit.Record(c, tx, audit.Input{Action: "materials.consume", Entity: "MaterialMovement", EntityID: m.ID,
+			Summary: "Recorded usage of " + fmtQty(qty) + " " + mat.Unit + " " + mat.Name + " at " + plant.Code + " on " + dateISO + ": " + note, After: m}); err != nil {
+			return m, err
+		}
+		return m, stock.CheckLowStock(ctx, tx, plant.ID, stock.ItemMaterial, []string{mat.ID})
 	})
 	if err != nil {
 		return err
@@ -652,8 +603,8 @@ func (h *handler) adjustment(c *fiber.Ctx) error {
 				return MovementRow{}, err
 			}
 		}
-		m, err := scanMovementRow(tx.QueryRow(ctx, `INSERT INTO "MaterialMovement" ("plantId","materialId",date,type,quantity,note,"sourceType","createdById")
-			VALUES ($1,$2,$3,'ADJUSTMENT',$4::numeric,$5,'Adjustment',$6) RETURNING `+returningCols, plant.ID, mat.ID, date, fmt3(qty), reason, userID))
+		m, err := scanMovementRow(tx.QueryRow(ctx, `INSERT INTO "MaterialMovement" ("plantId","materialId",date,type,quantity,note,"sourceType","createdById","deviceId")
+			VALUES ($1,$2,$3,'ADJUSTMENT',$4::numeric,$5,'Adjustment',$6,$7) RETURNING `+returningCols, plant.ID, mat.ID, date, fmt3(qty), reason, userID, deviceOf(c)))
 		if err != nil {
 			return m, err
 		}
@@ -661,8 +612,11 @@ func (h *handler) adjustment(c *fiber.Ctx) error {
 		if qty > 0 {
 			sign = "+"
 		}
-		return m, audit.Record(c, tx, audit.Input{Action: "materials.adjust", Entity: "MaterialMovement", EntityID: m.ID,
-			Summary: "Adjusted " + mat.Name + " at " + plant.Code + " by " + sign + fmtQty(qty) + " " + mat.Unit + " on " + dateISO + ": " + reason, After: m})
+		if err := audit.Record(c, tx, audit.Input{Action: "materials.adjust", Entity: "MaterialMovement", EntityID: m.ID,
+			Summary: "Adjusted " + mat.Name + " at " + plant.Code + " by " + sign + fmtQty(qty) + " " + mat.Unit + " on " + dateISO + ": " + reason, After: m}); err != nil {
+			return m, err
+		}
+		return m, stock.CheckLowStock(ctx, tx, plant.ID, stock.ItemMaterial, []string{mat.ID})
 	})
 	if err != nil {
 		return err

@@ -1,18 +1,19 @@
 import { Link, useNavigate } from "react-router";
-import { Banknote, Boxes, Clock3, HandCoins, Plus, ShieldAlert, Wallet } from "lucide-react";
-import { Button, Card, DataTable, ErrorState, FilterBar, PageHeader, Pagination, PdfButton, Select, StatCard, StatusBadge, Tabs, useFilters, type Column } from "@/components/ui";
+import { Banknote, BarChart3, Boxes, Clock3, HandCoins, Plus, ShieldAlert, Wallet } from "lucide-react";
+import { Button, Card, DataTable, ErrorState, FilterBar, PageHeader, Pagination, ExportMenu, PdfButton, Select, StatCard, Tabs, useFilters, type Column } from "@/components/ui";
 import { Can } from "@/auth/guards";
 import { useAuth } from "@/auth/AuthProvider";
 import { useLookups } from "@/hooks/useLookups";
 import { formatDate } from "@/lib/dates";
 import { formatCompactRWF, formatInt, formatRWF } from "@/lib/format";
 import { useT } from "@/i18n";
-import { useSales, type SaleRow } from "./api";
-import { Amount, DeliveryProgressBadge, PaymentBadge, SearchInput, TotalsRow } from "./components";
+import { isCommitted, isEditable, ORDER_STATUSES, useSales, type SaleRow } from "./api";
+import { Amount, DeliveryProgressBadge, OrderStatusBadge, PaymentBadge, SearchInput, TotalsRow } from "./components";
+import { OfflineOrdersCard } from "./OfflineOrders";
 import { useParam } from "./useParam";
 
-const TABS = [{ value: "ALL" }, { value: "DRAFT" }, { value: "CONFIRMED" }, { value: "CANCELLED" }] as const;
-type TabValue = (typeof TABS)[number]["value"];
+const TABS = ["ALL", ...ORDER_STATUSES] as const;
+type TabValue = (typeof TABS)[number];
 
 export function SalesListPage() {
   const { t } = useT();
@@ -21,7 +22,10 @@ export function SalesListPage() {
   const { filters, set: setFilters, pinnedPlant } = useFilters();
   const { params, set, page } = useParam();
   const { data: lookups } = useLookups();
-  const status = (TABS.find((x) => x.value === params.get("status"))?.value ?? "ALL") as TabValue;
+  const status = (TABS.find((x) => x === params.get("status")) ?? "ALL") as TabValue;
+  const transportMode = params.get("transportMode") ?? "";
+  const approval = params.get("approval") ?? "";
+  const overdue = params.get("overdue") ?? "";
   const paymentStatus = params.get("paymentStatus") ?? "";
   const deliveryStatus = params.get("deliveryStatus") ?? "";
   const customerId = params.get("customerId") ?? "";
@@ -34,6 +38,9 @@ export function SalesListPage() {
     deliveryStatus: deliveryStatus || undefined,
     customerId: customerId || undefined,
     q: q || undefined,
+    transportMode: transportMode || undefined,
+    approval: approval || undefined,
+    overdue: overdue || undefined,
     page,
   });
   const d = sales.data;
@@ -82,7 +89,7 @@ export function SalesListPage() {
             cell: (r) => (
               <div className="flex flex-col items-end">
                 <Amount value={r.amount} strong muted={r.status === "CANCELLED"} />
-                {r.status === "CONFIRMED" && r.paid > 0 && r.outstanding > 0 ? <span className="text-[11px] whitespace-nowrap text-slate-500">{t("sales.list.paidAmount", { amount: formatInt(r.paid) })}</span> : null}
+                {isCommitted(r.status) && r.paid > 0 && r.outstanding > 0 ? <span className="text-[11px] whitespace-nowrap text-slate-500">{t("sales.list.paidAmount", { amount: formatInt(r.paid) })}</span> : null}
               </div>
             ),
           },
@@ -94,11 +101,13 @@ export function SalesListPage() {
       header: t("common.status"),
       cell: (r) => (
         <div className="flex flex-col items-start gap-1">
-          <StatusBadge status={r.status} />
-          {r.status === "DRAFT" && r.needsGmApproval ? (
+          <OrderStatusBadge status={r.status} />
+          {r.pendingApproval ? <span className="inline-flex items-center gap-1 text-[11px] font-semibold whitespace-nowrap text-purple-700"><ShieldAlert className="size-3" />{t(`orders.approval.pendingKind.${r.pendingApproval}`)}</span> : null}
+          {r.overdue ? <span className="text-[11px] font-semibold whitespace-nowrap text-red-700">{t("orders.list.overdue")}</span> : null}
+          {isEditable(r.status) && r.needsGmApproval && !r.pendingApproval ? (
             <span className="inline-flex items-center gap-1 text-[11px] font-semibold whitespace-nowrap text-amber-700"><ShieldAlert className="size-3" />{t("sales.list.needsGm")}</span>
           ) : null}
-          {r.status === "CONFIRMED" ? (
+          {isCommitted(r.status) ? (
             <div className="flex flex-wrap gap-1">
               <PaymentBadge status={r.paymentStatus} />
               <DeliveryProgressBadge status={r.deliveryStatus} />
@@ -136,7 +145,7 @@ export function SalesListPage() {
     </>
   ) : undefined;
 
-  const filtered = !!(paymentStatus || deliveryStatus || customerId || q);
+  const filtered = !!(paymentStatus || deliveryStatus || customerId || q || transportMode || approval || overdue);
 
   return (
     <>
@@ -145,9 +154,13 @@ export function SalesListPage() {
         description={t("sales.list.desc")}
         actions={
           <>
+            {can("sales.approve") || can("sales.cancel") ? (
+              <Button variant="secondary" icon={<ShieldAlert className="size-4" />} onClick={() => navigate("/sales/approvals")}>{t("orders.approvals.title")}</Button>
+            ) : null}
             <Can permission="sales.view">
+              <Button variant="secondary" icon={<BarChart3 className="size-4" />} onClick={() => navigate("/sales/reports")}>{t("orders.report.title")}</Button>
               <Button variant="secondary" icon={<Clock3 className="size-4" />} onClick={() => navigate("/sales/receivables")}>{t("sales.receivables.title")}</Button>
-              <PdfButton path="/sales/pdf/report" params={{ from: filters.from, to: filters.to, plantId: filters.plantId }} label={t("sales.list.reportPdf")} />
+              <div className="flex flex-wrap items-center gap-2"><PdfButton path="/sales/pdf/report" params={{ from: filters.from, to: filters.to, plantId: filters.plantId }} label={t("sales.list.reportPdf")} /><ExportMenu path="/sales" params={{ from: filters.from, to: filters.to, plantId: filters.plantId, status: status === "ALL" ? undefined : status, transportMode: transportMode || undefined }} /></div>
             </Can>
             <Can permission="sales.create">
               <Button icon={<Plus className="size-4" />} onClick={() => navigate("/sales/new")}>{t("sales.list.new")}</Button>
@@ -174,12 +187,14 @@ export function SalesListPage() {
         </div>
       ) : null}
 
+      <OfflineOrdersCard />
+
       <Card>
         <div className="flex flex-col gap-3 px-5 pt-5 pb-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="max-w-full overflow-x-auto">
               <Tabs
-                tabs={TABS.map((tab) => ({ value: tab.value, label: t(`sales.tab.${tab.value}`), count: d?.statusCounts[tab.value] }))}
+                tabs={TABS.map((tab) => ({ value: tab, label: tab === "ALL" ? t("sales.tab.ALL") : t(`orders.status.${tab}`), count: d?.statusCounts[tab] }))}
                 value={status}
                 onChange={(v) => set("status", v === "ALL" ? null : v)}
               />
@@ -204,8 +219,15 @@ export function SalesListPage() {
               <option value="PARTIAL">{t("sales.deliveryProgress.PARTIAL")}</option>
               <option value="DELIVERED">{t("sales.deliveryProgress.DELIVERED")}</option>
             </Select>
+            <Select value={transportMode} onChange={(e) => set("transportMode", e.target.value)} className="w-full sm:w-44" aria-label={t("orders.form.transport")}>
+              <option value="">{t("orders.list.anyTransport")}</option>
+              <option value="CLIENT">{t("orders.transport.CLIENT")}</option>
+              <option value="BTN">{t("orders.transport.BTN")}</option>
+            </Select>
+            <label className="inline-flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" className="size-4 accent-navy-700" checked={approval === "pending"} onChange={(e) => set("approval", e.target.checked ? "pending" : null)} />{t("orders.list.awaitingApproval")}</label>
+            <label className="inline-flex items-center gap-2 text-sm text-slate-600"><input type="checkbox" className="size-4 accent-navy-700" checked={overdue === "1"} onChange={(e) => set("overdue", e.target.checked ? "1" : null)} />{t("orders.list.overdueOnly")}</label>
             {filtered ? (
-              <Button variant="ghost" size="sm" onClick={() => ["q", "customerId", "paymentStatus", "deliveryStatus"].forEach((key) => set(key, null))}>{t("common.clear")}</Button>
+              <Button variant="ghost" size="sm" onClick={() => ["q", "customerId", "paymentStatus", "deliveryStatus", "transportMode", "approval", "overdue"].forEach((key) => set(key, null))}>{t("common.clear")}</Button>
             ) : null}
           </div>
         </div>

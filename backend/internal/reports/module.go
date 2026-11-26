@@ -2,6 +2,7 @@ package reports
 
 import (
 	"btn-ops/internal/auth"
+	"btn-ops/internal/cutoff"
 	"btn-ops/internal/dashboard"
 	"btn-ops/internal/deps"
 	"btn-ops/internal/httpx"
@@ -13,8 +14,21 @@ import (
 // Register mounts /api/reports.
 func Register(r fiber.Router, d *deps.Deps) {
 	h := &handler{d}
+	cutoff.Install(d.Pool)       // RPT-06: PDF meta rows + export filter lines state the data cut-off and unsynchronised sites
 	r.Get("/catalog", h.catalog) // any signed-in user; the list itself is filtered by permission
 	r.Get("/pdf/management", auth.RequirePermission("reports.view"), ratelimit.Group("pdf"), h.management)
+	sched := auth.RequirePermission("reports.schedule")
+	r.Get("/schedules", sched, h.listSchedules) // RPT-02 admin screen
+	r.Get("/schedules/recipients", sched, h.recipientOptions)
+	r.Put("/schedules/:key", sched, h.updateSchedule)
+	r.Post("/schedules/:key/send", sched, h.sendNow)
+	r.Get("/runs", sched, h.listRuns)
+	r.Get("/runs/:id", sched, h.getRun)
+	registerJob(d)
+	r.Get("/cutoff", h.cutoff)                                  // RPT-06: data cut-off + unsynchronised sites (screens)
+	r.Get("/data/:key", h.hubData)                              // hub reports (JSON; ?format= export) — permission per report
+	r.Get("/pdf/export/*", ratelimit.Group("pdf"), h.exportPDF) // RPT-03: PDF of any registered export report
+	r.Get("/pdf/:key", ratelimit.Group("pdf"), h.hubPDF)        // hub reports (PDF)
 }
 
 type handler struct{ d *deps.Deps }
@@ -55,4 +69,15 @@ func (h *handler) management(c *fiber.Ctx) error {
 		code = d.Plant.Code
 	}
 	return pdfSend(c, rep, code+"_Management-Summary_"+d.Range.From+"_"+d.Range.To+".pdf")
+}
+
+// GET /reports/cutoff?plantId= — the RPT-06 statement for screens (any signed-in user; site scope applies).
+func (h *handler) cutoff(c *fiber.Ctx) error {
+	u := auth.MustUser(c)
+	info, err := cutoff.Load(httpx.Ctx(c), h.d.Pool, auth.PlantFilter(u, c.Query("plantId")), httpx.Lang(c))
+	if err != nil {
+		return err
+	}
+	httpx.NoStore(c)
+	return c.JSON(info)
 }
