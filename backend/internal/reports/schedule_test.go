@@ -124,7 +124,7 @@ func TestResolveRecipients(t *testing.T) {
 		{UserID: "u1", Email: "pm@btn.test", Name: "PM", Role: "PRODUCTION_MANAGER", Lang: "fr"},
 		{UserID: "u2", Email: "sup@btn.test", Name: "Sup", Role: "SUPERVISOR", PlantID: "p1", Lang: "rw"},
 		{UserID: "u3", Email: "fm@btn.test", Name: "FM", Role: "FINANCE_MANAGER", Lang: "am"}, // finance has production.view
-		{UserID: "u4", Email: "sys@btn.test", Name: "Sys", Role: "SYSTEM_ADMIN", Lang: "en"},  // no production.view
+		{UserID: "u4", Email: "sys@btn.test", Name: "Sys", Role: "SALES_MANAGER", Lang: "en"}, // no production.view (SRS §8 Sales –)
 	}
 	got := ResolveRecipients(def, s, users)
 	by := map[string]Recipient{}

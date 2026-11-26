@@ -3,6 +3,7 @@ package reports_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -39,7 +40,7 @@ func validBody(extra map[string]any) map[string]any {
 
 func TestScheduleAdminEndpoints(t *testing.T) {
 	e := apptest.New(t)
-	gm := e.User(auth.RoleGeneralManager)
+	gm := e.User(auth.RoleSystemAdmin) // reports.schedule: System Administrator (SRS §8 settings)
 	pm := e.User(auth.RoleProductionManager)
 	for _, p := range []string{"/api/reports/schedules", "/api/reports/runs", "/api/reports/schedules/recipients"} {
 		if r := e.Do("GET", p, nil, pm); r.StatusCode != 403 {
@@ -57,7 +58,7 @@ func TestScheduleAdminEndpoints(t *testing.T) {
 	}
 	var list schedules
 	e.Decode(e.Do("GET", "/api/reports/schedules", nil, gm), &list)
-	if len(list.Items) != len(reports.Defs) || list.Items[0].Key != "daily_production" || list.Items[0].Enabled || list.Items[0].Title == "" {
+	if len(list.Items) != len(reports.Defs) || list.Items[0].Key != "daily_production" || !list.Items[0].Enabled || list.Items[0].Title == "" {
 		t.Fatalf("list %+v", list.Items)
 	}
 	// validation
@@ -73,7 +74,11 @@ func TestScheduleAdminEndpoints(t *testing.T) {
 	if r := e.Do("PUT", "/api/reports/schedules/nope", validBody(nil), gm); r.StatusCode != 404 {
 		t.Fatalf("unknown %d", r.StatusCode)
 	}
-	// save → audited; enabling never fires the slot that already passed
+	// save → audited; enabling never fires the slot that already passed (schedules ship enabled, §10: an
+	// administrator switched this one off first)
+	if _, err := e.Pool.Exec(context.Background(), `UPDATE report_schedule SET enabled = false WHERE key = 'daily_production'`); err != nil {
+		t.Fatal(err)
+	}
 	r := e.Do("PUT", "/api/reports/schedules/daily_production", validBody(nil), gm)
 	var saved struct {
 		reports.Schedule
@@ -92,7 +97,7 @@ func TestScheduleAdminEndpoints(t *testing.T) {
 	if err := reports.Dispatch(context.Background(), e.Deps, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	_ = e.Pool.QueryRow(context.Background(), `SELECT count(*) FROM report_run`).Scan(&n)
+	_ = e.Pool.QueryRow(context.Background(), `SELECT count(*) FROM report_run WHERE schedule_key = 'daily_production'`).Scan(&n)
 	if n != 0 {
 		t.Fatalf("enabling sent an old slot: %d runs", n)
 	}
@@ -128,11 +133,11 @@ func withSender(t *testing.T, s mail.AttachmentSender) {
 
 func TestSendNowEmailsAttachmentsPerRecipient(t *testing.T) {
 	e := apptest.New(t)
-	gm := e.User(auth.RoleGeneralManager)
+	gm := e.User(auth.RoleSystemAdmin) // reports.schedule: System Administrator (SRS §8 settings)
 	pm := e.User(auth.RoleProductionManager, testutil.UserOpts{Language: "fr"})
 	sup := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-2"})
-	sys := e.User(auth.RoleSystemAdmin)
-	e.User(auth.RoleSuperAdmin) // identity for raw e-mail recipients
+	sys := e.User(auth.RoleSalesManager) // no production.view (SRS §8 Sales –)
+	e.User(auth.RoleSuperAdmin)          // identity for raw e-mail recipients
 	fake := &fakeSender{}
 	withSender(t, fake)
 	body := validBody(map[string]any{"enabled": false, "recipientUserIds": []string{pm.ID, sup.ID, sys.ID}, "recipientRoles": []string{}})
@@ -148,7 +153,7 @@ func TestSendNowEmailsAttachmentsPerRecipient(t *testing.T) {
 	if err := reports.RunDue(context.Background(), e.Deps, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.sent) != 3 { // pm, supervisor, ops@example.com — system admin lacks production.view
+	if len(fake.sent) != 3 { // pm, supervisor, ops@example.com — the sales manager lacks production.view
 		t.Fatalf("sent %d", len(fake.sent))
 	}
 	byTo := map[string]mail.AttachedMessage{}
@@ -202,8 +207,12 @@ func TestSendNowEmailsAttachmentsPerRecipient(t *testing.T) {
 
 func TestScheduledRunRetriesThenFails(t *testing.T) {
 	e := apptest.New(t)
-	gm := e.User(auth.RoleGeneralManager)
+	gm := e.User(auth.RoleSystemAdmin) // reports.schedule: System Administrator (SRS §8 settings)
 	e.User(auth.RoleSuperAdmin)
+	// the other schedules ship enabled (§10); keep this run the only one
+	if _, err := e.Pool.Exec(context.Background(), `UPDATE report_schedule SET enabled = false`); err != nil {
+		t.Fatal(err)
+	}
 	fake := &fakeSender{fail: 1}
 	withSender(t, fake)
 	body := validBody(map[string]any{"enabled": false, "recipientRoles": []string{}, "recipientEmails": []string{"ops@example.com"}, "formats": []string{"csv"}})
@@ -222,7 +231,7 @@ func TestScheduledRunRetriesThenFails(t *testing.T) {
 	}
 	var status string
 	var attempts int
-	_ = e.Pool.QueryRow(context.Background(), `SELECT status, attempts FROM report_run`).Scan(&status, &attempts)
+	_ = e.Pool.QueryRow(context.Background(), `SELECT status, attempts FROM report_run WHERE schedule_key = 'site_performance'`).Scan(&status, &attempts)
 	if status != "retrying" || attempts != 1 {
 		t.Fatalf("after failure %s %d", status, attempts)
 	}
@@ -234,7 +243,7 @@ func TestScheduledRunRetriesThenFails(t *testing.T) {
 	if err := reports.RunDue(context.Background(), e.Deps, now.Add(6*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	_ = e.Pool.QueryRow(context.Background(), `SELECT status, attempts FROM report_run`).Scan(&status, &attempts)
+	_ = e.Pool.QueryRow(context.Background(), `SELECT status, attempts FROM report_run WHERE schedule_key = 'site_performance'`).Scan(&status, &attempts)
 	if status != "success" || attempts != 2 || len(fake.sent) != 1 || len(fake.sent[0].Attachments) != 2 { // hub CSV + management CSV
 		t.Fatalf("after retry %s %d %d", status, attempts, len(fake.sent))
 	}
@@ -248,7 +257,7 @@ func TestScheduledRunRetriesThenFails(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "site_performance") {
 		t.Fatalf("final failure %v", err)
 	}
-	_ = e.Pool.QueryRow(context.Background(), `SELECT status FROM report_run ORDER BY created_at DESC LIMIT 1`).Scan(&status)
+	_ = e.Pool.QueryRow(context.Background(), `SELECT status FROM report_run WHERE schedule_key = 'site_performance' ORDER BY created_at DESC LIMIT 1`).Scan(&status)
 	if status != "failed" {
 		t.Fatalf("status %s", status)
 	}
@@ -305,3 +314,47 @@ func kgl(t *testing.T, s string) time.Time {
 }
 
 func reportsJob() (any, bool) { j, ok := jobsLookup(reports.JobName); return j, ok }
+
+// SRS §10: the scheduled reports ship enabled, with the frequencies and recipients of the §10 table (the order and
+// sales summary both weekly and monthly; finance receives stock movement & variance).
+func TestScheduleDefaultsFollowSRS10(t *testing.T) {
+	e := apptest.New(t)
+	var list schedules
+	e.Decode(e.Do("GET", "/api/reports/schedules", nil, e.User(auth.RoleSystemAdmin)), &list)
+	by := map[string]reports.Schedule{}
+	for _, it := range list.Items {
+		by[it.Key] = it.Schedule
+		if !it.Enabled {
+			t.Errorf("%s ships disabled", it.Key)
+		}
+	}
+	want := map[string]struct {
+		freq  string
+		roles []string
+	}{
+		"daily_production":        {"daily", []string{"PRODUCTION_MANAGER", "MANAGING_DIRECTOR", "GENERAL_MANAGER", "OPERATIONS_ADVISOR"}},
+		"daily_stock":             {"daily", []string{"PRODUCTION_MANAGER", "STOCK_OFFICER"}},
+		"daily_headcount":         {"daily", []string{"PRODUCTION_MANAGER", "FINANCE_MANAGER"}},
+		"orders_sales":            {"weekly", []string{"SALES_MANAGER", "MANAGING_DIRECTOR", "GENERAL_MANAGER", "OPERATIONS_ADVISOR"}},
+		"orders_sales_monthly":    {"monthly", []string{"SALES_MANAGER", "MANAGING_DIRECTOR", "GENERAL_MANAGER", "OPERATIONS_ADVISOR"}},
+		"stock_movement_variance": {"weekly", []string{"PRODUCTION_MANAGER", "FINANCE_MANAGER"}},
+		"procurement_expense":     {"monthly", []string{"FINANCE_MANAGER", "MANAGING_DIRECTOR", "GENERAL_MANAGER", "OPERATIONS_ADVISOR"}},
+		"wage_workforce":          {"wage_period", []string{"FINANCE_MANAGER", "PRODUCTION_MANAGER"}},
+		"budget_monitoring":       {"monthly", []string{"FINANCE_MANAGER", "MANAGING_DIRECTOR", "GENERAL_MANAGER", "OPERATIONS_ADVISOR"}},
+		"site_performance":        {"monthly", []string{"MANAGING_DIRECTOR", "GENERAL_MANAGER", "OPERATIONS_ADVISOR"}},
+	}
+	for k, w := range want {
+		s, ok := by[k]
+		if !ok {
+			t.Errorf("%s missing", k)
+			continue
+		}
+		got := append([]string{}, s.RecipientRoles...)
+		exp := append([]string{}, w.roles...)
+		slices.Sort(got)
+		slices.Sort(exp)
+		if s.Frequency != w.freq || !slices.Equal(got, exp) {
+			t.Errorf("%s: %s %v, want %s %v", k, s.Frequency, s.RecipientRoles, w.freq, w.roles)
+		}
+	}
+}

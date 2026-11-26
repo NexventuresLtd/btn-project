@@ -89,29 +89,37 @@ func scanSchedule(r pgx.Row) (Schedule, error) {
 	return s, err
 }
 
-// scheduleDefaults seeds the §10 rows (also done by migration 02600; repeated here so a reset database or a
-// definition added later always has its row). Disabled until an administrator confirms the recipients.
+// Recipient groups of the SRS §10 table.
+var (
+	management = []string{"MANAGING_DIRECTOR", "GENERAL_MANAGER", "OPERATIONS_ADVISOR"}
+	withMgmt   = func(r ...string) []string { return append(r, management...) }
+)
+
+// scheduleDefaults seeds the §10 rows (also done by migrations 02600/03200; repeated here so a reset database or a
+// definition added later always has its row). Frequencies and recipient roles follow SRS §10 exactly; every row is
+// enabled (sending still needs the job runner, JOBS_ENABLED, and SMTP).
 var scheduleDefaults = []struct {
 	key, freq, time string
 	dom             int
 	roles           []string
 }{
-	{"daily_production", FreqDaily, "06:30", 1, []string{"PRODUCTION_MANAGER", "GENERAL_MANAGER", "MANAGING_DIRECTOR"}},
-	{"daily_stock", FreqDaily, "06:35", 1, []string{"PRODUCTION_MANAGER", "STOCK_OFFICER", "GENERAL_MANAGER"}},
-	{"daily_headcount", FreqDaily, "06:40", 1, []string{"PRODUCTION_MANAGER", "FINANCE_MANAGER"}},
-	{"orders_sales", FreqWeekly, "07:00", 1, []string{"SALES_MANAGER", "GENERAL_MANAGER", "MANAGING_DIRECTOR", "FINANCE_MANAGER"}},
-	{"stock_movement_variance", FreqWeekly, "07:10", 1, []string{"PRODUCTION_MANAGER", "STOCK_OFFICER", "GENERAL_MANAGER"}},
-	{"procurement_expense", FreqMonthly, "07:20", 1, []string{"FINANCE_MANAGER", "PROCUREMENT_OFFICER", "GENERAL_MANAGER", "MANAGING_DIRECTOR"}},
-	{"wage_workforce", FreqWagePeriod, "07:30", 1, []string{"FINANCE_MANAGER", "PRODUCTION_MANAGER", "GENERAL_MANAGER"}},
-	{"budget_monitoring", FreqMonthly, "07:40", 2, []string{"FINANCE_MANAGER", "GENERAL_MANAGER", "MANAGING_DIRECTOR"}},
-	{"site_performance", FreqMonthly, "07:50", 2, []string{"GENERAL_MANAGER", "MANAGING_DIRECTOR", "OPERATIONS_ADVISOR", "PRODUCTION_MANAGER"}},
-	{"finance_monthly", FreqMonthly, "08:00", 2, []string{"FINANCE_MANAGER", "GENERAL_MANAGER", "MANAGING_DIRECTOR"}},
+	{"daily_production", FreqDaily, "06:30", 1, withMgmt("PRODUCTION_MANAGER")},                            // PM, management
+	{"daily_stock", FreqDaily, "06:35", 1, []string{"PRODUCTION_MANAGER", "STOCK_OFFICER"}},                // PM, stock officers
+	{"daily_headcount", FreqDaily, "06:40", 1, []string{"PRODUCTION_MANAGER", "FINANCE_MANAGER"}},          // PM, finance
+	{"orders_sales", FreqWeekly, "07:00", 1, withMgmt("SALES_MANAGER")},                                    // weekly: sales, management
+	{"orders_sales_monthly", FreqMonthly, "07:05", 1, withMgmt("SALES_MANAGER")},                           // monthly: sales, management
+	{"stock_movement_variance", FreqWeekly, "07:10", 1, []string{"PRODUCTION_MANAGER", "FINANCE_MANAGER"}}, // PM, finance (+ send now)
+	{"procurement_expense", FreqMonthly, "07:20", 1, withMgmt("FINANCE_MANAGER")},                          // finance, management
+	{"wage_workforce", FreqWagePeriod, "07:30", 1, []string{"FINANCE_MANAGER", "PRODUCTION_MANAGER"}},      // finance, PM
+	{"budget_monitoring", FreqMonthly, "07:40", 2, withMgmt("FINANCE_MANAGER")},                            // finance, management
+	{"site_performance", FreqMonthly, "07:50", 2, management},                                              // management
+	{"finance_monthly", FreqMonthly, "08:00", 2, withMgmt("FINANCE_MANAGER")},                              // finance records (FINANCE_RECORDS_DESIGN §5)
 }
 
-// EnsureSchedules inserts missing schedule rows (idempotent).
+// EnsureSchedules inserts missing schedule rows (idempotent, enabled).
 func EnsureSchedules(ctx context.Context, q db.DBTX) error {
 	for _, d := range scheduleDefaults {
-		if _, err := q.Exec(ctx, `INSERT INTO report_schedule (key, frequency, send_time, day_of_month, recipient_roles) VALUES ($1,$2,$3,$4,$5)
+		if _, err := q.Exec(ctx, `INSERT INTO report_schedule (key, enabled, frequency, send_time, day_of_month, recipient_roles) VALUES ($1,true,$2,$3,$4,$5)
 			ON CONFLICT (key) DO NOTHING`, d.key, d.freq, d.time, d.dom, d.roles); err != nil {
 			return err
 		}

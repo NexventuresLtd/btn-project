@@ -93,6 +93,10 @@ var Defs = []Def{
 	{Key: "orders_sales", Perms: []auth.Permission{"sales.view"}, Frequencies: []string{FreqWeekly, FreqMonthly},
 		Parts: []Part{hubPart("orders-summary"), {Key: "sales-report", PDF: func(p Period) string { return "/sales/pdf/report?" + p.q() },
 			Export: func(p Period) string { return "/sales?" + p.q() }}}},
+	// §10 "order and sales summary weekly/monthly": two schedules of the same report, one weekly and one monthly.
+	{Key: "orders_sales_monthly", Perms: []auth.Permission{"sales.view"}, Frequencies: []string{FreqMonthly, FreqWeekly},
+		Parts: []Part{hubPart("orders-summary"), {Key: "sales-report", PDF: func(p Period) string { return "/sales/pdf/report?" + p.q() },
+			Export: func(p Period) string { return "/sales?" + p.q() }}}},
 	{Key: "stock_movement_variance", Perms: []auth.Permission{"stock.view"}, Frequencies: []string{FreqWeekly, FreqMonthly},
 		Parts: []Part{hubPart("stock-variance")}},
 	{Key: "procurement_expense", Perms: []auth.Permission{"procurement.view", "expenses.view"}, Frequencies: []string{FreqMonthly, FreqWeekly},

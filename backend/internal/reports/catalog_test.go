@@ -31,12 +31,17 @@ func TestCatalogFiltersByRolePermission(t *testing.T) {
 		t.Fatalf("super admin %d of %d", len(got), len(catalog))
 	}
 	sales := keys(auth.RoleSalesManager)
-	if slices.Contains(sales, "pettycash-statement") || !slices.Contains(sales, "sales-receivables") || slices.Contains(sales, "audit-trail") {
+	// SRS §8: Sales reads finance (petty cash statement) and orders, has no production and no audit
+	if !slices.Contains(sales, "pettycash-statement") || !slices.Contains(sales, "sales-receivables") || slices.Contains(sales, "audit-trail") ||
+		slices.Contains(sales, "production-summary") {
 		t.Fatalf("sales %v", sales)
 	}
+	// the System Administrator reads every module (SRS §8 Admin column R) and the audit trail
 	sys := keys(auth.RoleSystemAdmin)
-	if !reflect.DeepEqual(sys, []string{"audit-trail"}) {
-		t.Fatalf("system admin %v", sys)
+	for _, k := range []string{"audit-trail", "production-summary", "stock-position", "sales-report", "expenses-report", "procurement-spend", "payroll-summary", "site-performance"} {
+		if !slices.Contains(sys, k) {
+			t.Fatalf("system admin lacks %s: %v", k, sys)
+		}
 	}
 }
 

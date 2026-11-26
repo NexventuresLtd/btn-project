@@ -51,11 +51,11 @@ func TestCatalogEndpoint(t *testing.T) {
 	if am.Groups[0].Reports[0].Title != "የምርት ማጠቃለያ" {
 		t.Fatalf("am %q", am.Groups[0].Reports[0].Title)
 	}
-	// SYSTEM_ADMIN only sees the audit trail
+	// SYSTEM_ADMIN reads every module (SRS §8 Admin R) plus the audit trail
 	var sys catalog
 	r := e.Do("GET", "/api/reports/catalog", nil, e.User(auth.RoleSystemAdmin))
 	e.Decode(r, &sys)
-	if r.StatusCode != 200 || len(sys.Groups) != 1 || sys.Groups[0].Reports[0].Key != "audit-trail" {
+	if r.StatusCode != 200 || len(sys.Groups) < 7 || sys.Groups[0].Reports[0].Key != "production-summary" || sys.Groups[len(sys.Groups)-1].Reports[0].Key != "audit-trail" {
 		t.Fatalf("sysadmin %d %+v", r.StatusCode, sys)
 	}
 }
@@ -68,11 +68,11 @@ func TestManagementPdf(t *testing.T) {
 	exec(t, e, `INSERT INTO "ProductionLine"(id, "reportId", "productId", "targetQty","producedQty") VALUES ('pl1','pr1',(SELECT id FROM "Product" LIMIT 1),100,90)`)
 	q := "?from=2026-11-01&to=2026-11-21"
 
-	// authentication, permission (operators, lead operators and system admins lack reports.view), validation
+	// authentication, permission (operators and lead operators lack reports.view), validation
 	if r := e.Do("GET", "/api/reports/pdf/management"+q, nil, nil); r.StatusCode != 401 {
 		t.Fatalf("anon %d", r.StatusCode)
 	}
-	for _, role := range []auth.Role{auth.RoleOperator, auth.RoleLeadOperator, auth.RoleSystemAdmin} {
+	for _, role := range []auth.Role{auth.RoleOperator, auth.RoleLeadOperator} {
 		if r := e.Do("GET", "/api/reports/pdf/management"+q, nil, e.User(role)); r.StatusCode != 403 {
 			t.Fatalf("%s: %d", role, r.StatusCode)
 		}
