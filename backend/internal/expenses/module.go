@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"btn-ops/internal/auth"
@@ -12,9 +13,11 @@ import (
 	"btn-ops/internal/dates"
 	"btn-ops/internal/db"
 	"btn-ops/internal/deps"
+	"btn-ops/internal/finlink"
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/i18n"
 	"btn-ops/internal/notify"
+	"btn-ops/internal/openapi"
 	"btn-ops/internal/ratelimit"
 
 	"github.com/gofiber/fiber/v2"
@@ -45,6 +48,8 @@ func Register(r fiber.Router, d *deps.Deps) {
 	r.Get("/suppliers", auth.RequirePermission("expenses.record", "expenses.view"), h.suppliers)
 	r.Post("/budget-check", auth.RequirePermission("expenses.record", "expenses.view", "budgets.view"), h.budgetCheck)
 	r.Get("/trace", auth.RequirePermission("expenses.view", "procurement.view"), h.trace)
+	r.Get("/unbudgeted", auth.RequirePermission("expenses.view", "budgets.view"), h.unbudgeted)
+	r.Get("/pdf/unbudgeted", auth.RequirePermission("expenses.view", "budgets.view"), ratelimit.Group("pdf"), h.unbudgetedPDF)
 	r.Get("/pdf/report", auth.RequirePermission("expenses.view"), ratelimit.Group("pdf"), h.reportPDF)
 	r.Get("/pdf/:id", any, ratelimit.Group("pdf"), h.voucherPDF)
 	r.Post("/", record, h.create)
@@ -55,7 +60,15 @@ func Register(r fiber.Router, d *deps.Deps) {
 	r.Post("/:id/reject", auth.RequirePermission("expenses.approve", "budgets.approve"), h.reject)
 	r.Post("/:id/overrun/approve", auth.RequirePermission("budgets.approve"), h.overrunApprove)
 	r.Post("/:id/overrun/reject", auth.RequirePermission("budgets.approve"), h.overrunReject)
-	r.Post("/:id/pay", approve, h.pay)
+	r.Post("/:id/record-payment", approve, h.recordPayment)
+	r.Post("/:id/pay", approve, h.recordPayment) // deprecated alias (one release): the system records payments, it never pays
+	openapi.Describe("POST", "/expenses/:id/record-payment", openapi.Op{Summary: "Record the payment of an approved expense",
+		Description: "Records a payment made outside the system (cash, mobile money, bank transfer, cheque) with its date, method and reference."})
+	openapi.Describe("POST", "/expenses/:id/pay", openapi.Op{Summary: "Deprecated alias of /expenses/:id/record-payment",
+		Description: "Kept for one release for older clients. Use /record-payment."})
+	r.Get("/:id/links", any, h.listLinks)
+	r.Post("/:id/links", auth.RequirePermission("expenses.record", "expenses.approve"), h.addLink)
+	r.Delete("/:id/links/:linkId", auth.RequirePermission("expenses.record", "expenses.approve"), h.removeLink)
 	r.Post("/:id/attachments", auth.RequirePermission("expenses.record", "expenses.approve"), ratelimit.Group("upload"), h.upload)
 	r.Get("/:id/attachments/:aid", any, h.download)
 	r.Delete("/:id/attachments/:aid", auth.RequirePermission("expenses.record", "expenses.approve"), h.deleteAttachment)
@@ -102,7 +115,13 @@ func (h *handler) parseFilter(c *fiber.Ctx, u *auth.User) (filter, error) {
 	f.method = v.OptStr("paymentMethod").Upper().OneOf(PaymentMethods).Get()
 	f.q = v.OptStr("q").Trim().Max(100).Get()
 	f.overrun = v.OptStr("overrun").OneOf([]string{"pending", "any"}).Get()
-	f.source = v.OptStr("source").OneOf([]string{"procurement", "direct"}).Get()
+	f.source = v.OptStr("source").OneOf(append([]string{"procurement", "direct"}, Sources...)).Get()
+	f.budgetLineID = v.OptStr("budgetLineId").Trim().Max(60).Get()
+	f.floatID = v.OptStr("floatId").Trim().Max(60).Get()
+	f.periodID = v.OptStr("payrollPeriodId").Trim().Max(60).Get()
+	f.unbudgeted = v.OptStr("unbudgeted").OneOf([]string{"1", "marked"}).Get()
+	f.linkType = v.OptStr("linkType").Trim().Max(40).Get()
+	f.linkID = v.OptStr("linkId").Trim().Max(120).Get()
 	f.mine = v.OptStr("mine").OneOf([]string{"0", "1"}).Get()
 	f.supplierID = v.OptStr("supplierId").Trim().Max(60).Get()
 	f.purchaseOrderID = v.OptStr("purchaseOrderId").Trim().Max(60).Get()
@@ -186,15 +205,27 @@ func (h *handler) detail(ctx context.Context, lang i18n.Lang, u *auth.User, r *r
 		lk    *lookups
 		dec   map[string][]approvalRow
 		atts  []Attachment
+		links []finlink.Link
 		check *budgets.CheckResult
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() (err error) { lk, err = loadLookups(gctx, h.d.Pool, lang); return })
 	g.Go(func() (err error) { dec, err = loadApprovals(gctx, h.d.Pool, lang, r.ID); return })
 	g.Go(func() (err error) { atts, err = loadAttachments(gctx, h.d.Pool, r.ID); return })
-	if r.Status == StatusSubmitted {
+	g.Go(func() (err error) {
+		links, err = finlink.List(gctx, h.d.Pool, lang, finlink.ExpenseLinks, r.ID, true)
+		return
+	})
+	if r.Status == StatusSubmitted && !managed(r.Source) {
 		g.Go(func() (err error) {
-			check, err = budgets.Check(gctx, h.d.Pool, r.Department, r.Category, r.Date, r.Amount, r.ID)
+			ch := budgets.Choice{Unbudgeted: r.Unbudgeted}
+			if r.LineID != nil && !r.LineSuggested {
+				ch.LineID = *r.LineID
+			}
+			check, err = budgets.Resolve(gctx, h.d.Pool, lang, ch, r.Department, r.Category, r.Date, r.Amount, r.ID)
+			if he, ok := err.(*httpx.Error); ok && he.Status == 400 { // the chosen line no longer covers it: show the suggestion
+				check, err = budgets.Check(gctx, h.d.Pool, r.Department, r.Category, r.Date, r.Amount, r.ID)
+			}
 			return
 		})
 	}
@@ -207,6 +238,7 @@ func (h *handler) detail(ctx context.Context, lang i18n.Lang, u *auth.User, r *r
 		e.Approvals = []approvalRow{}
 	}
 	e.Attachments = atts
+	e.Links = links
 	e.Actions = actionsFor(u, r, dec[r.ID])
 	if check != nil {
 		e.Extra = map[string]any{"budgetCheck": check}
@@ -263,7 +295,15 @@ type Summary struct {
 	Rejected        int        `json:"rejectedCount"`
 	OverrunPending  int        `json:"overrunPending"`
 	Procurement     int64      `json:"procurement"` // approved + paid from purchases
+	PettyCash       int64      `json:"pettyCash"`   // approved + paid out of petty cash floats
+	Payroll         int64      `json:"payroll"`     // wages recorded
+	Unbudgeted      int64      `json:"unbudgeted"`  // approved + paid without a budget line (marked unbudgeted or no plan)
+	UnbudgetedCount int        `json:"unbudgetedCount"`
 	MissingReceipts int        `json:"missingReceipts"`
+	BySource        []groupRow `json:"bySource"`
+	ByBudgetLine    []groupRow `json:"byBudgetLine"`
+	BySupplier      []groupRow `json:"bySupplier"`
+	ByLinkedType    []groupRow `json:"byLinkedType"`
 	ByCategory      []groupRow `json:"byCategory"`
 	ByDepartment    []groupRow `json:"byDepartment"`
 	ByMethod        []groupRow `json:"byMethod"`
@@ -272,7 +312,8 @@ type Summary struct {
 
 // ComputeSummary aggregates expenses set-based (also used by the finance dashboard). plantID "" = all; userID ≠ "" = own only.
 func ComputeSummary(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to time.Time, plantID, userID string) (*Summary, error) {
-	s := &Summary{From: dates.ToISO(from), To: dates.ToISO(to), ByCategory: []groupRow{}, ByDepartment: []groupRow{}, ByMethod: []groupRow{}, BySite: []groupRow{}}
+	s := &Summary{From: dates.ToISO(from), To: dates.ToISO(to), ByCategory: []groupRow{}, ByDepartment: []groupRow{}, ByMethod: []groupRow{}, BySite: []groupRow{},
+		BySource: []groupRow{}, ByBudgetLine: []groupRow{}, BySupplier: []groupRow{}, ByLinkedType: []groupRow{}}
 	if plantID != "" {
 		s.PlantID = &plantID
 	}
@@ -286,11 +327,15 @@ func ComputeSummary(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to tim
 			count(*) FILTER (WHERE status = 'SUBMITTED')::int,
 			count(*) FILTER (WHERE status = 'REJECTED' AND date >= $1 AND date <= $2)::int,
 			count(*) FILTER (WHERE status = 'SUBMITTED' AND overrun_status = 'PENDING')::int,
-			COALESCE(SUM(amount) FILTER (WHERE status IN ('APPROVED','PAID') AND source_type IS NOT NULL AND date >= $1 AND date <= $2), 0)::bigint,
-			count(*) FILTER (WHERE status IN ('SUBMITTED','APPROVED','PAID') AND source_type IS NULL AND date >= $1 AND date <= $2
-				AND NOT EXISTS (SELECT 1 FROM expense_attachment a WHERE a.expense_id = e.id))::int
+			COALESCE(SUM(amount) FILTER (WHERE status IN ('APPROVED','PAID') AND source = 'PROCUREMENT' AND date >= $1 AND date <= $2), 0)::bigint,
+			count(*) FILTER (WHERE status IN ('SUBMITTED','APPROVED','PAID') AND source IN ('DIRECT','OTHER') AND date >= $1 AND date <= $2
+				AND NOT EXISTS (SELECT 1 FROM expense_attachment a WHERE a.expense_id = e.id))::int,
+			COALESCE(SUM(amount) FILTER (WHERE status IN ('APPROVED','PAID') AND source = 'PETTY_CASH' AND date >= $1 AND date <= $2), 0)::bigint,
+			COALESCE(SUM(amount) FILTER (WHERE status IN ('APPROVED','PAID') AND source = 'PAYROLL' AND date >= $1 AND date <= $2), 0)::bigint,
+			COALESCE(SUM(amount) FILTER (WHERE status IN ('APPROVED','PAID') AND budget_line_id IS NULL AND date >= $1 AND date <= $2), 0)::bigint,
+			count(*) FILTER (WHERE status IN ('APPROVED','PAID') AND budget_line_id IS NULL AND date >= $1 AND date <= $2)::int
 		FROM expense e WHERE true`+scope, from, to, plantID, userID).Scan(&s.Approved, &s.ApprovedCount, &s.Paid, &s.Unpaid, &s.Pending, &s.PendingCount,
-		&s.Rejected, &s.OverrunPending, &s.Procurement, &s.MissingReceipts); err != nil {
+		&s.Rejected, &s.OverrunPending, &s.Procurement, &s.MissingReceipts, &s.PettyCash, &s.Payroll, &s.Unbudgeted, &s.UnbudgetedCount); err != nil {
 		return nil, err
 	}
 	lk, err := loadLookups(ctx, q, lang)
@@ -302,6 +347,14 @@ func ComputeSummary(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to tim
 		UNION ALL SELECT 'm', payment_method, count(*)::int, SUM(amount)::bigint FROM expense e WHERE status IN ('APPROVED','PAID') AND date >= $1 AND date <= $2`+scope+` GROUP BY payment_method
 		UNION ALL SELECT 's', COALESCE(p.code, ''), count(*)::int, SUM(e.amount)::bigint FROM expense e LEFT JOIN "Plant" p ON p.id = e.plant_id
 			WHERE e.status IN ('APPROVED','PAID') AND e.date >= $1 AND e.date <= $2`+scope+` GROUP BY p.code
+		UNION ALL SELECT 'o', source, count(*)::int, SUM(amount)::bigint FROM expense e WHERE status IN ('APPROVED','PAID') AND date >= $1 AND date <= $2`+scope+` GROUP BY source
+		UNION ALL SELECT 'b', COALESCE(lb.number || ' · ' || bl.category, ''), count(*)::int, SUM(e.amount)::bigint FROM expense e
+			LEFT JOIN budget_line bl ON bl.id = e.budget_line_id LEFT JOIN budget lb ON lb.id = bl.budget_id
+			WHERE e.status IN ('APPROVED','PAID') AND e.date >= $1 AND e.date <= $2`+scope+` GROUP BY 2
+		UNION ALL SELECT 'p', COALESCE(e.supplier_name, ''), count(*)::int, SUM(e.amount)::bigint FROM expense e
+			WHERE e.status IN ('APPROVED','PAID') AND e.date >= $1 AND e.date <= $2`+scope+` GROUP BY 2
+		UNION ALL SELECT 'l', l.entity_type, count(DISTINCT e.id)::int, SUM(e.amount)::bigint FROM expense e JOIN expense_link l ON l.expense_id = e.id AND l.removed_at IS NULL
+			WHERE e.status IN ('APPROVED','PAID') AND e.date >= $1 AND e.date <= $2`+scope+` GROUP BY 2
 		ORDER BY 1, 4 DESC`, from, to, plantID, userID)
 	if err != nil {
 		return nil, err
@@ -323,6 +376,29 @@ func ComputeSummary(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to tim
 		case "m":
 			g.Name = i18n.T(lang, "expenses.method."+g.Code)
 			s.ByMethod = append(s.ByMethod, g)
+		case "o":
+			g.Name = i18n.T(lang, "expenses.src."+g.Code)
+			s.BySource = append(s.BySource, g)
+		case "b":
+			if g.Code == "" {
+				g.Name = i18n.T(lang, "expenses.no_budget_line")
+			} else {
+				no, cat, _ := strings.Cut(g.Code, " · ")
+				g.Name = no + " · " + nameOr(lk.cat, cat)
+			}
+			s.ByBudgetLine = append(s.ByBudgetLine, g)
+		case "p":
+			if g.Code == "" {
+				g.Name = i18n.T(lang, "expenses.no_payee")
+			} else {
+				g.Name = g.Code
+			}
+			if len(s.BySupplier) < 25 {
+				s.BySupplier = append(s.BySupplier, g)
+			}
+		case "l":
+			g.Name = i18n.T(lang, "finlink.type."+g.Code)
+			s.ByLinkedType = append(s.ByLinkedType, g)
 		default:
 			if g.Code == "" {
 				g.Name = i18n.T(lang, "expenses.no_site")
@@ -403,12 +479,12 @@ func (h *handler) budgetCheck(c *fiber.Ctx) error {
 	amt := v.Num("amount").Coerce()
 	amt.Whole("v.whole_francs").Min(0).Max(MaxAmount, "expenses.v.amount_large")
 	exclude := v.NullStr("expenseId").Trim().Max(60).Get()
+	ch := budgets.Choice{LineID: deref(v.NullStr("budgetLineId").Trim().Max(60).NilIfEmpty()), Unbudgeted: v.OptBool("unbudgeted").Default(false).Get()}
 	if err := v.Err(); err != nil {
 		return err
 	}
-	_ = lang
 	d, _ := dates.ParseISO(ds)
-	res, err := budgets.Check(ctx, h.d.Pool, dept, cat, d, amt.I(), exclude)
+	res, err := budgets.Resolve(ctx, h.d.Pool, lang, ch, dept, cat, d, amt.I(), exclude)
 	if err != nil {
 		return err
 	}

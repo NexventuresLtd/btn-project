@@ -13,6 +13,7 @@ import { isAmendable, isCommitted, isDispatchable, isEditable, isPayable, salesK
 import { Amount, DeliveryProgressBadge, Detail, LifecycleStepper, OrderStatusBadge, PaymentBadge, ReasonModal, TotalsRow, TransportBadge } from "./components";
 import { AmendmentModal, CommunicationModal, DecideModal, DeliveredModal, DispatchModal, FulfilmentModal, PaymentModal, ReturnModal } from "./modals";
 import { OfflineOrdersCard } from "./OfflineOrders";
+import { MoneyPanel } from "@/components/finance/MoneyPanel";
 
 export function SaleDetailPage() {
   const { t } = useT();
@@ -302,19 +303,20 @@ function SaleView({ sale }: { sale: SaleDetail }) {
         <div className="grid gap-6 xl:grid-cols-2">
           {showMoney ? (
             <Card>
-              <CardHeader title={tt("sales.detail.payments")} actions={canPay ? <Button size="sm" variant="accent" icon={<HandCoins className="size-4" />} onClick={() => setModal("payment")}>{tt("sales.detail.recordPayment")}</Button> : undefined} />
+              <CardHeader title={tt("sales.detail.payments")} description={tt("sales.detail.paymentsDesc")} actions={canPay ? <Button size="sm" variant="accent" icon={<HandCoins className="size-4" />} onClick={() => setModal("payment")}>{tt("sales.detail.recordPayment")}</Button> : undefined} />
               <DataTable
                 columns={[
                   { key: "date", header: tt("common.date"), cell: (p) => <span className="whitespace-nowrap">{formatDate(p.date)}</span> },
                   { key: "kind", header: tt("orders.pay.kind"), cell: (p) => <Badge tone={p.kind === "DEPOSIT" ? "purple" : p.kind === "BALANCE" ? "green" : "slate"}>{tt(`orders.pay.${p.kind}`)}</Badge> },
                   { key: "method", header: tt("sales.detail.channel"), cell: (p) => <div><p className="font-medium text-slate-800">{tx(`sales.payMethod.${p.method}`, undefined, p.methodLabel)}</p>{p.reference ? <p className="text-xs text-slate-500">{p.reference}</p> : null}</div> },
+                  { key: "income", header: tt("sales.detail.incomeRecord"), hideOnMobile: true, cell: (p) => (p.incomeId ? <Link to={`/income/${p.incomeId}`} className="text-xs font-medium text-navy-700 hover:underline">{p.incomeNumber || tt("sales.detail.incomeRecord")}</Link> : <span className="text-xs text-slate-400">{p.incomeNumber || "—"}</span>) },
                   { key: "by", header: tt("sales.detail.recordedBy"), hideOnMobile: true, cell: (p) => <span className="text-xs text-slate-600">{p.receivedBy?.name ?? "—"}</span> },
                   { key: "amount", header: tt("sales.col.amount"), align: "right", cell: (p) => <Amount value={p.amount} strong /> },
                 ]}
                 rows={sale.payments}
                 rowKey={(p) => p.id}
                 empty={tt("sales.detail.noPayments")}
-                footer={<TotalsRow cells={[{ content: tt("sales.detail.totalPaid"), colSpan: 3 }, { hideOnMobile: true }, { content: formatInt(t.paid), align: "right" }]} />}
+                footer={<TotalsRow cells={[{ content: tt("sales.detail.totalPaid"), colSpan: 3 }, { hideOnMobile: true }, { hideOnMobile: true }, { content: formatInt(t.paid), align: "right" }]} />}
               />
             </Card>
           ) : null}
@@ -333,6 +335,8 @@ function SaleView({ sale }: { sale: SaleDetail }) {
             />
           </Card>
         </div>
+
+        <MoneyPanel entityType="sale" entityId={sale.id} />
 
         <div className="grid gap-6 xl:grid-cols-2">
           <Card>

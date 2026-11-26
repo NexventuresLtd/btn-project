@@ -1,6 +1,8 @@
-// Package finance — the finance dashboard (SRS FIN-04, FIN-06): revenue and collections, outstanding client balances
-// with ageing, expenses and payables, procurement spend, petty cash position per float and budget status. Every section
-// is shown only to holders of the matching finance permission (FIN-09). Mounted at /api/finance.
+// Package finance — the finance dashboard (SRS FIN-04, FIN-06): income recorded, revenue and collections, outstanding
+// client balances with ageing, expenses and payables, net position, petty cash position per float and budget status;
+// the cash flow report (income vs expense by site and period), the "Money" view of any record (its income and expenses,
+// = linked-records trace) and the record search used to link money records. Every section is shown only to holders of
+// the matching finance permission (FIN-09). The system keeps records; it never moves money. Mounted at /api/finance.
 package finance
 
 import (
@@ -30,8 +32,18 @@ import (
 func Register(r fiber.Router, d *deps.Deps) {
 	h := &handler{d}
 	any := auth.RequirePermission("expenses.view", "budgets.view", "pettycash.view")
-	r.Get("/dashboard", any, h.dashboard)
-	r.Get("/pdf/dashboard", any, ratelimit.Group("pdf"), h.dashboardPDF)
+	r.Get("/dashboard", auth.RequirePermission("expenses.view", "budgets.view", "pettycash.view", "income.view"), h.dashboard)
+	r.Get("/pdf/dashboard", auth.RequirePermission("expenses.view", "budgets.view", "pettycash.view", "income.view"), ratelimit.Group("pdf"), h.dashboardPDF)
+	flow := auth.RequirePermission("income.view", "expenses.view")
+	r.Get("/cash-flow", flow, h.cashFlow)
+	r.Get("/pdf/cash-flow", flow, ratelimit.Group("pdf"), h.cashFlowPDF)
+	money := auth.RequirePermission("income.view", "income.record", "expenses.view", "expenses.approve")
+	r.Get("/money", money, h.money)
+	r.Get("/pdf/money", money, ratelimit.Group("pdf"), h.moneyPDF)
+	r.Get("/linked-summary", money, h.linkedSummary)
+	r.Get("/pdf/linked-summary", money, ratelimit.Group("pdf"), h.linkedSummaryPDF)
+	r.Get("/link-targets", auth.RequirePermission("expenses.record", "expenses.approve", "income.record", "income.verify"), h.linkTargets)
+	_ = any
 }
 
 type handler struct{ d *deps.Deps }
@@ -40,6 +52,7 @@ var dashCache = cache.New[[]byte](20*time.Second, 128)
 
 // Sections says which parts the user may see.
 type Sections struct {
+	Income    bool `json:"income"`
 	Revenue   bool `json:"revenue"`
 	Expenses  bool `json:"expenses"`
 	PettyCash bool `json:"pettyCash"`
@@ -49,10 +62,31 @@ type Sections struct {
 // TrendPoint is one bucket of the money-in / money-out trend.
 type TrendPoint struct {
 	Date      string `json:"date"`
+	Income    int64  `json:"income"` // every income recorded (not void)
 	Revenue   int64  `json:"revenue"`
 	Collected int64  `json:"collected"`
-	Expenses  int64  `json:"expenses"`
-	PettyCash int64  `json:"pettyCash"`
+	Expenses  int64  `json:"expenses"`  // approved / paid expenses except petty cash spending
+	PettyCash int64  `json:"pettyCash"` // petty cash spending (expenses paid out of floats)
+}
+
+// IncomeSummary is money in recorded in the range (docs/FINANCE_RECORDS_DESIGN.md §3).
+type IncomeSummary struct {
+	Total        int64        `json:"total"`
+	Count        int          `json:"count"`
+	Verified     int64        `json:"verified"`
+	Unverified   int64        `json:"unverified"`
+	Unverifiedn  int          `json:"unverifiedCount"`
+	OrderPayment int64        `json:"orderPayments"`
+	Other        int64        `json:"other"`
+	ByCategory   []GroupTotal `json:"byCategory"`
+}
+
+// GroupTotal is one group of a breakdown.
+type GroupTotal struct {
+	Code   string `json:"code"`
+	Name   string `json:"name"`
+	Count  int    `json:"count"`
+	Amount int64  `json:"amount"`
 }
 
 // Revenue is FIN-04 money in.
@@ -106,6 +140,8 @@ type BudgetStatus struct {
 	Over        int              `json:"overCount"`
 	Warning     int              `json:"warningCount"`
 	Unbudgeted  int64            `json:"unbudgeted"`
+	Income      budgets.Variance `json:"incomeTotals"`
+	Net         budgets.Net      `json:"net"`
 	Departments []budgets.VsDept `json:"departments"`
 	Lines       []budgets.VsRow  `json:"lines"` // over / warning lines first (max 10)
 }
@@ -116,17 +152,19 @@ type Dashboard struct {
 	To          string            `json:"to"`
 	PlantID     *string           `json:"plantId"`
 	Sections    Sections          `json:"sections"`
+	Income      *IncomeSummary    `json:"income,omitempty"`
+	Net         *int64            `json:"net,omitempty"` // income recorded − expenses approved/paid (when both visible)
 	Revenue     *Revenue          `json:"revenue,omitempty"`
 	Receivables *Receivables      `json:"receivables,omitempty"`
 	Expenses    *expenses.Summary `json:"expenses,omitempty"`
 	PettyCash   *PettyCash        `json:"pettyCash,omitempty"`
 	Budgets     *BudgetStatus     `json:"budgets,omitempty"`
 	Trend       []TrendPoint      `json:"trend"`
-	NetCash     *int64            `json:"netCash,omitempty"` // collected − expenses paid − petty cash spent (when all visible)
+	NetCash     *int64            `json:"netCash,omitempty"` // income recorded − expense payments recorded (incl. petty cash) (when both visible)
 }
 
 func sectionsFor(u *auth.User) Sections {
-	return Sections{Revenue: u.Can("sales.view") && (u.Can("expenses.view") || u.Can("budgets.view") || u.Can("pettycash.view")),
+	return Sections{Income: u.Can("income.view"), Revenue: u.Can("sales.view") && (u.Can("expenses.view") || u.Can("budgets.view") || u.Can("pettycash.view") || u.Can("income.view")),
 		Expenses: u.Can("expenses.view"), PettyCash: u.Can("pettycash.view"), Budgets: u.Can("budgets.view")}
 }
 
@@ -137,6 +175,9 @@ func Compute(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to time.Time,
 		out.PlantID = &plantID
 	}
 	g, gctx := errgroup.WithContext(ctx)
+	if s.Income {
+		g.Go(func() (err error) { out.Income, err = incomeSummary(gctx, q, lang, from, to, plantID); return })
+	}
 	if s.Revenue {
 		g.Go(func() (err error) { out.Revenue, err = revenue(gctx, q, from, to, plantID); return })
 		g.Go(func() (err error) { out.Receivables, err = receivables(gctx, q, to, plantID); return })
@@ -167,8 +208,8 @@ func Compute(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to time.Time,
 					pc.DueCount++
 				}
 			}
-			if err := q.QueryRow(gctx, `SELECT COALESCE(SUM(amount + "momoCharge"), 0)::bigint FROM "PettyCashEntry" WHERE status = 'APPROVED' AND type = 'EXPENSE'
-				AND date >= $1 AND date <= $2 AND ($3 = '' OR "plantId" = $3)`, from, to, plantID).Scan(&pc.Spent); err != nil {
+			if err := q.QueryRow(gctx, `SELECT COALESCE(SUM(amount), 0)::bigint FROM expense WHERE float_id IS NOT NULL AND status IN ('APPROVED','PAID')
+				AND date >= $1 AND date <= $2 AND ($3 = '' OR plant_id = $3)`, from, to, plantID).Scan(&pc.Spent); err != nil {
 				return err
 			}
 			out.PettyCash = pc
@@ -182,7 +223,7 @@ func Compute(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to time.Time,
 				return err
 			}
 			bs := &BudgetStatus{PeriodType: va.PeriodType, PeriodStart: va.PeriodStart, PeriodEnd: va.PeriodEnd, Totals: va.Totals, Over: va.Over,
-				Warning: va.Warning, Unbudgeted: va.Unbudgeted, Departments: va.Departments, Lines: []budgets.VsRow{}}
+				Warning: va.Warning, Unbudgeted: va.Unbudgeted, Income: va.Income, Net: va.Net, Departments: va.Departments, Lines: []budgets.VsRow{}}
 			for _, st := range []string{"over", "unbudgeted", "warning"} {
 				for _, r := range va.Rows {
 					if r.Variance.Status == st && len(bs.Lines) < 10 {
@@ -198,9 +239,10 @@ func Compute(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to time.Time,
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
-	if s.Revenue && s.Expenses && s.PettyCash {
-		n := out.Revenue.Collected - out.Expenses.Paid - out.PettyCash.Spent
-		out.NetCash = &n
+	if s.Income && s.Expenses {
+		net := out.Income.Total - out.Expenses.Approved
+		cash := out.Income.Total - out.Expenses.Paid
+		out.Net, out.NetCash = &net, &cash
 	}
 	return out, nil
 }
@@ -265,18 +307,19 @@ func trend(ctx context.Context, q db.DBTX, from, to time.Time, plantID string, s
 		gran = "week"
 	}
 	rows, err := q.Query(ctx, `WITH b AS (SELECT generate_series(date_trunc($4, $1::timestamp), $2::timestamp, ('1 ' || $4)::interval)::date AS d),
+		inc AS (SELECT date_trunc($4, i.date::timestamp)::date AS d, SUM(i.amount)::bigint AS v FROM income i
+			WHERE $8 AND i.status <> 'VOID' AND i.date >= $1 AND i.date <= $2 AND ($3 = '' OR i.plant_id = $3) GROUP BY 1),
 		rev AS (SELECT date_trunc($4, s.date::timestamp)::date AS d, SUM(l.amount)::bigint AS v FROM "SaleLine" l JOIN "Sale" s ON s.id = l."saleId"
 			WHERE $5 AND s.status = 'CONFIRMED' AND s.date >= $1 AND s.date <= $2 AND ($3 = '' OR s."plantId" = $3) GROUP BY 1),
 		col AS (SELECT date_trunc($4, p.date::timestamp)::date AS d, SUM(p.amount)::bigint AS v FROM "Payment" p JOIN "Sale" s ON s.id = p."saleId"
 			WHERE $5 AND s.status = 'CONFIRMED' AND p.date >= $1 AND p.date <= $2 AND ($3 = '' OR s."plantId" = $3) GROUP BY 1),
 		exp AS (SELECT date_trunc($4, e.date::timestamp)::date AS d, SUM(e.amount)::bigint AS v FROM expense e
-			WHERE $6 AND e.status IN ('APPROVED','PAID') AND e.date >= $1 AND e.date <= $2 AND ($3 = '' OR e.plant_id = $3) GROUP BY 1),
-		pc AS (SELECT date_trunc($4, pe.date::timestamp)::date AS d, SUM(pe.amount + pe."momoCharge")::bigint AS v FROM "PettyCashEntry" pe
-			WHERE $7 AND pe.status = 'APPROVED' AND pe.type = 'EXPENSE' AND (pe."sourceType" IS NULL OR pe."sourceType" <> 'Expense')
-				AND pe.date >= $1 AND pe.date <= $2 AND ($3 = '' OR pe."plantId" = $3) GROUP BY 1)
-		SELECT b.d, COALESCE(rev.v, 0), COALESCE(col.v, 0), COALESCE(exp.v, 0), COALESCE(pc.v, 0)
-		FROM b LEFT JOIN rev ON rev.d = b.d LEFT JOIN col ON col.d = b.d LEFT JOIN exp ON exp.d = b.d LEFT JOIN pc ON pc.d = b.d
-		ORDER BY b.d`, from, to, plantID, gran, s.Revenue, s.Expenses, s.PettyCash)
+			WHERE $6 AND e.status IN ('APPROVED','PAID') AND e.source <> 'PETTY_CASH' AND e.date >= $1 AND e.date <= $2 AND ($3 = '' OR e.plant_id = $3) GROUP BY 1),
+		pc AS (SELECT date_trunc($4, e.date::timestamp)::date AS d, SUM(e.amount)::bigint AS v FROM expense e
+			WHERE ($7 OR $6) AND e.status IN ('APPROVED','PAID') AND e.source = 'PETTY_CASH' AND e.date >= $1 AND e.date <= $2 AND ($3 = '' OR e.plant_id = $3) GROUP BY 1)
+		SELECT b.d, COALESCE(inc.v, 0), COALESCE(rev.v, 0), COALESCE(col.v, 0), COALESCE(exp.v, 0), COALESCE(pc.v, 0)
+		FROM b LEFT JOIN inc ON inc.d = b.d LEFT JOIN rev ON rev.d = b.d LEFT JOIN col ON col.d = b.d LEFT JOIN exp ON exp.d = b.d LEFT JOIN pc ON pc.d = b.d
+		ORDER BY b.d`, from, to, plantID, gran, s.Revenue, s.Expenses, s.PettyCash, s.Income)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +328,7 @@ func trend(ctx context.Context, q db.DBTX, from, to time.Time, plantID string, s
 	for rows.Next() {
 		var p TrendPoint
 		var d time.Time
-		if err := rows.Scan(&d, &p.Revenue, &p.Collected, &p.Expenses, &p.PettyCash); err != nil {
+		if err := rows.Scan(&d, &p.Income, &p.Revenue, &p.Collected, &p.Expenses, &p.PettyCash); err != nil {
 			return nil, err
 		}
 		p.Date = dates.ToISO(d)
@@ -334,6 +377,19 @@ func init() {
 		Build: func(b *export.Builder, j export.J) {
 			b.Columns(col("section", "finance.export.section", export.Text), col("item", "finance.export.item", export.Text),
 				col("value", "finance.export.value", export.Money), col("note", "finance.export.note", export.Text))
+			if j.Exists("income") {
+				b.Row(b.T("finance.s.income"), b.T("finance.k.income"), j.V("income.total"), j.S("income.count"))
+				b.Row(b.T("finance.s.income"), b.T("finance.k.order_payments"), j.V("income.orderPayments"), "")
+				b.Row(b.T("finance.s.income"), b.T("finance.k.other_income"), j.V("income.other"), "")
+				b.Row(b.T("finance.s.income"), b.T("finance.k.unverified"), j.V("income.unverified"), j.S("income.unverifiedCount"))
+				for _, r := range j.Arr("income.byCategory") {
+					b.Row(b.T("finance.s.income_by_category"), r.S("name"), r.V("amount"), r.S("count"))
+				}
+			}
+			if j.Exists("net") {
+				b.Row(b.T("finance.s.net"), b.T("finance.k.net"), j.V("net"), "")
+				b.Row(b.T("finance.s.net"), b.T("finance.k.net_cash"), j.V("netCash"), "")
+			}
 			if j.Exists("revenue") {
 				b.Row(b.T("finance.s.revenue"), b.T("finance.k.invoiced"), j.V("revenue.invoiced"), j.S("revenue.salesCount"))
 				b.Row(b.T("finance.s.revenue"), b.T("finance.k.collected"), j.V("revenue.collected"), "")

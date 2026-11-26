@@ -42,6 +42,8 @@ func Register(r fiber.Router, d *deps.Deps) {
 	view, manage, approve := auth.RequirePermission("budgets.view"), auth.RequirePermission("budgets.manage"), auth.RequirePermission("budgets.approve")
 	r.Get("/", view, h.list)
 	r.Get("/vs-actual", view, h.vsActual)
+	r.Get("/line-options", auth.RequirePermission("budgets.view", "expenses.record", "expenses.view", "income.record", "income.view",
+		"pettycash.record", "pettycash.custodian"), h.lineOptions)
 	r.Get("/pdf/vs-actual", view, ratelimit.Group("pdf"), h.vsActualPDF)
 	r.Get("/pdf/:id", view, ratelimit.Group("pdf"), h.budgetPDF)
 	r.Post("/", manage, h.create)
@@ -109,10 +111,10 @@ func getBudget(ctx context.Context, q db.DBTX, id string, lock bool) (*budgetRow
 }
 
 type lineRow struct {
-	ID, Category string
-	Amount       int64
-	Approved     *int64
-	Note         *string
+	ID, Type, Category string
+	Amount             int64
+	Approved           *int64
+	Note               *string
 }
 
 func loadLines(ctx context.Context, q db.DBTX, ids []string) (map[string][]lineRow, error) {
@@ -120,9 +122,9 @@ func loadLines(ctx context.Context, q db.DBTX, ids []string) (map[string][]lineR
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := q.Query(ctx, `SELECT l.budget_id, l.id, l.category, l.amount, l.approved_amount, l.note FROM budget_line l
-		LEFT JOIN refdata_item r ON r.kind = 'expense_category' AND r.code = l.category
-		WHERE l.budget_id = ANY($1) ORDER BY COALESCE(r.sort_order, 9999), l.category`, ids)
+	rows, err := q.Query(ctx, `SELECT l.budget_id, l.id, l.type, l.category, l.amount, l.approved_amount, l.note FROM budget_line l
+		LEFT JOIN refdata_item r ON r.kind = CASE WHEN l.type = 'INCOME' THEN 'income_category' ELSE 'expense_category' END AND r.code = l.category
+		WHERE l.budget_id = ANY($1) ORDER BY l.type, COALESCE(r.sort_order, 9999), l.category`, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +132,7 @@ func loadLines(ctx context.Context, q db.DBTX, ids []string) (map[string][]lineR
 	for rows.Next() {
 		var bid string
 		var l lineRow
-		if err := rows.Scan(&bid, &l.ID, &l.Category, &l.Amount, &l.Approved, &l.Note); err != nil {
+		if err := rows.Scan(&bid, &l.ID, &l.Type, &l.Category, &l.Amount, &l.Approved, &l.Note); err != nil {
 			return nil, err
 		}
 		out[bid] = append(out[bid], l)
@@ -145,9 +147,11 @@ type userRef struct {
 	Name string `json:"name"`
 }
 
-// Line is one category of a budget with its spend.
+// Line is one category of a budget with its spend (EXPENSE line) or income (INCOME line, revenue target).
 type Line struct {
 	ID             string   `json:"id"`
+	Type           string   `json:"type"`
+	Unbudgeted     bool     `json:"unbudgeted,omitempty"` // spending explicitly marked unbudgeted (no line)
 	Category       string   `json:"category"`
 	CategoryName   string   `json:"categoryName"`
 	Amount         int64    `json:"amount"`
@@ -180,8 +184,10 @@ type Budget struct {
 	ReviewComment  *string    `json:"reviewComment"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	UpdatedAt      time.Time  `json:"updatedAt"`
-	Totals         Variance   `json:"totals"`
-	ActualTotals   Actual     `json:"actualTotals"`
+	Totals         Variance   `json:"totals"`       // expense lines
+	ActualTotals   Actual     `json:"actualTotals"` // expense lines
+	IncomeTotals   Variance   `json:"incomeTotals"` // income lines (revenue targets)
+	Net            Net        `json:"net"`
 	Lines          []Line     `json:"lines"`
 	Actions        Actions    `json:"actions"`
 }
@@ -196,11 +202,11 @@ type Actions struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
-type names struct{ cat, dept map[string]string }
+type names struct{ cat, inc, dept map[string]string }
 
 func loadNames(ctx context.Context, q db.DBTX, lang i18n.Lang) (*names, error) {
-	n := &names{cat: map[string]string{}, dept: map[string]string{}}
-	for kind, m := range map[string]map[string]string{refdata.KindExpenseCategory: n.cat, refdata.KindDepartment: n.dept} {
+	n := &names{cat: map[string]string{}, inc: map[string]string{}, dept: map[string]string{}}
+	for kind, m := range map[string]map[string]string{refdata.KindExpenseCategory: n.cat, refdata.KindIncomeCategory: n.inc, refdata.KindDepartment: n.dept} {
 		items, err := refdata.List(ctx, q, kind, true, lang)
 		if err != nil {
 			return nil, err
@@ -244,7 +250,8 @@ func actionsFor(u *auth.User, b *budgetRow) Actions {
 	return a
 }
 
-// toBudget builds the JSON with per-line actuals (acts = spend per category within the budget's own period/department).
+// toBudget builds the JSON with per-line actuals (acts = actuals per "TYPE|category" within the budget's own period and
+// department).
 func toBudget(b *budgetRow, lines []lineRow, acts map[string]Actual, nm *names, u *auth.User) Budget {
 	out := Budget{ID: b.ID, Number: b.Number, Name: b.Name, Department: b.Department, DepartmentName: nameOr(nm.dept, b.Department),
 		PeriodType: b.PeriodType, PeriodStart: dates.ToISO(b.Start), PeriodEnd: dates.ToISO(b.End), Status: b.Status, Notes: b.Notes,
@@ -258,38 +265,67 @@ func toBudget(b *budgetRow, lines []lineRow, acts map[string]Actual, nm *names, 
 	if b.ReviewedByID != nil {
 		out.ReviewedBy = &userRef{ID: *b.ReviewedByID, Name: deref(b.ReviewedByName)}
 	}
-	var budTotal int64
-	var actTotal Actual
+	var budTotal, incTarget int64
+	var actTotal, incActual Actual
 	seen := map[string]bool{}
 	for _, l := range lines {
-		seen[l.Category] = true
+		key := l.Type + "|" + l.Category
+		seen[key] = true
 		amt := l.Amount
 		if out.InForce && l.Approved != nil {
 			amt = *l.Approved
 		}
-		a := acts[l.Category]
-		out.Lines = append(out.Lines, Line{ID: l.ID, Category: l.Category, CategoryName: nameOr(nm.cat, l.Category), Amount: l.Amount,
-			ApprovedAmount: l.Approved, Note: l.Note, Actual: a, Variance: ComputeVariance(amt, a)})
-		budTotal += amt
-		actTotal = actTotal.Add(a)
-	}
-	// spend in categories the budget does not cover (budgeted at 0)
-	extra := make([]string, 0)
-	for cat := range acts {
-		if !seen[cat] {
-			extra = append(extra, cat)
+		a := acts[key]
+		line := Line{ID: l.ID, Type: l.Type, Category: l.Category, Amount: l.Amount, ApprovedAmount: l.Approved, Note: l.Note, Actual: a}
+		if l.Type == LineIncome {
+			line.CategoryName = nameOr(nm.inc, l.Category)
+			line.Actual = Actual{Income: a.Income}
+			line.Variance = ComputeIncomeVariance(amt, a)
+			incTarget += amt
+			incActual = incActual.Add(line.Actual)
+		} else {
+			line.CategoryName = nameOr(nm.cat, l.Category)
+			line.Actual.Unbudgeted = 0
+			line.Variance = ComputeVariance(amt, line.Actual)
+			budTotal += amt
+			actTotal = actTotal.Add(line.Actual)
 		}
+		out.Lines = append(out.Lines, line)
 	}
-	sort.Strings(extra)
-	for _, cat := range extra {
-		a := acts[cat]
-		if a.Total() == 0 && a.Pending == 0 {
+	// spend / income in categories the budget does not cover, and spending marked unbudgeted
+	keys := make([]string, 0, len(acts))
+	for k := range acts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		a := acts[k]
+		typ, cat, _ := strings.Cut(k, "|")
+		if typ == LineIncome {
+			if seen[k] || a.Income == 0 {
+				continue
+			}
+			x := Actual{Income: a.Income}
+			out.Lines = append(out.Lines, Line{Type: LineIncome, Category: cat, CategoryName: nameOr(nm.inc, cat), Actual: x, Variance: ComputeIncomeVariance(0, x)})
+			incActual = incActual.Add(x)
 			continue
 		}
-		out.Lines = append(out.Lines, Line{Category: cat, CategoryName: nameOr(nm.cat, cat), Actual: a, Variance: ComputeVariance(0, a)})
-		actTotal = actTotal.Add(a)
+		if !seen[k] && (a.Total() != 0 || a.Pending != 0) {
+			x := a
+			x.Unbudgeted = 0
+			out.Lines = append(out.Lines, Line{Type: LineExpense, Category: cat, CategoryName: nameOr(nm.cat, cat), Actual: x, Variance: ComputeVariance(0, x)})
+			actTotal = actTotal.Add(x)
+		}
+		if a.Unbudgeted != 0 {
+			x := Actual{Expenses: a.Unbudgeted, Unbudgeted: a.Unbudgeted}
+			out.Lines = append(out.Lines, Line{Type: LineExpense, Unbudgeted: true, Category: cat, CategoryName: nameOr(nm.cat, cat), Actual: x,
+				Variance: ComputeVariance(0, x)})
+			actTotal = actTotal.Add(Actual{Expenses: a.Unbudgeted})
+		}
 	}
 	out.Totals, out.ActualTotals = ComputeVariance(budTotal, actTotal), actTotal
+	out.IncomeTotals = ComputeIncomeVariance(incTarget, incActual)
+	out.Net = Net{Planned: incTarget - budTotal, Actual: incActual.Income - actTotal.Total()}
 	if u != nil {
 		out.Actions = actionsFor(u, b)
 	}
@@ -394,6 +430,8 @@ func (h *handler) get(c *fiber.Ctx) error {
 
 // VsRow is one (department, category) line of the budget-vs-actual report.
 type VsRow struct {
+	Type           string   `json:"type"`                 // EXPENSE | INCOME
+	Unbudgeted     bool     `json:"unbudgeted,omitempty"` // spending explicitly marked unbudgeted
 	Department     string   `json:"department"`
 	DepartmentName string   `json:"departmentName"`
 	Category       string   `json:"category"`
@@ -424,7 +462,10 @@ type VsActual struct {
 	Totals      Variance `json:"totals"`
 	Over        int      `json:"overCount"`
 	Warning     int      `json:"warningCount"`
-	Unbudgeted  int64    `json:"unbudgeted"`
+	Unbudgeted  int64    `json:"unbudgeted"`   // spend without a line (no plan, or marked unbudgeted)
+	IncomeRows  []VsRow  `json:"incomeRows"`   // revenue targets vs income recorded
+	Income      Variance `json:"incomeTotals"` // income lines
+	Net         Net      `json:"net"`
 }
 
 // ComputeVsActual builds budget vs actual for the period of kind periodType containing date (FIN-03; used by the finance
@@ -432,24 +473,25 @@ type VsActual struct {
 // spend of the period; spend without a budget line is reported as unbudgeted.
 func ComputeVsActual(ctx context.Context, q db.DBTX, lang i18n.Lang, periodType string, date time.Time, department string) (*VsActual, error) {
 	start, end := PeriodBounds(periodType, date)
-	out := &VsActual{PeriodType: periodType, PeriodStart: dates.ToISO(start), PeriodEnd: dates.ToISO(end), Rows: []VsRow{}, Departments: []VsDept{}}
+	out := &VsActual{PeriodType: periodType, PeriodStart: dates.ToISO(start), PeriodEnd: dates.ToISO(end), Rows: []VsRow{}, Departments: []VsDept{}, IncomeRows: []VsRow{}}
 	if department != "" {
 		out.Department = &department
 	}
 	var (
-		acts map[Key]Actual
-		nm   *names
+		acts, incs map[Key]Actual
+		nm         *names
 	)
 	type bl struct {
-		id, number, dept, cat string
-		amount                int64
+		id, number, dept, cat, typ string
+		amount                     int64
 	}
 	var lines []bl
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() (err error) { acts, err = Actuals(gctx, q, start, end, department, ""); return })
+	g.Go(func() (err error) { incs, err = IncomeActuals(gctx, q, start, end, department); return })
 	g.Go(func() (err error) { nm, err = loadNames(gctx, q, lang); return })
 	g.Go(func() error {
-		rows, err := q.Query(gctx, `SELECT b.id, b.number, b.department, l.category, COALESCE(l.approved_amount, 0)::bigint
+		rows, err := q.Query(gctx, `SELECT b.id, b.number, b.department, l.category, l.type, COALESCE(l.approved_amount, 0)::bigint
 			FROM budget b JOIN budget_line l ON l.budget_id = b.id
 			WHERE b.approved_at IS NOT NULL AND b.status IN ('APPROVED','SUBMITTED') AND b.period_type = $1 AND b.period_start = $2
 				AND ($3 = '' OR b.department = $3)`, periodType, start, department)
@@ -459,7 +501,7 @@ func ComputeVsActual(ctx context.Context, q db.DBTX, lang i18n.Lang, periodType 
 		defer rows.Close()
 		for rows.Next() {
 			var x bl
-			if err := rows.Scan(&x.id, &x.number, &x.dept, &x.cat, &x.amount); err != nil {
+			if err := rows.Scan(&x.id, &x.number, &x.dept, &x.cat, &x.typ, &x.amount); err != nil {
 				return err
 			}
 			lines = append(lines, x)
@@ -469,26 +511,61 @@ func ComputeVsActual(ctx context.Context, q db.DBTX, lang i18n.Lang, periodType 
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
-	seen := map[Key]bool{}
+	seen, seenInc := map[Key]bool{}, map[Key]bool{}
+	var incTarget int64
+	var incTotal Actual
+	deptName := func(code string) string {
+		if code == "" {
+			return i18n.T(lang, "budgets.no_department")
+		}
+		return nameOr(nm.dept, code)
+	}
 	for _, l := range lines {
 		k := Key{l.dept, l.cat}
-		seen[k] = true
 		id, no := l.id, l.number
+		if l.typ == LineIncome {
+			seenInc[k] = true
+			a := Actual{Income: incs[k].Income}
+			out.IncomeRows = append(out.IncomeRows, VsRow{Type: LineIncome, Department: l.dept, DepartmentName: deptName(l.dept), Category: l.cat,
+				CategoryName: nameOr(nm.inc, l.cat), BudgetID: &id, BudgetNumber: &no, Actual: a, Variance: ComputeIncomeVariance(l.amount, a)})
+			incTarget += l.amount
+			incTotal = incTotal.Add(a)
+			continue
+		}
+		seen[k] = true
 		a := acts[k]
-		out.Rows = append(out.Rows, VsRow{Department: l.dept, DepartmentName: nameOr(nm.dept, l.dept), Category: l.cat, CategoryName: nameOr(nm.cat, l.cat),
+		a.Unbudgeted = 0
+		out.Rows = append(out.Rows, VsRow{Type: LineExpense, Department: l.dept, DepartmentName: deptName(l.dept), Category: l.cat, CategoryName: nameOr(nm.cat, l.cat),
 			BudgetID: &id, BudgetNumber: &no, Actual: a, Variance: ComputeVariance(l.amount, a)})
 	}
 	for k, a := range acts {
-		if seen[k] || (a.Total() == 0 && a.Pending == 0) {
+		if !seen[k] && (a.Total() != 0 || a.Pending != 0) {
+			x := a
+			x.Unbudgeted = 0
+			out.Rows = append(out.Rows, VsRow{Type: LineExpense, Department: k.Department, DepartmentName: deptName(k.Department), Category: k.Category,
+				CategoryName: nameOr(nm.cat, k.Category), Actual: x, Variance: ComputeVariance(0, x)})
+		}
+		if a.Unbudgeted != 0 {
+			x := Actual{Expenses: a.Unbudgeted, Unbudgeted: a.Unbudgeted}
+			out.Rows = append(out.Rows, VsRow{Type: LineExpense, Unbudgeted: true, Department: k.Department, DepartmentName: deptName(k.Department),
+				Category: k.Category, CategoryName: nameOr(nm.cat, k.Category), Actual: x, Variance: ComputeVariance(0, x)})
+		}
+	}
+	for k, a := range incs {
+		if seenInc[k] || a.Income == 0 {
 			continue
 		}
-		dn := nameOr(nm.dept, k.Department)
-		if k.Department == "" {
-			dn = i18n.T(lang, "budgets.no_department")
-		}
-		out.Rows = append(out.Rows, VsRow{Department: k.Department, DepartmentName: dn, Category: k.Category, CategoryName: nameOr(nm.cat, k.Category),
-			Actual: a, Variance: ComputeVariance(0, a)})
+		out.IncomeRows = append(out.IncomeRows, VsRow{Type: LineIncome, Department: k.Department, DepartmentName: deptName(k.Department), Category: k.Category,
+			CategoryName: nameOr(nm.inc, k.Category), Actual: a, Variance: ComputeIncomeVariance(0, a)})
+		incTotal = incTotal.Add(a)
 	}
+	sort.Slice(out.IncomeRows, func(i, j int) bool {
+		a, b := out.IncomeRows[i], out.IncomeRows[j]
+		if a.DepartmentName != b.DepartmentName {
+			return a.DepartmentName < b.DepartmentName
+		}
+		return a.CategoryName < b.CategoryName
+	})
 	sort.Slice(out.Rows, func(i, j int) bool {
 		a, b := out.Rows[i], out.Rows[j]
 		if a.DepartmentName != b.DepartmentName {
@@ -497,7 +574,10 @@ func ComputeVsActual(ctx context.Context, q db.DBTX, lang i18n.Lang, periodType 
 		if (a.BudgetID == nil) != (b.BudgetID == nil) {
 			return a.BudgetID != nil
 		}
-		return a.CategoryName < b.CategoryName
+		if a.CategoryName != b.CategoryName {
+			return a.CategoryName < b.CategoryName
+		}
+		return !a.Unbudgeted && b.Unbudgeted
 	})
 	depIdx := map[string]int{}
 	var budTot int64
@@ -528,6 +608,8 @@ func ComputeVsActual(ctx context.Context, q db.DBTX, lang i18n.Lang, periodType 
 		d.Variance = ComputeVariance(d.Variance.Budget, d.Actual)
 	}
 	out.Actual, out.Totals = actTot, ComputeVariance(budTot, actTot)
+	out.Income = ComputeIncomeVariance(incTarget, incTotal)
+	out.Net = Net{Planned: incTarget - budTot, Actual: incTotal.Income - actTot.Total()}
 	return out, nil
 }
 
@@ -548,6 +630,39 @@ func parseVsQuery(c *fiber.Ctx) (string, time.Time, string, error) {
 	}
 	d, _ := dates.ParseISO(ds)
 	return ptype, d, dept, nil
+}
+
+// lineOptions lists the budget lines a record of the given date can be linked to (expense or income lines), the
+// suggested one first: GET /api/budgets/line-options?type=EXPENSE|INCOME&date=&department=&category=.
+func (h *handler) lineOptions(c *fiber.Ctx) error {
+	ctx, lang := httpx.Ctx(c), httpx.Lang(c)
+	m := map[string]any{}
+	for k, v := range c.Queries() {
+		if v != "" {
+			m[k] = v
+		}
+	}
+	v := httpx.NewV(m, lang)
+	typ := v.OptStr("type").Trim().Upper().Default(LineExpense).OneOf(LineTypes, "budgets.v.line_type").Get()
+	ds := v.OptStr("date").Trim().Date("budgets.v.date").Default(dates.TodayISO()).Get()
+	dept := v.OptStr("department").Trim().Max(40).Get()
+	cat := v.OptStr("category").Trim().Max(40).Get()
+	if err := v.Err(); err != nil {
+		return err
+	}
+	d, _ := dates.ParseISO(ds)
+	items, err := LineOptions(ctx, h.d.Pool, lang, typ, d, dept, cat)
+	if err != nil {
+		return err
+	}
+	var suggested *LineOption
+	for i := range items {
+		if items[i].Suggested {
+			suggested = &items[i]
+			break
+		}
+	}
+	return c.JSON(fiber.Map{"type": typ, "date": ds, "items": items, "suggested": suggested})
 }
 
 func (h *handler) vsActual(c *fiber.Ctx) error {
@@ -573,6 +688,7 @@ type input struct {
 }
 
 type lineIn struct {
+	Type     string
 	Category string
 	Amount   int64
 	Note     *string
@@ -596,15 +712,16 @@ func validate(v *httpx.V) input {
 	}
 	seen := map[string]bool{}
 	for i, l := range lines {
+		typ := l.OptStr("type").Trim().Upper().Default(LineExpense).OneOf(LineTypes, "budgets.v.line_type").Get()
 		cat := l.Str("category").Trim().Min(1, "budgets.v.category").Max(40).Get()
 		amt := l.Num("amount").Coerce()
 		amt.Whole("v.whole_francs").Min(0, "budgets.v.amount").Max(maxBudget, "budgets.v.amount_large")
 		note := l.NullStr("note").Trim().Max(200, "budgets.v.max_200").NilIfEmpty()
-		if cat != "" && seen[cat] {
+		if cat != "" && seen[typ+"|"+cat] {
 			v.Fail(fmt.Sprintf("lines.%d.category", i), "budgets.v.duplicate_category")
 		}
-		seen[cat] = true
-		in.Lines = append(in.Lines, lineIn{Category: cat, Amount: amt.I(), Note: note})
+		seen[typ+"|"+cat] = true
+		in.Lines = append(in.Lines, lineIn{Type: typ, Category: cat, Amount: amt.I(), Note: note})
 	}
 	if ds != "" && in.PeriodType != "" {
 		d, _ := dates.ParseISO(ds)
@@ -621,7 +738,11 @@ func checkRefs(ctx context.Context, q db.DBTX, lang i18n.Lang, in input) error {
 		fields["department"] = i18n.T(lang, "budgets.v.department")
 	}
 	for i, l := range in.Lines {
-		if ok, err := refdata.Valid(ctx, q, refdata.KindExpenseCategory, l.Category); err != nil {
+		kind := refdata.KindExpenseCategory
+		if l.Type == LineIncome {
+			kind = refdata.KindIncomeCategory
+		}
+		if ok, err := refdata.Valid(ctx, q, kind, l.Category); err != nil {
 			return err
 		} else if !ok {
 			fields[fmt.Sprintf("lines.%d.category", i)] = i18n.T(lang, "budgets.v.category")
@@ -646,27 +767,31 @@ func duplicatePeriod(ctx context.Context, q db.DBTX, lang i18n.Lang, in input, e
 	return httpx.NewKey(409, "conflict", "budgets.err.duplicate", "number", no)
 }
 
+// lineInUse: a line some expense or income is linked to is never deleted (its amount goes to 0 instead).
+const lineInUse = `(EXISTS (SELECT 1 FROM expense x WHERE x.budget_line_id = budget_line.id) OR EXISTS (SELECT 1 FROM income i WHERE i.budget_line_id = budget_line.id))`
+
 func writeLines(ctx context.Context, tx pgx.Tx, id string, lines []lineIn) error {
-	cats := make([]string, len(lines))
+	keys := make([]string, len(lines))
 	for i, l := range lines {
-		cats[i] = l.Category
-		if _, err := tx.Exec(ctx, `INSERT INTO budget_line (budget_id, category, amount, note) VALUES ($1,$2,$3,$4)
-			ON CONFLICT (budget_id, category) DO UPDATE SET amount = EXCLUDED.amount, note = EXCLUDED.note`, id, l.Category, l.Amount, l.Note); err != nil {
+		keys[i] = l.Type + "|" + l.Category
+		if _, err := tx.Exec(ctx, `INSERT INTO budget_line (budget_id, type, category, amount, note) VALUES ($1,$2,$3,$4,$5)
+			ON CONFLICT (budget_id, type, category) DO UPDATE SET amount = EXCLUDED.amount, note = EXCLUDED.note`, id, l.Type, l.Category, l.Amount, l.Note); err != nil {
 			return err
 		}
 	}
 	// removed categories: drop lines never approved; approved ones go to 0 proposed (the approved amount stays in force until re-approval)
-	if _, err := tx.Exec(ctx, `DELETE FROM budget_line WHERE budget_id = $1 AND NOT (category = ANY($2)) AND approved_amount IS NULL`, id, cats); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM budget_line WHERE budget_id = $1 AND NOT ((type || '|' || category) = ANY($2)) AND approved_amount IS NULL
+		AND NOT `+lineInUse, id, keys); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE budget_line SET amount = 0 WHERE budget_id = $1 AND NOT (category = ANY($2))`, id, cats)
+	_, err := tx.Exec(ctx, `UPDATE budget_line SET amount = 0 WHERE budget_id = $1 AND NOT ((type || '|' || category) = ANY($2))`, id, keys)
 	return err
 }
 
 func lineSnapshot(lines []lineIn) []map[string]any {
 	out := make([]map[string]any, 0, len(lines))
 	for _, l := range lines {
-		out = append(out, map[string]any{"category": l.Category, "amount": l.Amount, "note": l.Note})
+		out = append(out, map[string]any{"type": l.Type, "category": l.Category, "amount": l.Amount, "note": l.Note})
 	}
 	return out
 }
@@ -674,7 +799,9 @@ func lineSnapshot(lines []lineIn) []map[string]any {
 func sumLines(lines []lineIn) int64 {
 	var s int64
 	for _, l := range lines {
-		s += l.Amount
+		if l.Type != LineIncome {
+			s += l.Amount
+		}
 	}
 	return s
 }
@@ -770,7 +897,7 @@ func (h *handler) patch(c *fiber.Ctx) error {
 			if l.Amount == 0 && l.Approved != nil {
 				continue
 			}
-			cur = append(cur, map[string]any{"category": l.Category, "amount": l.Amount, "note": strAny(l.Note)})
+			cur = append(cur, map[string]any{"type": l.Type, "category": l.Category, "amount": l.Amount, "note": strAny(l.Note)})
 		}
 		merged := map[string]any{"name": b.Name, "department": b.Department, "periodType": b.PeriodType, "periodStart": dates.ToISO(b.Start),
 			"notes": strAny(b.Notes), "lines": cur}
@@ -813,7 +940,7 @@ func (h *handler) patch(c *fiber.Ctx) error {
 		}
 		before := []map[string]any{}
 		for _, l := range lines[id] {
-			before = append(before, map[string]any{"category": l.Category, "amount": l.Amount, "approvedAmount": l.Approved})
+			before = append(before, map[string]any{"type": l.Type, "category": l.Category, "amount": l.Amount, "approvedAmount": l.Approved})
 		}
 		sum := b.Number + " edited"
 		if b.Status == StatusApproved {
@@ -921,7 +1048,7 @@ func (h *handler) approve(c *fiber.Ctx) error {
 		if _, err := tx.Exec(ctx, `UPDATE budget_line SET approved_amount = amount WHERE budget_id = $1`, b.ID); err != nil {
 			return "", "", err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM budget_line WHERE budget_id = $1 AND amount = 0 AND approved_amount = 0`, b.ID); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM budget_line WHERE budget_id = $1 AND amount = 0 AND approved_amount = 0 AND NOT `+lineInUse, b.ID); err != nil {
 			return "", "", err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE budget SET status='APPROVED', approved_by_id=$2, approved_at=now(), reviewed_by_id=$2, reviewed_at=now(),
@@ -952,7 +1079,7 @@ func (h *handler) reject(c *fiber.Ctx) error {
 			if _, err := tx.Exec(ctx, `UPDATE budget_line SET amount = approved_amount WHERE budget_id = $1 AND approved_amount IS NOT NULL`, b.ID); err != nil {
 				return "", "", err
 			}
-			if _, err := tx.Exec(ctx, `DELETE FROM budget_line WHERE budget_id = $1 AND approved_amount IS NULL`, b.ID); err != nil {
+			if _, err := tx.Exec(ctx, `DELETE FROM budget_line WHERE budget_id = $1 AND approved_amount IS NULL AND NOT `+lineInUse, b.ID); err != nil {
 				return "", "", err
 			}
 		}

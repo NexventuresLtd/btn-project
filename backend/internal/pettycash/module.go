@@ -10,6 +10,7 @@ import (
 	"btn-ops/internal/approvals"
 	"btn-ops/internal/audit"
 	"btn-ops/internal/auth"
+	"btn-ops/internal/budgets"
 	"btn-ops/internal/cache"
 	"btn-ops/internal/dates"
 	"btn-ops/internal/db"
@@ -196,6 +197,12 @@ type Entry struct {
 	UpdatedAt       string    `json:"updatedAt"`
 	ServerVersion   int64     `json:"serverVersion"`
 	BalanceAfter    *int64    `json:"balanceAfter"`
+	// spending is an expense (source PETTY_CASH; PAYROLL for wages paid in cash): its record and budget link
+	ExpenseID        *string `json:"expenseId"`
+	ExpenseNumber    *string `json:"expenseNumber"`
+	BudgetLineID     *string `json:"budgetLineId"`
+	Unbudgeted       bool    `json:"unbudgeted"`
+	UnbudgetedReason *string `json:"unbudgetedReason"`
 }
 
 func iso(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000Z") }
@@ -228,7 +235,8 @@ func toEntry(r *entryRow, lang i18n.Lang, bal *int64) Entry {
 		Department: r.Department, Description: r.Description, FloatID: r.FloatID, PlantID: r.PlantID, PayeeName: r.PayeeName, MomoNumber: r.MomoNo,
 		Amount: r.Amount, MomoCharge: r.MomoCharge, InvoiceRef: r.InvoiceRef, Status: r.Status, SourceType: r.SourceType, SourceID: r.SourceID,
 		ReviewedAt: isoPtr(r.ReviewedAt), ReviewComment: r.ReviewComment, CreatedAt: iso(r.CreatedAt), UpdatedAt: iso(r.UpdatedAt),
-		CapturedOffline: r.DeviceID != nil, ServerVersion: r.ServerVersion}
+		CapturedOffline: r.DeviceID != nil, ServerVersion: r.ServerVersion, ExpenseID: r.ExpenseID, ExpenseNumber: r.ExpenseNo, BudgetLineID: r.BudgetLineID,
+		Unbudgeted: r.Unbudgeted != nil && *r.Unbudgeted, UnbudgetedReason: r.UnbudgetedReason}
 	if r.PID != nil {
 		e.Plant = &plantRef{ID: *r.PID, Code: deref(r.PCode), Name: deref(r.PName)}
 	}
@@ -488,8 +496,8 @@ func (h *handler) summary(c *fiber.Ctx) error {
 
 const insertSQL = `INSERT INTO "PettyCashEntry" (id, number, date, type, category, "expenseCategory", department, description, "floatId", "plantId",
 	"payeeName", "momoNumber", amount, "momoCharge", "invoiceRef", status, "createdById", "reviewedById", "reviewedAt", "reviewComment",
-	"sourceType", "sourceId", "deviceId", "createdAt", "updatedAt")
-	VALUES ($1,$2,$3,$4::"PettyCashType",$5::"PettyCashCategory",$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::"ApprovalStatus",$17,$18,$19,$20,$21,$22,$23,$24,$24)`
+	"sourceType", "sourceId", "deviceId", "createdAt", "updatedAt", "expenseId")
+	VALUES ($1,$2,$3,$4::"PettyCashType",$5::"PettyCashCategory",$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::"ApprovalStatus",$17,$18,$19,$20,$21,$22,$23,$24,$24,$25)`
 
 // floatRow is one float as stored.
 type floatRow struct {
@@ -626,7 +634,10 @@ func (h *handler) insertEntry(ctx context.Context, tx pgx.Tx, lang i18n.Lang, in
 		dev = &a.DeviceID
 	}
 	if _, err := tx.Exec(ctx, insertSQL, id, number, date, in.Type, in.Category, refCode, in.Department, in.Description, f.ID, in.PlantID,
-		in.PayeeName, in.MomoNumber, in.Amount, in.MomoCharge, in.InvoiceRef, dec.Status, a.ID, nil, reviewedAt, comment, nil, nil, dev, now); err != nil {
+		in.PayeeName, in.MomoNumber, in.Amount, in.MomoCharge, in.InvoiceRef, dec.Status, a.ID, nil, reviewedAt, comment, nil, nil, dev, now, nil); err != nil {
+		return nil, err
+	}
+	if err := applyBudget(ctx, tx, lang, id, in); err != nil {
 		return nil, err
 	}
 	row, err := getRow(ctx, tx, id)
@@ -774,6 +785,9 @@ func (h *handler) patch(c *fiber.Ctx) error {
 			"payeeName"=$7, "momoNumber"=$8, amount=$9, "momoCharge"=$10, "invoiceRef"=$11, status='SUBMITTED', "reviewedById"=NULL, "reviewedAt"=NULL,
 			"reviewComment"=NULL, "updatedAt"=$12, "expenseCategory"=$13, department=$14 WHERE id=$1`, id, d, in.Type, in.Category, in.Description, in.PlantID, in.PayeeName, in.MomoNumber,
 			in.Amount, in.MomoCharge, in.InvoiceRef, db.Now(), refCode, in.Department); err != nil {
+			return nil, err
+		}
+		if err := applyBudget(ctx, tx, lang, id, in); err != nil {
 			return nil, err
 		}
 		row, err := getRow(ctx, tx, id)
@@ -1029,7 +1043,7 @@ func PayExpense(ctx context.Context, tx pgx.Tx, lang i18n.Lang, p ExpensePayment
 	}
 	ref := strPtr(p.Reference)
 	if _, err := tx.Exec(ctx, insertSQL, id, number, p.Date, TypeExpense, enum, code, strPtr(p.Department), desc, f.ID, p.PlantID,
-		strPtr(p.Payee), nil, p.Amount, 0, ref, StatusApproved, p.ActorID, p.ActorID, now, ptr("Paid expense"), ExpenseSource, p.ExpenseID, nil, now); err != nil {
+		strPtr(p.Payee), nil, p.Amount, 0, ref, StatusApproved, p.ActorID, p.ActorID, now, ptr("Payment recorded"), ExpenseSource, p.ExpenseID, nil, now, p.ExpenseID); err != nil {
 		return EntryRef{}, err
 	}
 	row, err := getRow(ctx, tx, id)
@@ -1051,4 +1065,50 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// applyBudget stores the budget link of the expense owned by a spending voucher (created by the database mirror, migration
+// 03100): the line chosen, unbudgeted with its reason, or the suggested line, with the FIN-08 position for information.
+// Petty cash approval follows its own rules (per value; custodians never approve their own top-up), so an overrun is
+// recorded on the expense but never blocks the voucher.
+func applyBudget(ctx context.Context, tx pgx.Tx, lang i18n.Lang, voucherID string, in entryInput) error {
+	if in.Type != TypeExpense {
+		return nil
+	}
+	var xid, dept, cat string
+	var date time.Time
+	var amount int64
+	err := tx.QueryRow(ctx, `SELECT x.id, x.department, x.category, x.date, x.amount FROM "PettyCashEntry" e JOIN expense x ON x.id = e."expenseId"
+		WHERE e.id = $1 AND x.petty_cash_entry_id = e.id`, voucherID).Scan(&xid, &dept, &cat, &date, &amount)
+	if db.IsNoRows(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	chk, err := budgets.Resolve(ctx, tx, lang, budgets.Choice{LineID: in.BudgetLineID, Unbudgeted: in.Unbudgeted, Reason: in.UnbudgetedReason},
+		dept, cat, date, amount, xid)
+	if err != nil {
+		return err
+	}
+	var budgetID, lineID, reason *string
+	var remaining *int64
+	if chk.HasBudget {
+		budgetID, remaining = &chk.BudgetID, &chk.Overrun.Remaining
+	}
+	if chk.LineID != "" && chk.Mode != budgets.ModeUnbudgeted {
+		lineID = &chk.LineID
+	}
+	unb := chk.Mode == budgets.ModeUnbudgeted
+	if unb {
+		reason = in.UnbudgetedReason
+	}
+	var over int64
+	if chk.Overrun.Exceeds {
+		over = chk.Overrun.By
+	}
+	_, err = tx.Exec(ctx, `UPDATE expense SET budget_line_id = $2, budget_line_suggested = $3, unbudgeted = $4, unbudgeted_reason = $5, budget_id = $6,
+		budget_remaining = $7, overrun_amount = $8, updated_at = now() WHERE id = $1`,
+		xid, lineID, chk.Mode == budgets.ModeSuggested, unb, reason, budgetID, remaining, over)
+	return err
 }

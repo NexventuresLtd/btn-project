@@ -380,7 +380,7 @@
  "dashboard.w.deliveries.pending.description": "Orders ready to dispatch and deliveries on the road.",
  "dashboard.w.deliveries.pending.empty": "Nothing waiting to be delivered.",
  "dashboard.w.deliveries.pending.title": "Pending deliveries",
- "dashboard.w.finance.expenses.description": "Approved expenses, procurement, petty cash and wages paid, by category.",
+ "dashboard.w.finance.expenses.description": "Every expense recorded — direct, supplier invoices, petty cash and wages — by category.",
  "dashboard.w.finance.expenses.empty": "No spending recorded in this period.",
  "dashboard.w.finance.expenses.title": "Spending",
  "dashboard.w.finance.revenue.description": "Confirmed sales, payments collected and outstanding client balances.",
@@ -461,5 +461,13 @@
  "dashboard.w.transfers.pending.title": "Pending transfers",
  "dashboard.w.workforce.headcount.description": "Workers present, on half day, absent or on leave today, and who is not marked yet.",
  "dashboard.w.workforce.headcount.empty": "No active workers registered yet.",
- "dashboard.w.workforce.headcount.title": "Headcount today"
+ "dashboard.w.workforce.headcount.title": "Headcount today",
+ "dashboard.m.income": "Income recorded",
+ "dashboard.m.orderPayments": "Order payments",
+ "dashboard.m.otherIncome": "Other income",
+ "dashboard.m.unverifiedIncome": "Not yet verified",
+ "dashboard.m.net": "Net (income − expenses)",
+ "dashboard.w.finance.income.title": "Income",
+ "dashboard.w.finance.income.description": "Money received and recorded (order payments and other income) by category, and the net position.",
+ "dashboard.w.finance.income.empty": "No income recorded in this period."
 }

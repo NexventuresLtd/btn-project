@@ -45,5 +45,9 @@
   "dataexport.col.paid_at": "Paid at",
   "dataexport.col.role": "Role",
   "dataexport.col.language": "Language",
-  "dataexport.col.last_login": "Last sign-in"
+  "dataexport.col.last_login": "Last sign-in",
+  "dataexport.table.income": "Income records",
+  "dataexport.table.expenses": "Expense records",
+  "dataexport.table.income_links": "Income links",
+  "dataexport.table.expense_links": "Expense links"
 }

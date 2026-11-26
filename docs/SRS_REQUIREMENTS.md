@@ -190,6 +190,10 @@ WCAG 2.1 AA colour contrast and keyboard navigation for core screens.
 REST API: JSON over HTTPS, versioned under /api/v1, OpenAPI 3 documentation, token authentication, pagination,
 consistent error format. Sync API as above. Email: SMTP, templates for alerts and scheduled reports. Export: CSV, Excel
 and PDF generation for reports.
+Out of scope: payment gateways / bank or mobile-money integrations. The system keeps records only: every payment
+(cash, MoMo, Airtel Money, bank transfer, cheque) happens outside it and is recorded with date, method, amount and
+reference (docs/FINANCE_RECORDS_DESIGN.md). §8 mapping: Finance "C R U A" = expenses.* / income.* / budgets.* /
+pettycash.* for FM; Sales "R" of finance = income.record for order payments (no income.view).
 
 ## 10 Dashboards and scheduled reports
 Dashboards — Executive/Top Management: production vs target, sales and orders, stock position, revenue, expenses, budget

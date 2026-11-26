@@ -1,8 +1,8 @@
 import { Fragment, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { AlertTriangle, CircleDollarSign, Hourglass, PiggyBank, Plus, Scale, TrendingDown } from "lucide-react";
+import { AlertTriangle, CircleDollarSign, Hourglass, PiggyBank, Plus, Scale, TrendingDown, TrendingUp } from "lucide-react";
 import {
-  Button, Card, CardHeader, DataTable, DateInput, ErrorState, ExportMenu, PageHeader, Pagination, PdfButton, Select, Spinner, StatCard, Tabs, type Column,
+  Button, Card, CardHeader, DataTable, DateInput, ErrorState, ExportMenu, PageHeader, Pagination, PdfButton, ScrollX, Select, Spinner, StatCard, Tabs, type Column,
 } from "@/components/ui";
 import { useT } from "@/i18n";
 import { useAuth } from "@/auth/AuthProvider";
@@ -11,9 +11,9 @@ import { qs } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatDateRange, todayISO } from "@/lib/dates";
 import { formatInt, formatRWF } from "@/lib/format";
-import { BUDGET_STATUSES, PERIOD_TYPES, useBudgets, useVsActual, type Budget, type PeriodType } from "./api";
+import { BUDGET_STATUSES, PERIOD_TYPES, useBudgets, useVsActual, type Budget, type PeriodType, type VsActual } from "./api";
 import { groupByDepartment } from "./helpers";
-import { BudgetStatusBadge, UsedBar, VarianceBadge, VarianceCell } from "./components";
+import { BudgetStatusBadge, IncomeBar, UsedBar, VarianceBadge, VarianceCell } from "./components";
 import { BudgetEditor } from "./BudgetEditor";
 
 type Tab = "vs" | "list";
@@ -112,7 +112,7 @@ function VsActualTab({ params, setParam }: { params: URLSearchParams; setParam: 
             ) : !groups.length ? (
               <p className="px-5 py-12 text-center text-sm text-slate-500">{t("budgets.vs.empty")}</p>
             ) : (
-              <div className={cn("overflow-x-auto", vs.isFetching && "opacity-70 transition-opacity")}>
+              <ScrollX label={t("budgets.vs.title")} className={cn(vs.isFetching && "opacity-70 transition-opacity")}>
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-y border-line bg-slate-50/70 text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
@@ -146,10 +146,14 @@ function VsActualTab({ params, setParam }: { params: URLSearchParams; setParam: 
                           <td className="px-4 py-2.5"><VarianceBadge status={g.dept.variance.status} /></td>
                         </tr>
                         {g.rows.map((r) => (
-                          <tr key={`${r.department}|${r.category}`} className="border-t border-line text-slate-700">
+                          <tr key={`${r.department}|${r.category}|${r.unbudgeted ? "u" : ""}`} className="border-t border-line text-slate-700">
                             <td className="px-4 py-2.5 pl-8">
                               <p className="text-slate-800">{r.categoryName}</p>
                               {r.budgetId ? <Link to={`/budgets/${r.budgetId}`} className="text-xs text-navy-700 underline-offset-2 hover:underline">{r.budgetNumber}</Link> : null}
+                              {r.unbudgeted ? (
+                                <Link to={`/expenses?unbudgeted=marked&category=${encodeURIComponent(r.category)}${r.department ? `&department=${encodeURIComponent(r.department)}` : ""}&from=${d?.periodStart ?? ""}&to=${d?.periodEnd ?? ""}`}
+                                  className="mt-0.5 inline-block rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-200 hover:underline">{t("budgets.detail.markedUnbudgeted")}</Link>
+                              ) : null}
                             </td>
                             <td className="tabular px-4 py-2.5 text-right">{r.budgetId ? formatInt(r.variance.budget) : "—"}</td>
                             <td className="tabular hidden px-4 py-2.5 text-right lg:table-cell">{formatInt(r.actual.expenses)}</td>
@@ -184,12 +188,84 @@ function VsActualTab({ params, setParam }: { params: URLSearchParams; setParam: 
                     </tfoot>
                   ) : null}
                 </table>
-              </div>
+              </ScrollX>
             )}
             <p className="flex items-start gap-2 border-t border-line px-5 py-3 text-xs text-slate-500"><TrendingDown className="mt-0.5 size-3.5 shrink-0" aria-hidden />{t("budgets.vs.sources")}</p>
           </Card>
+          {d ? <IncomeSection d={d} /> : null}
         </>
       )}
+    </>
+  );
+}
+
+/** Revenue targets vs income recorded, and the net position (income − expenses) of the period. */
+function IncomeSection({ d }: { d: VsActual }) {
+  const { t } = useT();
+  const rows = d.incomeRows ?? [];
+  const it = d.incomeTotals;
+  if (!rows.length && !it?.budget && !it?.actual) return null;
+  return (
+    <>
+      <div className="my-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label={t("budgets.kpi.incomeTarget")} value={formatRWF(it?.budget ?? 0)} icon={<TrendingUp />} tone="green" />
+        <StatCard label={t("budgets.kpi.incomeReceived")} value={formatRWF(it?.actual ?? 0)} icon={<CircleDollarSign />} tone="green" footer={<IncomeBar receivedPct={it?.usedPct ?? null} received={it?.actual ?? 0} />} />
+        <StatCard label={t("budgets.kpi.netPlanned")} value={formatRWF(d.net?.planned ?? 0)} icon={<Scale />} tone={(d.net?.planned ?? 0) < 0 ? "red" : "navy"} hint={t("budgets.kpi.netPlannedHint")} />
+        <StatCard label={t("budgets.kpi.netActual")} value={formatRWF(d.net?.actual ?? 0)} icon={<Scale />} tone={(d.net?.actual ?? 0) < 0 ? "red" : "green"} hint={t("budgets.kpi.netActualHint")} />
+      </div>
+      <Card>
+        <CardHeader title={t("budgets.vs.incomeTitle")} description={t("budgets.vs.incomeDesc")} />
+        {!rows.length ? (
+          <p className="px-5 py-8 text-center text-sm text-slate-500">{t("budgets.vs.incomeEmpty")}</p>
+        ) : (
+          <ScrollX label={t("budgets.vs.incomeTitle")}>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-y border-line bg-slate-50/70 text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
+                  <th scope="col" className="px-4 py-2.5 text-left">{t("budgets.col.incomeCategory")}</th>
+                  <th scope="col" className="hidden px-4 py-2.5 text-left md:table-cell">{t("budgets.field.department")}</th>
+                  <th scope="col" className="px-4 py-2.5 text-right">{t("budgets.col.target")}</th>
+                  <th scope="col" className="px-4 py-2.5 text-right">{t("budgets.col.received")}</th>
+                  <th scope="col" className="px-4 py-2.5 text-right">{t("budgets.col.incomeVariance")}</th>
+                  <th scope="col" className="hidden px-4 py-2.5 text-left md:table-cell">{t("budgets.col.receivedPct")}</th>
+                  <th scope="col" className="px-4 py-2.5 text-left">{t("budgets.col.status")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={`${r.department}|${r.category}`} className="border-t border-line text-slate-700">
+                    <td className="px-4 py-2.5">
+                      <p className="text-slate-800">{r.categoryName}</p>
+                      {r.budgetId ? <Link to={`/budgets/${r.budgetId}`} className="text-xs text-navy-700 underline-offset-2 hover:underline">{r.budgetNumber}</Link> : null}
+                      <p className="text-xs text-slate-500 md:hidden">{r.departmentName || t("budgets.noDepartment")}</p>
+                    </td>
+                    <td className="hidden px-4 py-2.5 md:table-cell">{r.departmentName || t("budgets.noDepartment")}</td>
+                    <td className="tabular px-4 py-2.5 text-right">{r.budgetId ? formatInt(r.variance.budget) : "—"}</td>
+                    <td className="tabular px-4 py-2.5 text-right font-medium text-slate-900">{formatInt(r.variance.actual)}</td>
+                    <td className="px-4 py-2.5 text-right"><VarianceCell value={r.variance.variance} /></td>
+                    <td className="hidden px-4 py-2.5 md:table-cell"><IncomeBar receivedPct={r.variance.usedPct} received={r.variance.actual} /></td>
+                    <td className="px-4 py-2.5"><VarianceBadge status={r.variance.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+              {it ? (
+                <tfoot className="border-t-2 border-emerald-100 bg-emerald-50/50 font-semibold text-slate-900">
+                  <tr>
+                    <th scope="row" className="px-4 py-3 text-left">{t("budgets.total")}</th>
+                    <td className="hidden md:table-cell" />
+                    <td className="tabular px-4 py-3 text-right">{formatInt(it.budget)}</td>
+                    <td className="tabular px-4 py-3 text-right">{formatInt(it.actual)}</td>
+                    <td className="px-4 py-3 text-right"><VarianceCell value={it.variance} /></td>
+                    <td className="hidden px-4 py-3 md:table-cell"><IncomeBar receivedPct={it.usedPct} received={it.actual} /></td>
+                    <td className="px-4 py-3"><VarianceBadge status={it.status} /></td>
+                  </tr>
+                </tfoot>
+              ) : null}
+            </table>
+          </ScrollX>
+        )}
+        <p className="border-t border-line px-5 py-3 text-xs text-slate-500">{t("budgets.vs.incomeSources")}</p>
+      </Card>
     </>
   );
 }

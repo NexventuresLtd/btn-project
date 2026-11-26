@@ -9,7 +9,6 @@ import (
 	"btn-ops/internal/approvals"
 	"btn-ops/internal/audit"
 	"btn-ops/internal/auth"
-	"btn-ops/internal/budgets"
 	"btn-ops/internal/dates"
 	"btn-ops/internal/db"
 	"btn-ops/internal/format"
@@ -73,6 +72,12 @@ func actionsFor(u *auth.User, r *row, decisions []approvalRow) *Actions {
 			hasDecisions = true
 		}
 	}
+	a.Link = r.Status != StatusCancelled && ((own && u.Can("expenses.record")) || u.Can("expenses.approve"))
+	if managed(r.Source) { // petty cash voucher / wage sheet: decided there; receipts and links can still be added here
+		a.Attach = r.Status != StatusCancelled && (own || u.Can("expenses.approve") || u.Can("expenses.record"))
+		a.Reason = "expenses.reason.managed_" + strings.ToLower(r.Source)
+		return a
+	}
 	a.Edit = own && u.Can("expenses.record") && (r.Status == StatusRejected || (r.Status == StatusSubmitted && !hasDecisions)) && r.SourceType == nil
 	a.Cancel = open && ((own && u.Can("expenses.record")) || u.Can("expenses.approve"))
 	a.Attach = r.Status != StatusCancelled && r.Status != StatusPaid && ((own && u.Can("expenses.record")) || u.Can("expenses.approve"))
@@ -125,7 +130,7 @@ func (h *handler) create(c *fiber.Ctx) error {
 		if err := checkRefs(ctx, tx, lang, &in); err != nil {
 			return nil, err
 		}
-		return insertExpense(ctx, tx, lang, in, actor{ID: u.ID, Name: u.Name, Role: u.Role, DeviceID: ""}, "", nil, func(ai audit.Input) error {
+		return insertExpense(ctx, tx, lang, in, actor{ID: u.ID, Name: u.Name, Role: u.Role, PlantID: u.PlantID}, "", nil, func(ai audit.Input) error {
 			return audit.Record(c, tx, ai)
 		})
 	})
@@ -163,6 +168,9 @@ func (h *handler) patch(c *fiber.Ctx) error {
 		if before.SourceType != nil {
 			return nil, httpx.NewKey(409, "conflict", "expenses.err.purchase_locked")
 		}
+		if managed(before.Source) {
+			return nil, httpx.NewKey(409, "conflict", "expenses.err.managed")
+		}
 		dec, err := loadApprovals(ctx, tx, lang, id)
 		if err != nil {
 			return nil, err
@@ -179,7 +187,17 @@ func (h *handler) patch(c *fiber.Ctx) error {
 		merged := map[string]any{"date": dates.ToISO(before.Date), "category": before.Category, "department": before.Department,
 			"plantId": ptrAny(before.PlantID), "supplierId": ptrAny(before.SupplierID), "supplierName": ptrAny(before.SupplierName),
 			"paymentMethod": before.PaymentMethod, "amount": before.Amount, "description": before.Description, "reference": ptrAny(before.Reference),
-			"overrunReason": ptrAny(before.OverrunReason)}
+			"overrunReason": ptrAny(before.OverrunReason), "source": before.Source, "unbudgeted": before.Unbudgeted,
+			"unbudgetedReason": ptrAny(before.UnbudgetedReason)}
+		if before.LineID != nil && !before.LineSuggested {
+			merged["budgetLineId"] = *before.LineID
+		}
+		if _, ok := patch["budgetLineId"]; ok {
+			merged["unbudgeted"] = false
+		}
+		if ub, ok := patch["unbudgeted"].(bool); ok && ub {
+			delete(merged, "budgetLineId")
+		}
 		for k, val := range patch {
 			merged[k] = val
 		}
@@ -193,6 +211,7 @@ func (h *handler) patch(c *fiber.Ctx) error {
 				return nil, err
 			}
 		}
+		in.Links = nil // links are managed on their own endpoints after creation
 		return applyUpdate(ctx, tx, lang, before, in, u.ID, func(ai audit.Input) error { return audit.Record(c, tx, ai) })
 	})
 	if err != nil {
@@ -217,40 +236,36 @@ func applyUpdate(ctx context.Context, tx pgx.Tx, lang i18n.Lang, before *row, in
 	if err != nil {
 		return nil, err
 	}
-	chk, err := budgets.Check(ctx, tx, in.Department, in.Category, in.Date, in.Amount, id)
+	chk, err := budgetCheck(ctx, tx, lang, in, id)
 	if err != nil {
 		return nil, err
 	}
-	overStatus, overAmt, overLevels := OverrunNone, int64(0), []approvals.Level{}
-	if chk.Overrun.Exceeds {
-		if !in.ConfirmOverrun {
-			return nil, overrunError(lang, chk)
-		}
-		overStatus, overAmt, overLevels = OverrunPending, chk.Overrun.By, chk.Levels
-		if len(overLevels) == 0 {
-			overStatus = OverrunApproved
-		}
+	bf, err := applyBudget(lang, chk, in, true)
+	if err != nil {
+		return nil, err
 	}
+	overStatus, overAmt := bf.overStatus, bf.overAmt
 	status := StatusSubmitted
 	if len(levels) == 0 && overStatus != OverrunPending {
 		status = StatusApproved
 	}
-	var budgetID *string
-	var remaining *int64
-	if chk.HasBudget {
-		budgetID, remaining = &chk.BudgetID, &chk.Overrun.Remaining
-	}
+	budgetID, remaining := bf.budgetID, bf.remaining
 	lv, _ := json.Marshal(levels)
-	ol, _ := json.Marshal(overLevels)
+	ol, _ := json.Marshal(bf.overLevels)
+	if in.Source == "" {
+		in.Source = before.Source
+	}
 	// an edit restarts the approval trail (earlier decisions stay in the audit log)
 	if _, err := tx.Exec(ctx, `DELETE FROM expense_approval WHERE expense_id = $1`, id); err != nil {
 		return nil, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE expense SET date=$2, category=$3, department=$4, plant_id=$5, supplier_id=$6, supplier_name=$7, payment_method=$8,
 		amount=$9, description=$10, reference=$11, status=$12, approval_levels=$13, budget_id=$14, budget_remaining=$15, overrun_amount=$16,
-		overrun_status=$17, overrun_levels=$18, overrun_reason=$19, decided_by_id=NULL, decided_at=NULL, decision_comment=NULL, updated_at=$20 WHERE id=$1`,
+		overrun_status=$17, overrun_levels=$18, overrun_reason=$19, decided_by_id=NULL, decided_at=NULL, decision_comment=NULL, updated_at=$20,
+		source=$21, budget_line_id=$22, budget_line_suggested=$23, unbudgeted=$24, unbudgeted_reason=$25 WHERE id=$1`,
 		id, in.Date, in.Category, in.Department, in.PlantID, in.SupplierID, in.SupplierName, in.PaymentMethod, in.Amount, in.Description,
-		in.Reference, status, lv, budgetID, remaining, overAmt, overStatus, ol, in.OverrunReason, db.Now()); err != nil {
+		in.Reference, status, lv, budgetID, remaining, overAmt, overStatus, ol, in.OverrunReason, db.Now(),
+		in.Source, bf.lineID, bf.suggested, bf.unbudgeted, bf.unbudgetedWhy); err != nil {
 		return nil, err
 	}
 	after, err := getRow(ctx, tx, id, false)
@@ -505,13 +520,16 @@ func (h *handler) overrunReject(c *fiber.Ctx) error {
 	return h.reject(c)
 }
 
-func (h *handler) pay(c *fiber.Ctx) error {
+// recordPayment records that an approved expense was paid outside the system (cash, MoMo, bank, cheque …) with its
+// date, method and reference. POST /expenses/:id/record-payment (alias /pay kept one release). The system never pays.
+func (h *handler) recordPayment(c *fiber.Ctx) error {
 	ctx, lang, u := httpx.Ctx(c), httpx.Lang(c), auth.MustUser(c)
 	v, err := httpx.Body(c)
 	if err != nil {
 		return err
 	}
 	ref := v.NullStr("paymentReference").Trim().Collapse().Max(80, "expenses.v.max_80").NilIfEmpty()
+	method := v.OptStr("paymentMethod").Trim().Upper().OneOf(append([]string{""}, PaymentMethods...), "expenses.v.payment_method").Get()
 	paidOn := v.OptStr("paidOn").Trim().Date("expenses.v.date").Default(dates.TodayISO()).Get()
 	floatID := v.NullStr("floatId").Trim().Max(60).NilIfEmpty()
 	if paidOn > dates.TodayISO() {
@@ -524,7 +542,16 @@ func (h *handler) pay(c *fiber.Ctx) error {
 		if r.Status != StatusApproved {
 			return "", httpx.NewKey(409, "conflict", "expenses.err.not_approved", "status", i18n.T(lang, "expenses.status."+r.Status))
 		}
-		if r.PaymentMethod != PayCash && r.PaymentMethod != PayPettyCash && ref == nil {
+		if managed(r.Source) {
+			return "", httpx.NewKey(409, "conflict", "expenses.err.managed")
+		}
+		if method != "" && method != r.PaymentMethod {
+			if _, err := tx.Exec(ctx, `UPDATE expense SET payment_method = $2 WHERE id = $1`, r.ID, method); err != nil {
+				return "", err
+			}
+			r.PaymentMethod = method
+		}
+		if r.PaymentMethod != PayCash && r.PaymentMethod != PayPettyCash && r.PaymentMethod != PayOther && ref == nil {
 			return "", httpx.BadRequest("error.validation", map[string]string{"paymentReference": i18n.T(lang, "expenses.v.payment_reference")})
 		}
 		d, _ := dates.ParseISO(paidOn)
@@ -541,6 +568,9 @@ func (h *handler) pay(c *fiber.Ctx) error {
 			if ref == nil {
 				ref = &entry.Number
 			}
+			if _, err := tx.Exec(ctx, `UPDATE expense SET float_id = $2, petty_cash_entry_id = $3 WHERE id = $1`, r.ID, *floatID, entry.ID); err != nil {
+				return "", err
+			}
 		}
 		now := db.Now()
 		paidAt := d.Add(now.Sub(dates.MustParseISO(dates.ToISO(now))))
@@ -548,7 +578,7 @@ func (h *handler) pay(c *fiber.Ctx) error {
 			r.ID, paidAt, u.ID, ref, now); err != nil {
 			return "", err
 		}
-		return "expenses.pay", nil
+		return "expenses.record_payment", nil
 	})
 }
 

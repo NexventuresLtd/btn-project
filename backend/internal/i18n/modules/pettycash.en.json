@@ -254,5 +254,6 @@
  "pettycash.export.c_pending": "Pending entries",
  "pettycash.export.c_explanation": "Explanation",
  "pettycash.export.c_counted_by": "Counted by",
- "pettycash.export.c_comment": "Review comment"
+ "pettycash.export.c_comment": "Review comment",
+ "pettycash.v.unbudgeted_reason": "Explain why this spending is not in the budget (at least 5 characters)"
 }

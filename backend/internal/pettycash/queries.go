@@ -18,6 +18,7 @@ import (
 const effSQL = `(CASE WHEN e.type = 'DEPOSIT' THEN e.amount ELSE -(e.amount + e."momoCharge") END)`
 
 const entryFrom = ` FROM "PettyCashEntry" e
+	LEFT JOIN expense ex ON ex.id = e."expenseId"
 	LEFT JOIN petty_cash_float f ON f.id = e."floatId"
 	LEFT JOIN "Plant" p ON p.id = e."plantId"
 	LEFT JOIN "User" cu ON cu.id = e."createdById"
@@ -26,13 +27,18 @@ const entryFrom = ` FROM "PettyCashEntry" e
 const entryCols = `e.id, e.number, e.date, e.type::text, e.category::text, e.description, e."plantId", p.id, p.code, p.name,
 	e."payeeName", e."momoNumber", e.amount, e."momoCharge", e."invoiceRef", e.status::text, e."sourceType", e."sourceId",
 	e."createdById", cu.name, cu.role::text, e."reviewedById", ru.name, ru.role::text, e."reviewedAt", e."reviewComment",
-	e."createdAt", e."updatedAt", e."floatId", f.code, f.name, f.custodian_id, e."expenseCategory", e.department, e."deviceId", e.server_version`
+	e."createdAt", e."updatedAt", e."floatId", f.code, f.name, f.custodian_id, e."expenseCategory", e.department, e."deviceId", e.server_version,
+	e."expenseId", ex.number, ex.budget_line_id, ex.unbudgeted, ex.source, ex.unbudgeted_reason`
 
-// balCTE computes the running balance of every APPROVED entry up to $2, per float (one window function): the
-// balance after an entry is the cumulative effect of its float's approved entries in ledger order (date, createdAt, id).
+// The float ledger is the view petty_cash_ledger (migration 03100): top-ups in, the expenses paid out of the float
+// (their amount and status), reconciliation adjustments. Its line id is the voucher id (or the expense id for an
+// expense paid from a float without a voucher).
+
+// balCTE computes the running balance of every APPROVED ledger line up to $2, per float (one window function): the
+// balance after a line is the cumulative effect of its float's approved lines in ledger order (date, createdAt, id).
 const balCTE = `bal AS (
-	SELECT e.id, SUM(` + effSQL + `) OVER (PARTITION BY e."floatId" ORDER BY e.date, e."createdAt", e.id ROWS UNBOUNDED PRECEDING) AS b
-	FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND e.date <= $2)`
+	SELECT l.id, SUM(l.effect) OVER (PARTITION BY l.float_id ORDER BY l.date, l.created_at, l.id ROWS UNBOUNDED PRECEDING) AS b
+	FROM petty_cash_ledger l WHERE l.status = 'APPROVED' AND l.date <= $2)`
 
 type entryRow struct {
 	ID, Number           string
@@ -60,6 +66,11 @@ type entryRow struct {
 	Department           *string
 	DeviceID             *string
 	ServerVersion        int64
+	ExpenseID, ExpenseNo *string
+	BudgetLineID         *string
+	Unbudgeted           *bool
+	ExpenseSource        *string
+	UnbudgetedReason     *string
 	Bal                  *int64
 }
 
@@ -67,7 +78,8 @@ func (r *entryRow) dests(withBal bool) []any {
 	d := []any{&r.ID, &r.Number, &r.Date, &r.Type, &r.Category, &r.Description, &r.PlantID, &r.PID, &r.PCode, &r.PName,
 		&r.PayeeName, &r.MomoNo, &r.Amount, &r.MomoCharge, &r.InvoiceRef, &r.Status, &r.SourceType, &r.SourceID,
 		&r.CreatedByID, &r.CUName, &r.CURole, &r.ReviewedByID, &r.RUName, &r.RURole, &r.ReviewedAt, &r.ReviewComment,
-		&r.CreatedAt, &r.UpdatedAt, &r.FloatID, &r.FCode, &r.FName, &r.FCustodian, &r.ExpenseCategory, &r.Department, &r.DeviceID, &r.ServerVersion}
+		&r.CreatedAt, &r.UpdatedAt, &r.FloatID, &r.FCode, &r.FName, &r.FCustodian, &r.ExpenseCategory, &r.Department, &r.DeviceID, &r.ServerVersion,
+		&r.ExpenseID, &r.ExpenseNo, &r.BudgetLineID, &r.Unbudgeted, &r.ExpenseSource, &r.UnbudgetedReason}
 	if withBal {
 		d = append(d, &r.Bal)
 	}
@@ -203,16 +215,16 @@ func statusCounts(ctx context.Context, q db.DBTX, f filter) (map[string]int, err
 // ledgerTotals: opening balance before `from` and closing balance at `to` (approved only) of one float, of a set of
 // floats, or of every float (floatID "" and floats nil).
 func ledgerTotals(ctx context.Context, q db.DBTX, from, to time.Time, floatID string, floats []string) (opening, closing int64, err error) {
-	err = q.QueryRow(ctx, `SELECT COALESCE(SUM(`+effSQL+`) FILTER (WHERE e.date < $1), 0)::bigint, COALESCE(SUM(`+effSQL+`), 0)::bigint
-		FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND e.date <= $2 AND ($3 = '' OR e."floatId" = $3)
-			AND ($4::text[] IS NULL OR e."floatId" = ANY($4::text[]))`, from, to, floatID, floats).Scan(&opening, &closing)
+	err = q.QueryRow(ctx, `SELECT COALESCE(SUM(l.effect) FILTER (WHERE l.date < $1), 0)::bigint, COALESCE(SUM(l.effect), 0)::bigint
+		FROM petty_cash_ledger l WHERE l.status = 'APPROVED' AND l.date <= $2 AND ($3 = '' OR l.float_id = $3)
+			AND ($4::text[] IS NULL OR l.float_id = ANY($4::text[]))`, from, to, floatID, floats).Scan(&opening, &closing)
 	return
 }
 
 // currentBalance is the all-time approved cash balance of a float ("" = every float).
 func currentBalance(ctx context.Context, q db.DBTX, floatID string) (int64, error) {
 	var b int64
-	err := q.QueryRow(ctx, `SELECT COALESCE(SUM(`+effSQL+`), 0)::bigint FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND ($1 = '' OR e."floatId" = $1)`, floatID).Scan(&b)
+	err := q.QueryRow(ctx, `SELECT COALESCE(SUM(l.effect), 0)::bigint FROM petty_cash_ledger l WHERE l.status = 'APPROVED' AND ($1 = '' OR l.float_id = $1)`, floatID).Scan(&b)
 	return b, err
 }
 
@@ -220,9 +232,9 @@ func currentBalance(ctx context.Context, q db.DBTX, floatID string) (int64, erro
 func balanceAfter(ctx context.Context, q db.DBTX, id string, date time.Time) (*int64, error) {
 	var b *int64
 	err := q.QueryRow(ctx, `SELECT x.b FROM (
-		SELECT e.id, SUM(`+effSQL+`) OVER (ORDER BY e.date, e."createdAt", e.id ROWS UNBOUNDED PRECEDING) AS b
-		FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND e.date <= $1
-			AND e."floatId" = (SELECT "floatId" FROM "PettyCashEntry" WHERE id = $2)) x WHERE x.id = $2`, date, id).Scan(&b)
+		SELECT l.id, SUM(l.effect) OVER (ORDER BY l.date, l.created_at, l.id ROWS UNBOUNDED PRECEDING) AS b
+		FROM petty_cash_ledger l WHERE l.status = 'APPROVED' AND l.date <= $1
+			AND l.float_id = (SELECT "floatId" FROM "PettyCashEntry" WHERE id = $2)) x WHERE x.id = $2`, date, id).Scan(&b)
 	if db.IsNoRows(err) {
 		return nil, nil
 	}
@@ -291,9 +303,9 @@ func computeSummary(ctx context.Context, q db.DBTX, lang i18n.Lang, from, to tim
 		out.PlantID = &plantID
 	}
 	// 1) balances: opening, range effect, current
-	if err := q.QueryRow(ctx, `SELECT COALESCE(SUM(`+effSQL+`) FILTER (WHERE e.date < $1), 0)::bigint,
-			COALESCE(SUM(`+effSQL+`) FILTER (WHERE e.date <= $2), 0)::bigint, COALESCE(SUM(`+effSQL+`), 0)::bigint
-		FROM "PettyCashEntry" e WHERE e.status = 'APPROVED' AND ($3 = '' OR e."floatId" = $3) AND ($4::text[] IS NULL OR e."floatId" = ANY($4::text[]))`,
+	if err := q.QueryRow(ctx, `SELECT COALESCE(SUM(l.effect) FILTER (WHERE l.date < $1), 0)::bigint,
+			COALESCE(SUM(l.effect) FILTER (WHERE l.date <= $2), 0)::bigint, COALESCE(SUM(l.effect), 0)::bigint
+		FROM petty_cash_ledger l WHERE l.status = 'APPROVED' AND ($3 = '' OR l.float_id = $3) AND ($4::text[] IS NULL OR l.float_id = ANY($4::text[]))`,
 		from, to, floatID, floats).Scan(&out.Opening, &out.Closing, &out.CurrentBal); err != nil {
 		return nil, err
 	}

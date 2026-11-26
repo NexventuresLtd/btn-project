@@ -14,6 +14,7 @@ import { SyncBadge } from "@/offline/ui/SyncBadge";
 import { transferAction, TRANSFERS_KEY, useTransfer, type MovementRow, type ReceiveInput, type Shortfall, type Transfer, type TransferAction, type TransferLine } from "./api";
 import { Info, kindLabel, Route, TransferStatusBadge } from "./components";
 import { qtyProblem, RECEIPT_TYPE, validateReceipt } from "./offline";
+import { MoneyPanel } from "@/components/finance/MoneyPanel";
 
 type TextAct = "approve" | "reject" | "cancel" | "reverse";
 
@@ -92,6 +93,7 @@ export function TransferDetailPage() {
           <LinesCard tr={tr} />
           {shortfalls.length ? <ShortfallsCard items={shortfalls} /> : null}
           {movements.length ? <MovementsCard items={movements} /> : null}
+          <MoneyPanel entityType="transfer" entityId={tr.id} />
         </div>
         <div className="space-y-5">
           <ApprovalsCard tr={tr} />

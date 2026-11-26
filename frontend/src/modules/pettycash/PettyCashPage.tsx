@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDownToLine, ArrowUpDown, ArrowUpFromLine, Check, Clock, CloudOff, FileDown, Lock, Pencil, Plus, Search, Wallet, X } from "lucide-react";
+import { ArrowDownToLine, ArrowUpDown, ArrowUpFromLine, Check, Clock, CloudOff, FileDown, Lock, Pencil, Plus, Receipt, Search, Wallet, X } from "lucide-react";
 import {
   Alert, Badge, Button, Card, CardHeader, ConfirmDialog, DataTable, ErrorState, Field, FilterBar, Input, Modal, PageHeader, Pagination, ExportMenu, PdfButton,
   Select, StatCard, StatusBadge, Tabs, Textarea, useFilters, type Column,
@@ -121,7 +121,13 @@ export function PettyCashPage() {
             {e.capturedOffline ? <Badge tone="slate"><CloudOff className="size-3" />{t("pettycash.capturedOffline")}</Badge> : null}
             {e.readOnly ? <Badge tone="purple"><Lock className="size-3" />{t("pettycash.badge.payroll")}</Badge> : null}
             {e.invoiceRef ? <span className="text-xs text-slate-500">{t("pettycash.invoiceShort", { ref: e.invoiceRef })}</span> : null}
+            {e.type === "EXPENSE" && e.unbudgeted ? <Badge tone="amber">{t("pettycash.badge.unbudgeted")}</Badge> : null}
           </div>
+          {e.expenseId ? (
+            <Link to={`/expenses/${e.expenseId}`} onClick={(ev) => ev.stopPropagation()} className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-navy-700 hover:underline">
+              <Receipt className="size-3" aria-hidden />{t("pettycash.expenseLink", { number: e.expenseNumber ?? "" })}
+            </Link>
+          ) : null}
           <p className="mt-1 text-xs text-slate-500 md:hidden">{[e.payeeName, e.momoNumber].filter(Boolean).join(" · ")}</p>
         </div>
       ),
@@ -257,6 +263,23 @@ export function PettyCashPage() {
         ) : null}
       </div>
       {!seesAll && !ownFloats.length && !floatsQ.isLoading ? <div className="mb-5"><Alert tone="blue">{t("pettycash.float.noneAssigned")}</Alert></div> : null}
+      {focused.data && !approving ? (
+        <Card className="mb-5 border-navy-100">
+          <CardHeader title={t("pettycash.focus.title", { number: focused.data.number })}
+            actions={<Button size="icon" variant="ghost" aria-label={t("common.close")} title={t("common.close")} onClick={() => setParam({ entry: undefined }, true)}><X className="size-4" /></Button>} />
+          <div className="space-y-3 px-5 pb-5">
+            <EntrySummary e={focused.data} />
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <StatusBadge status={focused.data.status} />
+              {focused.data.expenseId ? (
+                <Link to={`/expenses/${focused.data.expenseId}`} className="inline-flex items-center gap-1 font-medium text-navy-700 hover:underline">
+                  <Receipt className="size-3.5" aria-hidden />{t("pettycash.expenseLink", { number: focused.data.expenseNumber ?? "" })}
+                </Link>
+              ) : focused.data.type === "DEPOSIT" ? <span className="text-slate-500">{t("pettycash.form.topUpIsTransfer")}</span> : null}
+            </div>
+          </div>
+        </Card>
+      ) : null}
 
       {summary.isError ? (
         <Card className="mb-5"><ErrorState error={summary.error} retry={() => summary.refetch()} /></Card>

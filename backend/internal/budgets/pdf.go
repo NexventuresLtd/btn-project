@@ -14,9 +14,9 @@ func fi(v int64) string { return format.Int(float64(v)) }
 
 func statusTone(s string) pdf.Tone {
 	switch s {
-	case "over", "unbudgeted":
+	case "over", "unbudgeted", "behind":
 		return pdf.Red
-	case "warning":
+	case "warning", "on_track", "unplanned":
 		return pdf.Amber
 	}
 	return pdf.Green
@@ -56,7 +56,11 @@ func (h *handler) vsActualPDF(c *fiber.Ctx) error {
 	})
 	var rows [][]any
 	for _, x := range r.Rows {
-		rows = append(rows, []any{x.DepartmentName, x.CategoryName, fi(x.Variance.Budget), fi(x.Actual.Expenses), fi(x.Actual.Procurement),
+		cat := x.CategoryName
+		if x.Unbudgeted {
+			cat += " (" + t("budgets.unbudgeted_marked") + ")"
+		}
+		rows = append(rows, []any{x.DepartmentName, cat, fi(x.Variance.Budget), fi(x.Actual.Expenses), fi(x.Actual.Procurement),
 			fi(x.Actual.PettyCash), fi(x.Actual.Payroll), fi(x.Variance.Actual), fi(x.Variance.Variance), pctStr(x.Variance.UsedPct), fi(x.Variance.Pending),
 			pdf.B(t("budgets.vstatus."+x.Variance.Status), statusTone(x.Variance.Status))})
 	}
@@ -70,6 +74,18 @@ func (h *handler) vsActualPDF(c *fiber.Ctx) error {
 		{Header: t("budgets.pdf.c_status"), Width: 1.1},
 	}, rows, []any{t("budgets.pdf.total"), "", fi(r.Totals.Budget), fi(a.Expenses), fi(a.Procurement), fi(a.PettyCash), fi(a.Payroll), fi(r.Totals.Actual),
 		fi(r.Totals.Variance), pctStr(r.Totals.UsedPct), fi(r.Totals.Pending), ""}, t("budgets.pdf.none"))
+	var irows [][]any
+	for _, x := range r.IncomeRows {
+		irows = append(irows, []any{x.DepartmentName, x.CategoryName, fi(x.Variance.Budget), fi(x.Variance.Actual), fi(x.Variance.Variance), pctStr(x.Variance.UsedPct),
+			pdf.B(t("budgets.vstatus."+x.Variance.Status), statusTone(x.Variance.Status))})
+	}
+	rep.Section(t("budgets.pdf.s_income")).Table([]pdf.Column{{Header: t("budgets.pdf.c_department"), Width: 1.5}, {Header: t("budgets.pdf.c_category"), Width: 1.7},
+		{Header: t("budgets.pdf.c_target"), Width: 1.2, Align: pdf.Right}, {Header: t("budgets.pdf.c_received"), Width: 1.2, Align: pdf.Right},
+		{Header: t("budgets.pdf.c_variance"), Width: 1.2, Align: pdf.Right}, {Header: t("budgets.pdf.c_achieved"), Width: 0.8, Align: pdf.Right},
+		{Header: t("budgets.pdf.c_status"), Width: 1.1}}, irows,
+		[]any{t("budgets.pdf.total"), "", fi(r.Income.Budget), fi(r.Income.Actual), fi(r.Income.Variance), pctStr(r.Income.UsedPct), ""}, t("budgets.pdf.none"))
+	rep.KpiRow([]pdf.Kpi{{Label: t("budgets.pdf.k_net_planned"), Value: format.RWF(float64(r.Net.Planned))},
+		{Label: t("budgets.pdf.k_net_actual"), Value: format.RWF(float64(r.Net.Actual))}})
 	var drows [][]any
 	for _, x := range r.Departments {
 		drows = append(drows, []any{x.DepartmentName, fi(x.Variance.Budget), fi(x.Variance.Actual), fi(x.Variance.Variance), pctStr(x.Variance.UsedPct),
@@ -107,13 +123,22 @@ func (h *handler) budgetPDF(c *fiber.Ctx) error {
 		{Label: t("budgets.pdf.k_actual"), Value: format.RWF(float64(b.Totals.Actual)), Hint: pctStr(b.Totals.UsedPct)},
 		{Label: t("budgets.pdf.k_variance"), Value: format.RWF(float64(b.Totals.Variance))},
 		{Label: t("budgets.pdf.k_pending"), Value: format.RWF(float64(b.Totals.Pending))}})
-	var rows [][]any
+	var rows, irows [][]any
 	for _, l := range b.Lines {
 		appr := "—"
 		if l.ApprovedAmount != nil {
 			appr = fi(*l.ApprovedAmount)
 		}
-		rows = append(rows, []any{l.CategoryName, fi(l.Amount), appr, fi(l.Variance.Actual), fi(l.Variance.Variance), pctStr(l.Variance.UsedPct),
+		if l.Type == LineIncome {
+			irows = append(irows, []any{l.CategoryName, fi(l.Amount), appr, fi(l.Variance.Actual), fi(l.Variance.Variance), pctStr(l.Variance.UsedPct),
+				pdf.B(t("budgets.vstatus."+l.Variance.Status), statusTone(l.Variance.Status))})
+			continue
+		}
+		cat := l.CategoryName
+		if l.Unbudgeted {
+			cat += " (" + t("budgets.unbudgeted_marked") + ")"
+		}
+		rows = append(rows, []any{cat, fi(l.Amount), appr, fi(l.Variance.Actual), fi(l.Variance.Variance), pctStr(l.Variance.UsedPct),
 			fi(l.Variance.Pending), pdf.B(t("budgets.vstatus."+l.Variance.Status), statusTone(l.Variance.Status))})
 	}
 	rep.Section(t("budgets.pdf.s_lines")).Table([]pdf.Column{{Header: t("budgets.pdf.c_category"), Width: 2}, {Header: t("budgets.pdf.c_proposed"), Width: 1.2, Align: pdf.Right},
@@ -121,6 +146,15 @@ func (h *handler) budgetPDF(c *fiber.Ctx) error {
 		{Header: t("budgets.pdf.c_variance"), Width: 1.2, Align: pdf.Right}, {Header: t("budgets.pdf.c_used"), Width: 0.8, Align: pdf.Right},
 		{Header: t("budgets.pdf.c_pending"), Width: 1, Align: pdf.Right}, {Header: t("budgets.pdf.c_status"), Width: 1.1}},
 		rows, []any{t("budgets.pdf.total"), "", fi(b.Totals.Budget), fi(b.Totals.Actual), fi(b.Totals.Variance), pctStr(b.Totals.UsedPct), fi(b.Totals.Pending), ""}, t("budgets.pdf.none"))
+	if len(irows) > 0 {
+		rep.Section(t("budgets.pdf.s_income")).Table([]pdf.Column{{Header: t("budgets.pdf.c_category"), Width: 2}, {Header: t("budgets.pdf.c_proposed"), Width: 1.2, Align: pdf.Right},
+			{Header: t("budgets.pdf.c_approved"), Width: 1.2, Align: pdf.Right}, {Header: t("budgets.pdf.c_received"), Width: 1.2, Align: pdf.Right},
+			{Header: t("budgets.pdf.c_variance"), Width: 1.2, Align: pdf.Right}, {Header: t("budgets.pdf.c_achieved"), Width: 0.8, Align: pdf.Right},
+			{Header: t("budgets.pdf.c_status"), Width: 1.1}}, irows,
+			[]any{t("budgets.pdf.total"), "", fi(b.IncomeTotals.Budget), fi(b.IncomeTotals.Actual), fi(b.IncomeTotals.Variance), pctStr(b.IncomeTotals.UsedPct), ""}, t("budgets.pdf.none"))
+		rep.KpiRow([]pdf.Kpi{{Label: t("budgets.pdf.k_net_planned"), Value: format.RWF(float64(b.Net.Planned))},
+			{Label: t("budgets.pdf.k_net_actual"), Value: format.RWF(float64(b.Net.Actual))}})
+	}
 	if b.Notes != nil {
 		rep.Note(*b.Notes)
 	}

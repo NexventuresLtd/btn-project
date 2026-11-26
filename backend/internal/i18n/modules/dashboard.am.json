@@ -380,7 +380,7 @@
  "dashboard.w.deliveries.pending.description": "ለመላክ ዝግጁ የሆኑ ትዕዛዞች እና በመንገድ ላይ ያሉ ማድረሻዎች።",
  "dashboard.w.deliveries.pending.empty": "የሚደርስ ምንም ነገር የለም።",
  "dashboard.w.deliveries.pending.title": "በመጠባበቅ ላይ ያሉ ማድረሻዎች",
- "dashboard.w.finance.expenses.description": "የጸደቁ ወጪዎች፣ ግዥ፣ አነስተኛ ገንዘብ እና የተከፈለ ደመወዝ፣ በምድብ።",
+ "dashboard.w.finance.expenses.description": "እያንዳንዱ የተመዘገበ ወጪ — ቀጥተኛ፣ የአቅራቢ ደረሰኞች፣ ጥቃቅን ወጪና ደመወዝ — በምድብ።",
  "dashboard.w.finance.expenses.empty": "በዚህ ወቅት የተመዘገበ ወጪ የለም።",
  "dashboard.w.finance.expenses.title": "ወጪ",
  "dashboard.w.finance.revenue.description": "የተረጋገጡ ሽያጮች፣ የተሰበሰቡ ክፍያዎች እና ያልተከፈሉ የደንበኞች ቀሪ ሂሳቦች።",
@@ -461,5 +461,13 @@
  "dashboard.w.transfers.pending.title": "በመጠባበቅ ላይ ያሉ ዝውውሮች",
  "dashboard.w.workforce.headcount.description": "ዛሬ የተገኙ፣ ግማሽ ቀን የሠሩ፣ የቀሩ ወይም በፈቃድ ላይ ያሉ ሠራተኞች፣ እና እስካሁን ያልተመዘገቡት።",
  "dashboard.w.workforce.headcount.empty": "እስካሁን የተመዘገበ ንቁ ሠራተኛ የለም።",
- "dashboard.w.workforce.headcount.title": "የዛሬ የሠራተኛ ቁጥር"
+ "dashboard.w.workforce.headcount.title": "የዛሬ የሠራተኛ ቁጥር",
+ "dashboard.m.income": "የተመዘገበ ገቢ",
+ "dashboard.m.orderPayments": "የትዕዛዝ ክፍያዎች",
+ "dashboard.m.otherIncome": "ሌላ ገቢ",
+ "dashboard.m.unverifiedIncome": "ገና ያልተረጋገጠ",
+ "dashboard.m.net": "የተጣራ (ገቢ − ወጪ)",
+ "dashboard.w.finance.income.title": "ገቢ",
+ "dashboard.w.finance.income.description": "የተቀበለና የተመዘገበ ገንዘብ (የትዕዛዝ ክፍያዎችና ሌላ ገቢ) በምድብ፣ እና የተጣራ አቋም።",
+ "dashboard.w.finance.income.empty": "በዚህ ጊዜ ምንም ገቢ አልተመዘገበም።"
 }

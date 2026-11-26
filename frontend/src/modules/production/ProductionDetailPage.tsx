@@ -18,6 +18,7 @@ import { OfflineLockedError, useConnectivity, useOfflineMutation } from "@/offli
 import { useReport, type ReportDetail, type ReportLine } from "./api";
 import { FLAG_TYPE, NOTE_TYPE, type FlagPayload, type NotePayload } from "./offline";
 import { ProductionNav } from "./ProductionNav";
+import { MoneyPanel } from "@/components/finance/MoneyPanel";
 
 const HISTORY_ICON: Record<string, { icon: typeof CircleDot; tone: string; label?: string }> = {
   "production.create": { icon: FilePen, tone: "bg-slate-100 text-slate-600", label: "production.history.create" },
@@ -308,6 +309,7 @@ function Detail({ r }: { r: ReportDetail }) {
               </ul>
             </Card>
           ) : null}
+          <MoneyPanel entityType="production_report" entityId={r.id} />
         </div>
 
         <Card className="h-fit">

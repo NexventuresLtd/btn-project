@@ -12,3 +12,4 @@ import "@/modules/sales/offline";
 import "@/modules/transfers/offline";
 import "@/modules/pettycash/offline";
 import "@/modules/expenses/offline";
+import "@/modules/income/offline";

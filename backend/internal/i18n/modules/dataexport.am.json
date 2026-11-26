@@ -45,5 +45,9 @@
   "dataexport.col.paid_at": "የተከፈለበት",
   "dataexport.col.role": "ሚና",
   "dataexport.col.language": "ቋንቋ",
-  "dataexport.col.last_login": "የመጨረሻ መግቢያ"
+  "dataexport.col.last_login": "የመጨረሻ መግቢያ",
+  "dataexport.table.income": "የገቢ መዝገቦች",
+  "dataexport.table.expenses": "የወጪ መዝገቦች",
+  "dataexport.table.income_links": "የገቢ ትስስሮች",
+  "dataexport.table.expense_links": "የወጪ ትስስሮች"
 }

@@ -9,7 +9,11 @@ import (
 	"btn-ops/internal/app/apptest"
 	"btn-ops/internal/auth"
 	"btn-ops/internal/dates"
+	"btn-ops/internal/db"
+	"btn-ops/internal/expenses"
 	"btn-ops/internal/testutil"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func TestMain(m *testing.M) { testutil.Main(m) }
@@ -98,6 +102,15 @@ func TestBudgetLifecycleAndPermissions(t *testing.T) {
 	}
 	if _, err := e.Pool.Exec(t.Context(), `INSERT INTO "PayrollLine" (id, "periodId", "workerId", "dailyWage", "daysWorked", "grossAmount", "netAmount")
 		VALUES (gen_random_uuid()::text, $1, $2, 5000, 6, 30000, 28000)`, period, worker); err != nil {
+		t.Fatal(err)
+	}
+	// recording the wage sheet payment records a PAYROLL expense (what payroll does on /record-payment)
+	if err := db.Tx(t.Context(), e.Pool, func(tx pgx.Tx) error {
+		_, err := expenses.CreateRecorded(t.Context(), tx, expenses.RecordedExpense{Source: expenses.SrcPayroll, Date: dates.MustParseISO(dates.TodayISO()),
+			Category: "WAGES", Department: "PRODUCTION", PlantID: &plant, PaymentMethod: expenses.PayMomo, Amount: 28_000, Description: "Wages WS-1",
+			PayrollPeriodID: &period, ActorID: fm.ID, Links: []expenses.LinkSpec{{Type: "worker", ID: worker, Label: "Aline Uwase"}}})
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
 	_, va := call(e, "GET", "/api/budgets/vs-actual?periodType=QUARTER", nil, pm)

@@ -48,11 +48,12 @@ const (
 	KindClientType       = "client_type"
 	KindPaymentTerm      = "payment_term"
 	KindDeliveryZone     = "delivery_zone"
+	KindIncomeCategory   = "income_category"
 )
 
 // Kinds in admin tab order.
 var Kinds = []string{KindDefectReason, KindExceptionFlag, KindUnit, KindProductCategory, KindMaterialCategory,
-	KindExpenseCategory, KindDepartment, KindClientType, KindPaymentTerm, KindDeliveryZone}
+	KindExpenseCategory, KindIncomeCategory, KindDepartment, KindClientType, KindPaymentTerm, KindDeliveryZone}
 
 // KnownKind reports whether k is a reference-data kind.
 func KnownKind(k string) bool {

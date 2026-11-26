@@ -62,6 +62,18 @@ var Defaults = map[string][]Default{
 		{"OFFICE", "Office", "ቢሮ", "Ibiro", "Bureau", map[string]any{"pettyCash": "OFFICE"}},
 		{"OTHER", "Other", "ሌላ", "Ibindi", "Autre", map[string]any{"pettyCash": "OTHER"}},
 	},
+	// Income (money in, docs/FINANCE_RECORDS_DESIGN.md §3). Also seeded by migration 03100.
+	KindIncomeCategory: {
+		{"SALES", "Sales of products", "የምርት ሽያጭ", "Igurisha ry'ibicuruzwa", "Ventes de produits", nil},
+		{"DEPOSIT", "Customer deposits", "የደንበኛ ቅድመ ክፍያ", "Avansi z'abakiriya", "Acomptes clients", nil},
+		{"DELIVERY_CHARGE", "Delivery charges collected", "የተሰበሰበ የማድረሻ ክፍያ", "Amafaranga y'ubwikorezi yakiriwe", "Frais de livraison encaissés", nil},
+		{"SCRAP_SALES", "Sale of scrap and waste", "የቁርጥራጭና ቆሻሻ ሽያጭ", "Igurisha ry'ibisigazwa", "Vente de rebuts et déchets", nil},
+		{"RENTAL", "Rental income", "የኪራይ ገቢ", "Amafaranga y'ubukode", "Revenus locatifs", nil},
+		{"REFUND_RECEIVED", "Refunds received", "የተመለሰ ገንዘብ", "Amafaranga yasubijwe", "Remboursements reçus", nil},
+		{"GRANT", "Grants", "ድጎማ", "Inkunga", "Subventions", nil},
+		{"INTEREST", "Interest received", "የተገኘ ወለድ", "Inyungu yakiriwe", "Intérêts reçus", nil},
+		{"OTHER", "Other income", "ሌላ ገቢ", "Andi mafaranga yinjiye", "Autres revenus", nil},
+	},
 	KindDepartment: {
 		{"PRODUCTION", "Production", "ምርት", "Umusaruro", "Production", nil},
 		{"SALES", "Sales", "ሽያጭ", "Ubucuruzi", "Ventes", nil},

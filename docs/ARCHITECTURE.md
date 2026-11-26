@@ -49,6 +49,21 @@ PDF toolkit, i18n keys, test helpers) are in **`backend/README.md`**.
   manual edits stay possible and differences are highlighted).
 - **Document numbers** come from `seq.NextNumber(ctx, tx, "SO-2026")` inside the creating transaction.
 
+## Finance records (record-keeping principle)
+
+- **The system keeps records; it never moves money.** There is no payment gateway and none is planned. Every
+  payment (cash, MTN MoMo, Airtel Money, bank transfer, cheque) happens outside the system and is *recorded* here with
+  its date, method, amount, reference and who recorded it; every report is built from these records. Wording follows
+  this everywhere ("Record payment", "Payment recorded", "Record wage payments"), never "Pay". Spec:
+  `docs/FINANCE_RECORDS_DESIGN.md`.
+- Two record types cover all money: **Income** (`income`, money in — order payments are income with source
+  ORDER_PAYMENT, `"Payment"` is a view over them) and **Expense** (`expense`, money out — sources DIRECT, PETTY_CASH,
+  PROCUREMENT, PAYROLL, OTHER). Petty cash is a source of funds: every spending voucher owns a PETTY_CASH expense (DB
+  trigger, migration 03100) and the float balance is the view `petty_cash_ledger` (top-ups in, float expenses out).
+- Each expense carries an explicit budget line (suggested on entry, or *unbudgeted* with a reason); budget lines are
+  EXPENSE or INCOME (revenue targets). Expenses and income link to any record (`expense_link` / `income_link` + typed
+  FKs); each record's detail page shows a "Money" panel (`GET /api/finance/money`).
+
 ## Roles & access
 
 - Role → permission matrix in `backend/internal/auth/permissions.go`; the signed-in user's permission

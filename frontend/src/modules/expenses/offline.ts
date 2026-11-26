@@ -2,13 +2,14 @@
  * Expenses as an offline record type (SRS §5.2 "Petty cash and expense entries — Create; queued; approval requires
  * online"). Server handler: backend/internal/expenses/sync.go. The client uuid becomes the expense id on the server,
  * so the pulled copy replaces the local one. Receipts and the budget check happen online (an offline expense that
- * exceeds its budget is accepted with the overrun flagged for budgets.approve).
+ * exceeds its budget is accepted with the overrun flagged for budgets.approve). The payload carries the budget link
+ * (budgetLineId | unbudgeted + reason; neither = the suggested line) and the links collected in the form.
  */
 import { tr, trx } from "@/i18n";
 import { formatDate, todayISO } from "@/lib/dates";
 import { formatRWF } from "@/lib/format";
 import { registerOfflineRecordType } from "@/offline/core/registry";
-import { EXP_KEY, PAYMENT_METHODS, type ExpensePayload, type ExpenseStatus } from "./api";
+import { ENTRY_SOURCES, EXP_KEY, PAYMENT_METHODS, type ExpensePayload, type ExpenseStatus } from "./api";
 
 export const EXPENSE_TYPE = "expense";
 
@@ -44,6 +45,14 @@ export function expenseErrors(p: ExpensePayload, today = todayISO()): Partial<Re
   if (!p.supplierId && !p.supplierName?.trim() && p.paymentMethod !== "CASH" && p.paymentMethod !== "PETTY_CASH") e.supplierName = "expenses.v.supplier";
   if ((p.supplierName ?? "").length > 160) e.supplierName = "expenses.v.max160";
   if ((p.reference ?? "").length > 80) e.reference = "expenses.v.max80";
+  if (p.source !== undefined && !(ENTRY_SOURCES as readonly string[]).includes(p.source)) e.source = "expenses.v.source";
+  if (p.unbudgeted) {
+    const r = (p.unbudgetedReason ?? "").trim();
+    if (r.length < 5) e.unbudgetedReason = "expenses.v.unbudgetedReason";
+    else if (r.length > 500) e.unbudgetedReason = "expenses.v.max500";
+    if (p.budgetLineId) e.budgetLineId = "expenses.v.lineOrUnbudgeted";
+  }
+  if ((p.links?.length ?? 0) > 20) e.links = "expenses.v.linksMax";
   return e;
 }
 
@@ -59,7 +68,7 @@ registerOfflineRecordType<ExpensePayload, LocalExpense>({
   permission: "expenses.record",
   date: (p) => p.date,
   validate: (p) => validateExpense(p),
-  describe: (p) => `${formatDate(p.date)} · ${formatRWF(p.amount)} · ${p.description}${p.supplierName ? ` · ${p.supplierName}` : ""}`,
+  describe: (p) => `${formatDate(p.date)} · ${formatRWF(p.amount)} · ${p.description}${p.supplierName ? ` · ${p.supplierName}` : ""}${p.unbudgeted ? ` · ${tr("expenses.origin.unbudgeted")}` : ""}`,
   fields: [
     { name: "date", kind: "date", label: () => tr("expenses.field.date") },
     { name: "amount", kind: "number", label: () => tr("expenses.field.amount") },
@@ -67,6 +76,7 @@ registerOfflineRecordType<ExpensePayload, LocalExpense>({
     { name: "supplierName", kind: "text", label: () => tr("expenses.field.supplier") },
     { name: "reference", kind: "text", label: () => tr("expenses.field.reference") },
     { name: "paymentMethod", kind: "select", label: () => tr("expenses.field.method"), options: () => PAYMENT_METHODS.map((m) => ({ value: m, label: trx(`expenses.method.${m}`) })) },
+    { name: "unbudgetedReason", kind: "text", label: () => tr("expenses.field.unbudgetedReason") },
   ],
   invalidate: [EXP_KEY],
   pull: {
@@ -79,6 +89,8 @@ registerOfflineRecordType<ExpensePayload, LocalExpense>({
       supplierId: (d.supplierId as string | null) ?? null, supplierName: (d.supplierName as string | null) ?? null,
       paymentMethod: (d.paymentMethod as ExpensePayload["paymentMethod"]) ?? "CASH", amount: Number(d.amount ?? 0), description: String(d.description ?? ""),
       reference: (d.reference as string | null) ?? null, decisionComment: (d.decisionComment as string | null) ?? null,
+      source: d.source === "OTHER" ? "OTHER" : "DIRECT", budgetLineId: (d.budgetLineId as string | null) ?? null, unbudgeted: !!d.unbudgeted,
+      unbudgetedReason: (d.unbudgetedReason as string | null) ?? null,
     }),
   },
 });

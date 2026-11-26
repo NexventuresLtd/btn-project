@@ -13,6 +13,7 @@ import (
 	"btn-ops/internal/db"
 	"btn-ops/internal/format"
 	"btn-ops/internal/httpx"
+	"btn-ops/internal/income"
 	"btn-ops/internal/notify"
 	"btn-ops/internal/seq"
 
@@ -963,6 +964,7 @@ func (h *handler) addPayment(c *fiber.Ctx) error {
 		return err
 	}
 	invalidate()
+	income.Invalidate()
 	return h.respondSale(c, r, saleID, 201, nil)
 }
 

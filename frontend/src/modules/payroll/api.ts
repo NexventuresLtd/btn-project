@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { get, patch, post, put, qs } from "@/lib/api";
 
 export type PayrollStatus = "DRAFT" | "PREPARED" | "CHECKED" | "VERIFIED" | "AUTHORIZED" | "PAID";
+/** "pay" = record the wage payments made outside the system (POST …/record-payment); the system never pays. */
 export type PayrollStep = "prepare" | "check" | "verify" | "authorize" | "pay";
 
 export const PAYROLL_KEY = ["payroll"] as const;
@@ -300,13 +301,13 @@ export const calculatePeriod = (id: string) => post<PeriodDetail>(`/payroll/peri
 export const advance = ({ id, step }: { id: string; step: Exclude<PayrollStep, "pay"> }) => post<PeriodDetail>(`/payroll/periods/${id}/${step}`);
 export const returnToDraft = ({ id, comment }: { id: string; comment: string }) => post<PeriodDetail>(`/payroll/periods/${id}/return`, { comment });
 
-export interface PayResult {
+export interface RecordPaymentsResult {
   period: PeriodDetail;
   pettyCash: { created: number; amount: number };
   warning?: string;
 }
 
-export interface PayPayload {
+export interface RecordPaymentsPayload {
   id: string;
   method: PaymentMethod;
   paidOn: string;
@@ -314,7 +315,9 @@ export interface PayPayload {
   paymentRefs: { lineId: string; ref: string; method?: PaymentMethod }[];
 }
 
-export const payPeriod = ({ id, ...body }: PayPayload) => post<PayResult>(`/payroll/periods/${id}/pay`, body as unknown as Record<string, unknown>);
+/** Record the wage payments of an authorised sheet (made outside the system by MoMo, cash or bank). Creates the PAYROLL
+ * expense(s) — or petty cash vouchers, which are expenses — linked to the period and to every worker paid. */
+export const recordWagePayments = ({ id, ...body }: RecordPaymentsPayload) => post<RecordPaymentsResult>(`/payroll/periods/${id}/record-payment`, body as unknown as Record<string, unknown>);
 
 // ───────────────────────────── Wage maths (mirrors backend calc.ts) ─────────────────────────────
 

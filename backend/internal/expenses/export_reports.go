@@ -19,7 +19,9 @@ func init() {
 				col("overrunStatus", "expenses.export.overrun_status", export.Text), col("source", "expenses.pdf.c_source", export.Text),
 				col("receipts", "expenses.export.receipts", export.Int), col("createdBy", "expenses.export.created_by", export.Text),
 				col("decidedAt", "expenses.export.decided_at", export.DateTime), col("paidAt", "expenses.export.paid_at", export.DateTime),
-				col("paymentReference", "expenses.export.payment_reference", export.Text))
+				col("paymentReference", "expenses.export.payment_reference", export.Text), col("origin", "expenses.pdf.c_origin", export.Text),
+				col("budgetLine", "expenses.pdf.c_budget_line", export.Text), col("unbudgetedReason", "expenses.export.unbudgeted_reason", export.Text),
+				col("float", "expenses.pdf.c_float", export.Text), col("links", "expenses.export.links", export.Int))
 			for _, it := range j.Arr("items") {
 				src := ""
 				if it.Exists("source") {
@@ -28,7 +30,8 @@ func init() {
 				b.Row(it.V("number"), it.V("date"), it.V("categoryName"), it.V("departmentName"), it.V("plant.code"), it.V("supplierName"),
 					it.V("description"), b.T("expenses.method."+it.S("paymentMethod")), it.V("reference"), it.V("amount"),
 					b.T("expenses.status."+it.S("status")), it.V("budget.overrunAmount"), b.T("expenses.overrun."+it.S("budget.overrunStatus")), src,
-					it.V("attachmentCount"), it.V("createdBy.name"), it.V("decidedAt"), it.V("paidAt"), it.V("paymentReference"))
+					it.V("attachmentCount"), it.V("createdBy.name"), it.V("decidedAt"), it.V("paidAt"), it.V("paymentReference"),
+					b.T("expenses.src."+it.S("origin")), budgetLineLabel(b, it), it.V("budget.unbudgetedReason"), it.V("float.number"), it.V("linkCount"))
 			}
 		}})
 	export.Register(export.Report{Path: "/expenses/summary", Name: "expenses-summary", Title: "expenses.export.summary_title",
@@ -40,11 +43,26 @@ func init() {
 			b.Row(b.T("expenses.export.totals"), b.T("expenses.pdf.k_unpaid"), nil, j.V("unpaid"))
 			b.Row(b.T("expenses.export.totals"), b.T("expenses.pdf.k_pending"), j.V("pendingCount"), j.V("pending"))
 			b.Row(b.T("expenses.export.totals"), b.T("expenses.pdf.k_procurement"), nil, j.V("procurement"))
+			b.Row(b.T("expenses.export.totals"), b.T("expenses.pdf.k_unbudgeted"), j.V("unbudgetedCount"), j.V("unbudgeted"))
 			for _, g := range []struct{ key, label string }{{"byCategory", "expenses.pdf.s_category"}, {"byDepartment", "expenses.pdf.s_department"},
-				{"byMethod", "expenses.pdf.s_method"}, {"bySite", "expenses.pdf.c_site"}} {
+				{"byMethod", "expenses.pdf.s_method"}, {"bySite", "expenses.pdf.c_site"}, {"bySource", "expenses.pdf.s_source"},
+				{"byBudgetLine", "expenses.pdf.s_budget_line"}, {"bySupplier", "expenses.pdf.s_supplier"}, {"byLinkedType", "expenses.pdf.s_linked"}} {
 				for _, r := range j.Arr(g.key) {
 					b.Row(b.T(g.label), r.V("name"), r.V("count"), r.V("amount"))
 				}
+			}
+		}})
+	export.Register(export.Report{Path: "/expenses/unbudgeted", Name: "unbudgeted-spending", Title: "expenses.export.unbudgeted_title",
+		Build: func(b *export.Builder, j export.J) {
+			b.Columns(col("date", "expenses.pdf.c_date", export.Date), col("number", "expenses.pdf.c_number", export.Text),
+				col("category", "expenses.pdf.c_category", export.Text), col("department", "expenses.pdf.c_department", export.Text),
+				col("site", "expenses.pdf.c_site", export.Text), col("origin", "expenses.pdf.c_origin", export.Text),
+				col("supplier", "expenses.pdf.c_supplier", export.Text), col("description", "expenses.pdf.c_description", export.Text),
+				col("marked", "expenses.export.marked", export.Bool), col("reason", "expenses.pdf.c_reason", export.Text),
+				col("amount", "expenses.pdf.c_amount", export.Money), col("overrunStatus", "expenses.export.overrun_status", export.Text))
+			for _, it := range j.Arr("items") {
+				b.Row(it.V("date"), it.V("number"), it.V("categoryName"), it.V("departmentName"), it.V("plantCode"), b.T("expenses.src."+it.S("source")),
+					it.V("supplierName"), it.V("description"), it.V("marked"), it.V("reason"), it.V("amount"), b.T("expenses.overrun."+it.S("overrunStatus")))
 			}
 		}})
 	export.Register(export.Report{Path: "/expenses/trace", Name: "purchase-trace", Title: "expenses.export.trace_title",
@@ -57,4 +75,14 @@ func init() {
 				b.Row(b.T("expenses.trace.stage."+s.S("kind")), s.V("number"), s.V("title"), s.V("statusLabel"), s.V("date"), s.V("at"), s.V("amount"), s.V("actor"), s.V("plantCode"))
 			}
 		}})
+}
+
+func budgetLineLabel(b *export.Builder, it export.J) string {
+	switch it.S("budget.mode") {
+	case "unbudgeted":
+		return b.T("expenses.budget.unbudgeted")
+	case "none":
+		return b.T("expenses.budget.none")
+	}
+	return it.S("budget.lineBudgetNumber") + " · " + it.S("budget.lineCategoryName")
 }

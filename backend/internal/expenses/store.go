@@ -10,6 +10,7 @@ import (
 	"btn-ops/internal/approvals"
 	"btn-ops/internal/dates"
 	"btn-ops/internal/db"
+	"btn-ops/internal/finlink"
 	"btn-ops/internal/i18n"
 	"btn-ops/internal/refdata"
 
@@ -21,14 +22,22 @@ const rowCols = `e.id, e.number, e.date, e.category, e.department, e.plant_id, p
 	e.overrun_amount, e.overrun_status, e.overrun_levels, e.overrun_reason, e.source_type, e.source_id, e.source_number,
 	e.request_id, e.purchase_order_id, e.paid_at, e.paid_by_id, pu.name, e.payment_reference, e.decided_by_id, du.name,
 	e.decided_at, e.decision_comment, e.created_by_id, cu.name, cu.role::text, e.device_id, e.created_at, e.updated_at,
-	(SELECT count(*)::int FROM expense_attachment a WHERE a.expense_id = e.id), b.number, e.server_version`
+	(SELECT count(*)::int FROM expense_attachment a WHERE a.expense_id = e.id), b.number, e.server_version,
+	e.source, e.budget_line_id, e.budget_line_suggested, e.unbudgeted, e.unbudgeted_reason, bl.category, lb.id, lb.number, lb.department,
+	e.float_id, pf.code, pf.name, e.petty_cash_entry_id, pce.number, e.payroll_period_id, pp.number,
+	(SELECT count(*)::int FROM expense_link l WHERE l.expense_id = e.id AND l.removed_at IS NULL)`
 
 const rowFrom = ` FROM expense e
 	LEFT JOIN "Plant" p ON p.id = e.plant_id
 	LEFT JOIN "User" cu ON cu.id = e.created_by_id
 	LEFT JOIN "User" pu ON pu.id = e.paid_by_id
 	LEFT JOIN "User" du ON du.id = e.decided_by_id
-	LEFT JOIN budget b ON b.id = e.budget_id`
+	LEFT JOIN budget b ON b.id = e.budget_id
+	LEFT JOIN budget_line bl ON bl.id = e.budget_line_id
+	LEFT JOIN budget lb ON lb.id = bl.budget_id
+	LEFT JOIN petty_cash_float pf ON pf.id = e.float_id
+	LEFT JOIN "PettyCashEntry" pce ON pce.id = e.petty_cash_entry_id
+	LEFT JOIN "PayrollPeriod" pp ON pp.id = e.payroll_period_id`
 
 type row struct {
 	ID, Number                   string
@@ -63,6 +72,16 @@ type row struct {
 	Attachments                  int
 	BudgetNumber                 *string
 	ServerVersion                int64
+	Source                       string
+	LineID                       *string
+	LineSuggested, Unbudgeted    bool
+	UnbudgetedReason             *string
+	LineCategory, LineBudgetID   *string
+	LineBudgetNo, LineDept       *string
+	FloatID, FloatCode, FloatNm  *string
+	VoucherID, VoucherNo         *string
+	PeriodID, PeriodNo           *string
+	Links                        int
 }
 
 func (r *row) dests() []any {
@@ -71,7 +90,9 @@ func (r *row) dests() []any {
 		&r.OverrunAmount, &r.OverrunStatus, &r.OverrunLevels, &r.OverrunReason, &r.SourceType, &r.SourceID, &r.SrcNo,
 		&r.RequestID, &r.POID, &r.PaidAt, &r.PaidByID, &r.PaidByName, &r.PaymentRef, &r.DecidedByID, &r.DecidedByName,
 		&r.DecidedAt, &r.DecisionComment, &r.CreatedByID, &r.CreatedByName, &r.CreatedByRole, &r.DeviceID, &r.CreatedAt, &r.UpdatedAt,
-		&r.Attachments, &r.BudgetNumber, &r.ServerVersion}
+		&r.Attachments, &r.BudgetNumber, &r.ServerVersion,
+		&r.Source, &r.LineID, &r.LineSuggested, &r.Unbudgeted, &r.UnbudgetedReason, &r.LineCategory, &r.LineBudgetID, &r.LineBudgetNo, &r.LineDept,
+		&r.FloatID, &r.FloatCode, &r.FloatNm, &r.VoucherID, &r.VoucherNo, &r.PeriodID, &r.PeriodNo, &r.Links}
 }
 
 func scanRows(rows pgx.Rows) ([]row, error) {
@@ -214,7 +235,14 @@ type Expense struct {
 	Levels           []LevelState   `json:"levels"`
 	NextLevel        *int           `json:"nextLevel"`
 	Budget           BudgetState    `json:"budget"`
-	Source           *SourceRef     `json:"source"`
+	Source           *SourceRef     `json:"source"`  // purchase document (procurement)
+	Origin           string         `json:"origin"`  // DIRECT | PETTY_CASH | PROCUREMENT | PAYROLL | OTHER
+	Managed          bool           `json:"managed"` // follows the petty cash / payroll workflow (read-only here)
+	Float            *ref           `json:"float"`   // paid out of this petty cash float
+	Voucher          *ref           `json:"voucher"` // its petty cash voucher
+	PayrollPeriod    *ref           `json:"payrollPeriod"`
+	LinkCount        int            `json:"linkCount"`
+	Links            []finlink.Link `json:"links,omitempty"`
 	PaidAt           *time.Time     `json:"paidAt"`
 	PaidBy           *userRef       `json:"paidBy"`
 	PaymentReference *string        `json:"paymentReference"`
@@ -234,16 +262,31 @@ type Expense struct {
 	Extra            map[string]any `json:"-"`
 }
 
-// BudgetState is the FIN-08 position recorded at submission.
+type ref struct {
+	ID     string `json:"id"`
+	Number string `json:"number"`
+	Name   string `json:"name,omitempty"`
+}
+
+// BudgetState is the budget link (explicit line, or unbudgeted) and the FIN-08 position recorded at submission.
 type BudgetState struct {
-	BudgetID      *string           `json:"budgetId"`
-	BudgetNumber  *string           `json:"budgetNumber"`
-	Remaining     *int64            `json:"remaining"`
-	OverrunAmount int64             `json:"overrunAmount"`
-	OverrunStatus string            `json:"overrunStatus"`
-	OverrunReason *string           `json:"overrunReason"`
-	Levels        []approvals.Level `json:"levels"`
-	Approvals     []LevelState      `json:"approvals"`
+	Mode             string            `json:"mode"` // chosen | suggested | unbudgeted | none
+	LineID           *string           `json:"lineId"`
+	LineCategory     *string           `json:"lineCategory"`
+	LineCategoryName *string           `json:"lineCategoryName"`
+	LineBudgetID     *string           `json:"lineBudgetId"`
+	LineBudgetNumber *string           `json:"lineBudgetNumber"`
+	LineDepartment   *string           `json:"lineDepartment"`
+	Unbudgeted       bool              `json:"unbudgeted"`
+	UnbudgetedReason *string           `json:"unbudgetedReason"`
+	BudgetID         *string           `json:"budgetId"`
+	BudgetNumber     *string           `json:"budgetNumber"`
+	Remaining        *int64            `json:"remaining"`
+	OverrunAmount    int64             `json:"overrunAmount"`
+	OverrunStatus    string            `json:"overrunStatus"`
+	OverrunReason    *string           `json:"overrunReason"`
+	Levels           []approvals.Level `json:"levels"`
+	Approvals        []LevelState      `json:"approvals"`
 }
 
 // SourceRef links an expense to the purchase it came from.
@@ -262,8 +305,9 @@ type Actions struct {
 	Approve       bool   `json:"approve"`
 	Reject        bool   `json:"reject"`
 	ApproveBudget bool   `json:"approveOverrun"`
-	Pay           bool   `json:"pay"`
+	Pay           bool   `json:"pay"` // record the payment (made outside the system)
 	Attach        bool   `json:"attach"`
+	Link          bool   `json:"link"`
 	Reason        string `json:"reason,omitempty"` // why approve is not offered (separation of duties …)
 }
 
@@ -356,7 +400,33 @@ func toExpense(r *row, lk *lookups, decisions []approvalRow) Expense {
 	ol := decodeLevels(r.OverrunLevels)
 	oa, _ := levelStates(ol, decisions, "overrun")
 	e.Budget = BudgetState{BudgetID: r.BudgetID, BudgetNumber: r.BudgetNumber, Remaining: r.BudgetRemaining, OverrunAmount: r.OverrunAmount,
-		OverrunStatus: r.OverrunStatus, OverrunReason: r.OverrunReason, Levels: ol, Approvals: oa}
+		OverrunStatus: r.OverrunStatus, OverrunReason: r.OverrunReason, Levels: ol, Approvals: oa,
+		LineID: r.LineID, LineCategory: r.LineCategory, LineBudgetID: r.LineBudgetID, LineBudgetNumber: r.LineBudgetNo, LineDepartment: r.LineDept,
+		Unbudgeted: r.Unbudgeted, UnbudgetedReason: r.UnbudgetedReason}
+	switch {
+	case r.Unbudgeted:
+		e.Budget.Mode = "unbudgeted"
+	case r.LineID != nil && r.LineSuggested:
+		e.Budget.Mode = "suggested"
+	case r.LineID != nil:
+		e.Budget.Mode = "chosen"
+	default:
+		e.Budget.Mode = "none"
+	}
+	if r.LineCategory != nil {
+		n := nameOr(lk.cat, *r.LineCategory)
+		e.Budget.LineCategoryName = &n
+	}
+	e.Origin, e.Managed, e.LinkCount = r.Source, managed(r.Source), r.Links
+	if r.FloatID != nil {
+		e.Float = &ref{ID: *r.FloatID, Number: deref(r.FloatCode), Name: deref(r.FloatNm)}
+	}
+	if r.VoucherID != nil {
+		e.Voucher = &ref{ID: *r.VoucherID, Number: deref(r.VoucherNo)}
+	}
+	if r.PeriodID != nil {
+		e.PayrollPeriod = &ref{ID: *r.PeriodID, Number: deref(r.PeriodNo)}
+	}
 	return e
 }
 
@@ -372,7 +442,9 @@ func snapshot(r *row) map[string]any {
 	return map[string]any{"id": r.ID, "number": r.Number, "date": dates.ToISO(r.Date), "category": r.Category, "department": r.Department,
 		"plantId": r.PlantID, "supplierId": r.SupplierID, "supplierName": r.SupplierName, "paymentMethod": r.PaymentMethod, "amount": r.Amount,
 		"description": r.Description, "reference": r.Reference, "status": r.Status, "overrunAmount": r.OverrunAmount, "overrunStatus": r.OverrunStatus,
-		"budgetId": r.BudgetID, "sourceType": r.SourceType, "sourceId": r.SourceID, "paymentReference": r.PaymentRef}
+		"budgetId": r.BudgetID, "sourceType": r.SourceType, "sourceId": r.SourceID, "paymentReference": r.PaymentRef,
+		"source": r.Source, "budgetLineId": r.LineID, "unbudgeted": r.Unbudgeted, "unbudgetedReason": r.UnbudgetedReason, "floatId": r.FloatID,
+		"payrollPeriodId": r.PeriodID}
 }
 
 // ── list filter ──────────────────────────────────────────────────────────────
@@ -384,6 +456,9 @@ type filter struct {
 	userID                           string
 	supplierID, purchaseOrderID      string
 	awaiting                         bool
+	budgetLineID, floatID, periodID  string
+	unbudgeted                       string // "1" = no budget line (marked unbudgeted or no plan), "marked" = marked only
+	linkType, linkID                 string
 }
 
 func (f filter) where() (string, []any) {
@@ -421,10 +496,32 @@ func (f filter) where() (string, []any) {
 		conds = append(conds, `e.overrun_status <> 'NONE'`)
 	}
 	switch f.source {
+	case "":
 	case "procurement":
-		conds = append(conds, `e.source_type IS NOT NULL`)
+		conds = append(conds, `e.source = 'PROCUREMENT'`)
 	case "direct":
-		conds = append(conds, `e.source_type IS NULL`)
+		conds = append(conds, `e.source = 'DIRECT'`)
+	default:
+		add(`e.source = ?`, f.source)
+	}
+	if f.budgetLineID != "" {
+		add(`e.budget_line_id = ?`, f.budgetLineID)
+	}
+	if f.floatID != "" {
+		add(`e.float_id = ?`, f.floatID)
+	}
+	if f.periodID != "" {
+		add(`e.payroll_period_id = ?`, f.periodID)
+	}
+	switch f.unbudgeted {
+	case "1":
+		conds = append(conds, `e.budget_line_id IS NULL`)
+	case "marked":
+		conds = append(conds, `e.unbudgeted`)
+	}
+	if f.linkType != "" && f.linkID != "" {
+		args = append(args, f.linkType, f.linkID)
+		conds = append(conds, fmt.Sprintf(`EXISTS (SELECT 1 FROM expense_link l WHERE l.expense_id = e.id AND l.removed_at IS NULL AND l.entity_type = $%d AND l.entity_id = $%d)`, len(args)-1, len(args)))
 	}
 	if f.mine == "1" {
 		add(`e.created_by_id = ?`, f.userID)
@@ -434,7 +531,7 @@ func (f filter) where() (string, []any) {
 		add(`(e.number ILIKE ? OR e.description ILIKE ? OR e.supplier_name ILIKE ? OR e.reference ILIKE ? OR e.source_number ILIKE ?)`, "%"+r.Replace(q)+"%")
 	}
 	if f.awaiting {
-		add(`(e.status = 'SUBMITTED' AND e.created_by_id <> ?)`, f.userID)
+		add(`(e.status = 'SUBMITTED' AND e.source NOT IN ('PETTY_CASH','PAYROLL') AND e.created_by_id <> ?)`, f.userID)
 	}
 	return strings.Join(conds, " AND "), args
 }

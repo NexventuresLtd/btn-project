@@ -1,7 +1,6 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
-import { AlertTriangle, Banknote, CircleDollarSign, FileWarning, HandCoins, PiggyBank, Receipt, ShoppingCart, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowDownLeft, Banknote, BadgeCheck, CircleDollarSign, FileWarning, HandCoins, PiggyBank, Receipt, Scale, ShoppingCart, Wallet } from "lucide-react";
 import {
   Badge, Card, CardBody, CardHeader, DataTable, EmptyState, ErrorState, ExportMenu, FilterBar, PageHeader, PageLoader, PdfButton, StatCard, useFilters, type Column,
 } from "@/components/ui";
@@ -10,30 +9,11 @@ import { cn } from "@/lib/cn";
 import { formatDate, formatDateRange } from "@/lib/dates";
 import { formatCompact, formatInt, formatRWF } from "@/lib/format";
 import { UsedBar, VarianceBadge, VarianceCell } from "@/modules/budgets/components";
-import type { VsDept, VsRow } from "@/modules/budgets/api";
+import type { Variance, VsDept, VsRow } from "@/modules/budgets/api";
 import { useFinanceDashboard, type FinanceDashboard, type FloatPos, type Group } from "./api";
-import { AGE_KEYS, ageingShares } from "./helpers";
+import { AGE_KEYS, ageingShares, tooltipStyle } from "./helpers";
+import { Measured } from "./charts";
 
-function useWidth<T extends HTMLElement>() {
-  const ref = useRef<T>(null);
-  const [width, setWidth] = useState(0);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    setWidth(el.clientWidth);
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, width] as const;
-}
-
-function Measured({ height, children }: { height: number; children: (w: number, h: number) => ReactNode }) {
-  const [ref, width] = useWidth<HTMLDivElement>();
-  return <div ref={ref} className="w-full min-w-0" style={{ height }}>{width > 0 ? children(width, height) : null}</div>;
-}
-
-const tooltipStyle = { borderRadius: 12, border: "1px solid var(--color-line)", boxShadow: "0 4px 16px rgb(12 35 75 / 0.08)", fontSize: 12 };
 const AGE_COLORS = ["bg-emerald-500", "bg-amber-400", "bg-orange-500", "bg-red-600"];
 
 export function FinanceDashboardPage() {
@@ -61,6 +41,9 @@ function Dashboard({ d, fetching }: { d: FinanceDashboard; fetching: boolean }) 
   return (
     <div className={cn("space-y-5", fetching && "opacity-80 transition-opacity")}>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {d.income ? <StatCard label={t("finance.kpi.income")} value={formatRWF(d.income.total)} icon={<ArrowDownLeft />} tone="green" hint={t("finance.kpi.incomeHint", { orders: formatRWF(d.income.orderPayments), other: formatRWF(d.income.other) })} /> : null}
+        {d.income ? <StatCard label={t("finance.kpi.unverified")} value={formatRWF(d.income.unverified)} icon={<BadgeCheck />} tone={d.income.unverifiedCount ? "amber" : "green"} hint={t("finance.kpi.unverifiedHint", { n: d.income.unverifiedCount })} /> : null}
+        {d.net != null ? <StatCard label={t("finance.kpi.net")} value={formatRWF(d.net)} icon={<Scale />} tone={d.net < 0 ? "red" : "green"} hint={t("finance.kpi.netHint")} /> : null}
         {d.revenue ? <StatCard label={t("finance.kpi.invoiced")} value={formatRWF(d.revenue.invoiced)} icon={<CircleDollarSign />} tone="navy" hint={t("finance.kpi.sales", { n: d.revenue.salesCount })} /> : null}
         {d.revenue ? <StatCard label={t("finance.kpi.collected")} value={formatRWF(d.revenue.collected)} icon={<Banknote />} tone="green" /> : null}
         {d.receivables ? <StatCard label={t("finance.kpi.outstanding")} value={formatRWF(d.receivables.outstanding)} icon={<HandCoins />} tone="amber" hint={t("finance.kpi.customers", { n: d.receivables.customers })} /> : null}
@@ -72,7 +55,8 @@ function Dashboard({ d, fetching }: { d: FinanceDashboard; fetching: boolean }) 
         {d.netCash != null ? <StatCard label={t("finance.kpi.netCash")} value={formatRWF(d.netCash)} icon={<Banknote />} tone={d.netCash < 0 ? "red" : "green"} hint={t("finance.kpi.netCashHint")} /> : null}
       </div>
 
-      {d.trend.length > 1 && (s.revenue || s.expenses || s.pettyCash) ? <TrendCard d={d} /> : null}
+      {d.trend.length > 1 && (s.income || s.revenue || s.expenses || s.pettyCash) ? <TrendCard d={d} /> : null}
+      {d.income ? <IncomeCard i={d.income} /> : null}
 
       {d.receivables ? (
         <div className="grid gap-5 lg:grid-cols-5">
@@ -100,7 +84,7 @@ function Dashboard({ d, fetching }: { d: FinanceDashboard; fetching: boolean }) 
       {d.expenses ? <ExpensesCard e={d.expenses} /> : null}
       {d.pettyCash ? <FloatsCard floats={d.pettyCash.floats} total={d.pettyCash.totalBalance} pending={d.pettyCash.pendingOut} /> : null}
       {d.budgets ? <BudgetCard b={d.budgets} /> : null}
-      {!s.revenue && !s.expenses && !s.pettyCash && !s.budgets ? <Card><EmptyState title={t("finance.empty")} /></Card> : null}
+      {!s.income && !s.revenue && !s.expenses && !s.pettyCash && !s.budgets ? <Card><EmptyState title={t("finance.empty")} /></Card> : null}
     </div>
   );
 }
@@ -121,8 +105,9 @@ function TrendCard({ d }: { d: FinanceDashboard }) {
               <YAxis tickFormatter={(v: number) => formatCompact(v)} tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} width={48} />
               <Tooltip contentStyle={tooltipStyle} formatter={(v) => formatRWF(Number(v))} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              {s.revenue ? <Line type="monotone" dataKey="revenue" name={t("finance.trend.revenue")} stroke="#0C234B" strokeWidth={2} dot={false} /> : null}
-              {s.revenue ? <Line type="monotone" dataKey="collected" name={t("finance.trend.collected")} stroke="#059669" strokeWidth={2} dot={false} /> : null}
+              {s.income ? <Line type="monotone" dataKey="income" name={t("finance.trend.income")} stroke="#059669" strokeWidth={2.5} dot={false} /> : null}
+              {s.revenue ? <Line type="monotone" dataKey="revenue" name={t("finance.trend.revenue")} stroke="#0C234B" strokeWidth={2} dot={false} strokeDasharray="6 3" /> : null}
+              {s.revenue && !s.income ? <Line type="monotone" dataKey="collected" name={t("finance.trend.collected")} stroke="#059669" strokeWidth={2} dot={false} /> : null}
               {s.expenses ? <Line type="monotone" dataKey="expenses" name={t("finance.trend.expenses")} stroke="#d97706" strokeWidth={2} dot={false} /> : null}
               {s.pettyCash ? <Line type="monotone" dataKey="pettyCash" name={t("finance.trend.pettyCash")} stroke="#7c3aed" strokeWidth={2} dot={false} strokeDasharray="4 3" /> : null}
             </LineChart>
@@ -185,6 +170,38 @@ function ExpensesCard({ e }: { e: NonNullable<FinanceDashboard["expenses"]> }) {
   );
 }
 
+function IncomeCard({ i }: { i: NonNullable<FinanceDashboard["income"]> }) {
+  const { t } = useT();
+  const rows = i.byCategory.slice(0, 10);
+  return (
+    <Card className="min-w-0">
+      <CardHeader title={t("finance.income.title")} actions={<Link to="/income" className="text-sm font-medium text-navy-700 hover:underline">{t("finance.open")}</Link>}
+        description={t("finance.income.desc", { verified: formatRWF(i.verified), unverified: formatRWF(i.unverified), n: i.count })} />
+      <CardBody>
+        {!rows.length ? (
+          <EmptyState title={t("finance.income.empty")} />
+        ) : (
+          <Measured height={Math.max(140, rows.length * 34 + 30)}>
+            {(w, h) => (
+              <BarChart width={w} height={h} data={rows} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }} barCategoryGap={8}>
+                <CartesianGrid horizontal={false} stroke="var(--color-line)" />
+                <XAxis type="number" tickFormatter={(v: number) => formatCompact(v)} tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
+                <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 12, fill: "#334155" }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={tooltipStyle} formatter={(v) => formatRWF(Number(v))} cursor={{ fill: "rgb(5 150 105 / 0.05)" }} />
+                <Bar dataKey="amount" name={t("finance.expenses.amount")} fill="#059669" radius={[0, 6, 6, 0]} />
+              </BarChart>
+            )}
+          </Measured>
+        )}
+        <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+          <div className="flex justify-between gap-2"><dt className="text-slate-600">{t("finance.income.orderPayments")}</dt><dd className="tabular font-medium text-slate-900">{formatInt(i.orderPayments)}</dd></div>
+          <div className="flex justify-between gap-2"><dt className="text-slate-600">{t("finance.income.other")}</dt><dd className="tabular font-medium text-slate-900">{formatInt(i.other)}</dd></div>
+        </dl>
+      </CardBody>
+    </Card>
+  );
+}
+
 function GroupList({ title, rows }: { title: string; rows: Group[] }) {
   if (!rows.length) return null;
   return (
@@ -236,6 +253,7 @@ function BudgetCard({ b }: { b: NonNullable<FinanceDashboard["budgets"]> }) {
       <CardHeader title={t("finance.budget.title")} description={t("finance.budget.desc", { period: formatDateRange(b.periodStart, b.periodEnd), over: b.overCount, warning: b.warningCount })}
         actions={<Link to="/budgets" className="text-sm font-medium text-navy-700 hover:underline">{t("finance.open")}</Link>} />
       <DataTable columns={deptCols} rows={b.departments} rowKey={(r) => r.department || "-"} empty={t("finance.budget.empty")} />
+      {b.incomeTotals || b.net ? <IncomeTargets totals={b.incomeTotals} net={b.net} /> : null}
       {b.lines.length ? (
         <div className="border-t border-line px-5 py-4">
           <h3 className="mb-2 text-xs font-semibold tracking-wide text-slate-500 uppercase">{t("finance.budget.attention")}</h3>
@@ -251,4 +269,43 @@ function BudgetCard({ b }: { b: NonNullable<FinanceDashboard["budgets"]> }) {
       ) : null}
     </Card>
   );
+}
+
+/** Revenue targets of the current budgets and the planned vs actual net (FIN-08 with income lines). */
+function IncomeTargets({ totals, net }: { totals?: Variance; net?: { planned: number; actual: number } }) {
+  const { t, tx } = useT();
+  return (
+    <div className="grid gap-3 border-t border-line px-5 py-4 text-sm sm:grid-cols-2">
+      {totals ? (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold tracking-wide text-slate-500 uppercase">{t("finance.budget.incomeTitle")}</h3>
+          <dl className="space-y-1">
+            <div className="flex justify-between gap-2"><dt className="text-slate-600">{t("finance.budget.target")}</dt><dd className="tabular text-slate-900">{formatInt(totals.budget)}</dd></div>
+            <div className="flex justify-between gap-2"><dt className="text-slate-600">{t("finance.budget.received")}</dt><dd className="tabular font-medium text-slate-900">{formatInt(totals.actual)}</dd></div>
+            <div className="flex items-center justify-between gap-2"><dt className="text-slate-600">{t("finance.budget.status")}</dt><dd><Badge tone={incomeTone(totals.status)} dot>{tx(`finance.budget.istatus.${totals.status}`, undefined, totals.status)}</Badge></dd></div>
+          </dl>
+        </div>
+      ) : null}
+      {net ? (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold tracking-wide text-slate-500 uppercase">{t("finance.budget.netTitle")}</h3>
+          <dl className="space-y-1">
+            <div className="flex justify-between gap-2"><dt className="text-slate-600">{t("finance.budget.netPlanned")}</dt><dd className={cn("tabular", net.planned < 0 ? "text-red-700" : "text-slate-900")}>{formatInt(net.planned)}</dd></div>
+            <div className="flex justify-between gap-2"><dt className="text-slate-600">{t("finance.budget.netActual")}</dt><dd className={cn("tabular font-semibold", net.actual < 0 ? "text-red-700" : "text-emerald-700")}>{formatInt(net.actual)}</dd></div>
+          </dl>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function incomeTone(status: string): "green" | "blue" | "amber" | "slate" | "red" {
+  switch (status) {
+    case "met": return "green";
+    case "on_track": return "blue";
+    case "behind": return "amber";
+    case "unplanned": return "slate";
+    case "over": return "red";
+    default: return "slate";
+  }
 }

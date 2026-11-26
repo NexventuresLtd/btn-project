@@ -367,7 +367,8 @@ func (s *service) loadSale(ctx context.Context, q db.DBTX, lang i18n.Lang, id st
 	}
 
 	// payments
-	prows, err := q.Query(ctx, `SELECT id, date, amount, method::text, reference, "receivedById", "createdAt", kind FROM "Payment" WHERE "saleId"=$1 ORDER BY date, "createdAt"`, id)
+	prows, err := q.Query(ctx, `SELECT p.id, p.date, p.amount, p.method::text, p.reference, p."receivedById", p."createdAt", p.kind, i.number, i.status
+		FROM "Payment" p JOIN income i ON i.id = p.id WHERE p."saleId"=$1 ORDER BY p.date, p."createdAt"`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -380,11 +381,12 @@ func (s *service) loadSale(ctx context.Context, q db.DBTX, lang i18n.Lang, id st
 	for prows.Next() {
 		r := &pRow{}
 		var d, c time.Time
-		if err := prows.Scan(&r.p.ID, &d, &r.p.Amount, &r.p.Method, &r.p.Reference, &r.by, &c, &r.p.Kind); err != nil {
+		if err := prows.Scan(&r.p.ID, &d, &r.p.Amount, &r.p.Method, &r.p.Reference, &r.by, &c, &r.p.Kind, &r.p.IncomeNumber, &r.p.IncomeStatus); err != nil {
 			prows.Close()
 			return nil, err
 		}
 		r.p.Date = dates.ToISO(d)
+		r.p.IncomeID = r.p.ID // every order payment is an income record (same id)
 		r.p.CreatedAt = jt(c)
 		r.p.MethodLabel = methodLabel(lang, r.p.Method)
 		paid += r.p.Amount

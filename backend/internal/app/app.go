@@ -20,6 +20,7 @@ import (
 	"btn-ops/internal/export"
 	"btn-ops/internal/finance"
 	"btn-ops/internal/httpx"
+	"btn-ops/internal/income"
 	"btn-ops/internal/masterdata"
 	"btn-ops/internal/materials"
 	"btn-ops/internal/openapi"
@@ -172,6 +173,7 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 	stockcount.Register(api.Group("/stock-counts"), d) // P2
 	procurement.Register(api.Group("/procurement"), d) // P6
 	expenses.Register(api.Group("/expenses"), d)       // P5
+	income.Register(api.Group("/income"), d)           // finance records: money in
 	budgets.Register(api.Group("/budgets"), d)         // P5
 	finance.Register(api.Group("/finance"), d)         // P5 FIN-04/06 finance dashboard
 	workforce.Register(api.Group("/workforce"), d)     // P4

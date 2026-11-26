@@ -254,5 +254,6 @@
  "pettycash.export.c_pending": "Écritures en attente",
  "pettycash.export.c_explanation": "Explication",
  "pettycash.export.c_counted_by": "Compté par",
- "pettycash.export.c_comment": "Commentaire de validation"
+ "pettycash.export.c_comment": "Commentaire de validation",
+ "pettycash.v.unbudgeted_reason": "Expliquez pourquoi cette dépense n'est pas au budget (au moins 5 caractères)"
 }

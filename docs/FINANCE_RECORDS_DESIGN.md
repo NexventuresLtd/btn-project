@@ -60,3 +60,17 @@ floats. Scheduled monthly report updated accordingly.
 `.../record-payment`; order payments stay `POST /api/sales/:id/payments` (records an income). Old paths are removed
 from the UI and kept one release as aliases. UI labels, notifications, help guides, PDFs and docs say "recorded".
 ARCHITECTURE.md states the record-keeping principle; SRS future gateway integrations are out of scope.
+
+## 7. Implementation (migrations 03100 / 03110)
+- Tables `income`, `income_link`, `income_attachment`, `expense_link`; `expense.source`, `budget_line_id`,
+  `budget_line_suggested`, `unbudgeted`, `unbudgeted_reason`, `float_id`, `petty_cash_entry_id`, `payroll_period_id`;
+  `budget_line.type`; refdata kind `income_category`. Links are removed by stamping `removed_at`.
+- Petty cash: DB trigger `btn_petty_expense_mirror` keeps one expense per spending voucher; balances come from the view
+  `petty_cash_ledger` (top-ups + float expenses). Order payments: `"Payment"` is a view over ORDER_PAYMENT income with an
+  INSTEAD OF trigger, so every existing reader and writer keeps working; the old table is kept as `payment_legacy`.
+- Data migration: approved/submitted/rejected spending vouchers → PETTY_CASH (wage vouchers → PAYROLL) expenses; expenses
+  already paid from a float are linked to their voucher; paid wage sheets → one PAYROLL expense for the wages not paid
+  through vouchers (linked to the period and workers); budget lines resolved from the budget matched at submission, else
+  the implicit (department + category + period) match; order payments → income (same ids). Totals are checked by
+  `internal/finance/migration_test.go` (petty cash balance per float, spend per category, collected per order).
+- API: see backend/README.md "Shared services — finance records".

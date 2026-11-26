@@ -12,9 +12,12 @@ import { formatDate, todayISO } from "@/lib/dates";
 import { formatRWF } from "@/lib/format";
 import { pinnedPlantId } from "@/lib/scope";
 import { OfflineLockedError, useConnectivity, useDirtyForm, useOfflineMutation } from "@/offline/hooks";
+import { BudgetLinePicker } from "@/components/finance/BudgetLinePicker";
+import { LinkPickerList } from "@/components/finance/LinksEditor";
+import { budgetLinkBody, EMPTY_BUDGET_LINK, toLinkInputs, type BudgetLinkValue, type DraftLink } from "@/components/finance/api";
 import {
-  budgetCheck, createExpense, EXP_KEY, PAYMENT_METHODS, RECEIPT_ACCEPT, receiptProblem, updateExpense, uploadReceipt, useSuppliers,
-  type BudgetCheck, type Expense, type ExpensePayload, type PaymentMethod,
+  budgetCheck, createExpense, ENTRY_SOURCES, EXP_KEY, PAYMENT_METHODS, RECEIPT_ACCEPT, receiptProblem, updateExpense, uploadReceipt, useSuppliers,
+  type BudgetCheck, type EntrySource, type Expense, type ExpensePayload, type PaymentMethod,
 } from "./api";
 import { EXPENSE_TYPE, expenseErrors } from "./offline";
 
@@ -30,22 +33,38 @@ interface FormState {
   description: string;
   reference: string;
   overrunReason: string;
+  /** DIRECT / OTHER; null keeps the origin of a posted expense (procurement) untouched */
+  source: EntrySource | null;
+  budget: BudgetLinkValue;
+  links: DraftLink[];
 }
 
 const empty = (plantId: string): FormState => ({
   date: todayISO(), category: "", department: "", plantId, supplierId: "", supplierName: "", paymentMethod: "BANK_TRANSFER", amount: "", description: "", reference: "", overrunReason: "",
+  source: "DIRECT", budget: EMPTY_BUDGET_LINK, links: [],
 });
+
+/** The budget link as the user set it: an explicit line, unbudgeted with its reason, or the suggestion. */
+function budgetValueOf(e: Pick<Expense, "budget">): BudgetLinkValue {
+  if (e.budget.unbudgeted || e.budget.mode === "unbudgeted") return { budgetLineId: null, unbudgeted: true, unbudgetedReason: e.budget.unbudgetedReason ?? "" };
+  if (e.budget.mode === "chosen" && e.budget.lineId) return { budgetLineId: e.budget.lineId, unbudgeted: false, unbudgetedReason: "" };
+  return EMPTY_BUDGET_LINK;
+}
 
 const fromExpense = (e: Expense): FormState => ({
   date: e.date, category: e.category, department: e.department, plantId: e.plantId ?? "", supplierId: e.supplierId ?? "", supplierName: e.supplierName ?? "",
   paymentMethod: e.paymentMethod, amount: String(e.amount), description: e.description, reference: e.reference ?? "", overrunReason: e.budget.overrunReason ?? "",
+  source: e.origin === "OTHER" ? "OTHER" : e.origin == null || e.origin === "DIRECT" ? "DIRECT" : null, budget: budgetValueOf(e), links: [],
 });
 
-function toPayload(f: FormState): ExpensePayload {
+function toPayload(f: FormState, creating: boolean): ExpensePayload {
   return {
     date: f.date, category: f.category, department: f.department, plantId: f.plantId || null, supplierId: f.supplierId || null,
     supplierName: f.supplierName.trim() || null, paymentMethod: f.paymentMethod, amount: f.amount.trim() === "" ? NaN : Number(f.amount),
     description: f.description.trim(), reference: f.reference.trim() || null, overrunReason: f.overrunReason.trim() || null,
+    ...(f.source ? { source: f.source } : {}),
+    ...budgetLinkBody(f.budget),
+    ...(creating && f.links.length ? { links: toLinkInputs(f.links) } : {}),
   };
 }
 
@@ -89,16 +108,16 @@ export function ExpenseFormModal({ open, onClose, expense }: { open: boolean; on
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => {
     setForm((f) => ({ ...f, [k]: v }));
-    if (k === "amount" || k === "category" || k === "department" || k === "date") setCheck(null); // budget position must be re-checked
+    if (k === "amount" || k === "category" || k === "department" || k === "date" || k === "budget") setCheck(null); // budget position must be re-checked
   };
   const onSupplier = (value: string) => {
     const hit = suppliers.data?.items.find((s) => supplierLabel(s) === value || s.name === value);
     setForm((f) => ({ ...f, supplierName: hit ? hit.name : value, supplierId: hit ? hit.id : "" }));
   };
 
-  const payload = useMemo(() => toPayload(form), [form]);
+  const payload = useMemo(() => toPayload(form, !expense), [form, expense]);
   const clientErrors = useMemo(() => expenseErrors(payload), [payload]);
-  const err = (k: keyof FormState) => (touched && clientErrors[k as keyof ExpensePayload] ? tx(clientErrors[k as keyof ExpensePayload]!) : undefined) ?? serverFields[k];
+  const err = (k: keyof FormState | keyof ExpensePayload) => (touched && clientErrors[k as keyof ExpensePayload] ? tx(clientErrors[k as keyof ExpensePayload]!) : undefined) ?? serverFields[k];
 
   const failed = (e: unknown) => {
     if (e instanceof ApiError) {
@@ -108,7 +127,10 @@ export function ExpenseFormModal({ open, onClose, expense }: { open: boolean; on
   };
 
   async function runCheck(): Promise<BudgetCheck | null> {
-    const c = await budgetCheck({ category: payload.category, department: payload.department, date: payload.date, amount: payload.amount, expenseId: expense?.id ?? null });
+    const c = await budgetCheck({
+      category: payload.category, department: payload.department, date: payload.date, amount: payload.amount, expenseId: expense?.id ?? null,
+      budgetLineId: payload.budgetLineId ?? null, unbudgeted: !!payload.unbudgeted,
+    });
     setCheck(c);
     return c;
   }
@@ -189,6 +211,7 @@ export function ExpenseFormModal({ open, onClose, expense }: { open: boolean; on
         </>
       }
     >
+      <div className="space-y-4">
       <form id="exp-form" onSubmit={submit} noValidate className="space-y-4">
         {expense?.status === "REJECTED" && expense.decisionComment ? (
           <Alert tone="red" title={t("expenses.form.rejectedBy", { name: expense.decidedBy?.name ?? "—" })}>{expense.decisionComment}</Alert>
@@ -242,18 +265,44 @@ export function ExpenseFormModal({ open, onClose, expense }: { open: boolean; on
         <Field label={t("expenses.field.description")} required error={err("description")} htmlFor="exp-desc">
           <Textarea id="exp-desc" rows={2} maxLength={500} value={form.description} onChange={(e) => set("description", e.target.value)} invalid={!!err("description")} placeholder={t("expenses.form.descriptionPlaceholder")} />
         </Field>
-        <Field label={t("expenses.field.reference")} error={err("reference")} hint={t("expenses.form.referenceHint")} htmlFor="exp-ref">
-          <Input id="exp-ref" maxLength={80} value={form.reference} onChange={(e) => set("reference", e.target.value)} invalid={!!err("reference")} />
-        </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label={t("expenses.field.reference")} error={err("reference")} hint={t("expenses.form.referenceHint")} htmlFor="exp-ref">
+            <Input id="exp-ref" maxLength={80} value={form.reference} onChange={(e) => set("reference", e.target.value)} invalid={!!err("reference")} />
+          </Field>
+          {form.source ? (
+            <Field label={t("expenses.field.source")} error={err("source")} hint={t("expenses.form.sourceHint")} htmlFor="exp-source">
+              <Select id="exp-source" value={form.source} onChange={(e) => set("source", e.target.value as EntrySource)}>
+                {ENTRY_SOURCES.map((s) => <option key={s} value={s}>{tx(`expenses.origin.${s}`)}</option>)}
+              </Select>
+            </Field>
+          ) : null}
+        </div>
 
-        {check ? <BudgetPanel check={check} /> : null}
+        <BudgetLinePicker
+          type="EXPENSE"
+          idPrefix="exp-budget"
+          date={form.date}
+          department={form.department}
+          category={form.category}
+          amount={Number.isFinite(payload.amount) ? payload.amount : 0}
+          expenseId={expense?.id ?? null}
+          value={form.budget}
+          onChange={(v) => set("budget", v)}
+          errors={{ budgetLineId: serverFields.budgetLineId, unbudgetedReason: err("unbudgetedReason") }}
+          showCheck={net.reachable}
+        />
+        {!net.reachable ? <p className="-mt-2 text-xs text-slate-500">{t("expenses.form.budgetOffline")}</p> : null}
+
         {exceeds ? (
           <Field label={t("expenses.form.overrunReason")} hint={t("expenses.form.overrunReasonHint")} htmlFor="exp-over">
             <Textarea id="exp-over" rows={2} maxLength={500} value={form.overrunReason} onChange={(e) => set("overrunReason", e.target.value)} />
           </Field>
         ) : null}
-        {serverMessage ? <Alert tone="red">{serverMessage}</Alert> : null}
       </form>
+      {!expense ? <LinkPickerList value={form.links} onChange={(v) => set("links", v)} /> : null}
+      {err("links") ? <p className="text-xs font-medium text-red-600">{err("links")}</p> : null}
+      {serverMessage ? <Alert tone="red">{serverMessage}</Alert> : null}
+      </div>
     </Modal>
   );
 }

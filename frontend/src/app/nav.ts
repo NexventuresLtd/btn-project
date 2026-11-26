@@ -9,6 +9,7 @@ import { GitMerge, MonitorSmartphone, RadioTower } from "lucide-react"; // F3: s
 import { Upload } from "lucide-react"; // F2: data import
 import { DatabaseBackup } from "lucide-react"; // F2: data export (ADM-05)
 import { ShieldCheck } from "lucide-react"; // F2: personal data (NFR-D2)
+import { ArrowDownToLine, CircleOff, Link2, TrendingUp } from "lucide-react"; // finance records: income, cash flow, unbudgeted, linked records
 import type { LucideIcon } from "lucide-react";
 import type { TKey } from "@/i18n";
 
@@ -79,9 +80,13 @@ export const NAV: NavGroup[] = [
     id: "finance",
     labelKey: "layout.nav.finance",
     items: [
+      { labelKey: "income.nav", to: "/income", icon: ArrowDownToLine, permission: ["income.view", "income.record", "income.verify"] },
       { labelKey: "layout.nav.pettyCash", to: "/petty-cash", icon: Wallet, permission: ["pettycash.view", "pettycash.record", "pettycash.approve", "pettycash.custodian"] },
       { labelKey: "expenses.nav", to: "/expenses", icon: Receipt, permission: ["expenses.view", "expenses.record"] },
-      { labelKey: "finance.nav", to: "/finance", icon: ChartPie, permission: ["expenses.view", "budgets.view", "pettycash.view"] },
+      { labelKey: "finance.nav", to: "/finance", icon: ChartPie, permission: ["expenses.view", "budgets.view", "pettycash.view", "income.view"] },
+      { labelKey: "finance.navCashFlow", to: "/finance/cash-flow", icon: TrendingUp, permission: ["income.view", "expenses.view"] },
+      { labelKey: "finance.navUnbudgeted", to: "/finance/unbudgeted", icon: CircleOff, permission: ["expenses.view", "budgets.view"] },
+      { labelKey: "finance.navLinked", to: "/finance/linked", icon: Link2, permission: ["income.view", "income.record", "expenses.view", "expenses.approve"] },
       { labelKey: "budgets.nav", to: "/budgets", icon: PiggyBank, permission: "budgets.view" },
       { labelKey: "finance.navTrace", to: "/finance/trace", icon: Route, permission: ["expenses.view", "procurement.view"] },
       { labelKey: "layout.nav.payroll", to: "/payroll", icon: HandCoins, permission: "payroll.view" },

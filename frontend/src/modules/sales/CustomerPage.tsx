@@ -10,6 +10,7 @@ import { ORDER_STATUSES, useCommunications, useCustomerOrders, useCustomerProfil
 import { Amount, CustomerModal, Detail, OrderStatusBadge, SearchInput } from "./components";
 import { CommunicationModal } from "./modals";
 import { useParam } from "./useParam";
+import { MoneyPanel } from "@/components/finance/MoneyPanel";
 
 /** Client record (ORD-01): profile, contacts, searchable order history and communication log (ORD-07). */
 export function CustomerPage() {
@@ -135,6 +136,7 @@ export function CustomerPage() {
           </Card>
         </div>
       </div>
+      <MoneyPanel entityType="customer" entityId={c.id} className="mt-6" />
       <CustomerModal open={editing} customerId={c.id} onClose={() => setEditing(false)} />
       <CommunicationModal open={logging} onClose={() => setLogging(false)} customerId={c.id} />
     </>

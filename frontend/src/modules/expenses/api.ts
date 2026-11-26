@@ -1,11 +1,17 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { apiUrl, del, ensureFreshSession, get, patch, post, upload } from "@/lib/api";
+import { expenseBudgetCheck, type BudgetCheckInput, type ExpenseBudgetCheck, type LinkInput, type MoneyLink } from "@/components/finance/api";
 
 export type ExpenseStatus = "SUBMITTED" | "APPROVED" | "REJECTED" | "PAID" | "CANCELLED";
 export type OverrunStatus = "NONE" | "PENDING" | "APPROVED" | "REJECTED";
-export const PAYMENT_METHODS = ["CASH", "MOMO", "BANK_TRANSFER", "CHEQUE", "CARD", "PETTY_CASH"] as const;
+export const PAYMENT_METHODS = ["CASH", "MOMO", "BANK_TRANSFER", "CHEQUE", "CARD", "PETTY_CASH", "OTHER"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 export const STATUSES: ExpenseStatus[] = ["SUBMITTED", "APPROVED", "PAID", "REJECTED", "CANCELLED"];
+/** Where an expense comes from (docs/FINANCE_RECORDS_DESIGN.md §2). Users record DIRECT / OTHER; the others are posted by their module. */
+export const ORIGINS = ["DIRECT", "PETTY_CASH", "PROCUREMENT", "PAYROLL", "OTHER"] as const;
+export type ExpenseOrigin = (typeof ORIGINS)[number];
+export const ENTRY_SOURCES = ["DIRECT", "OTHER"] as const;
+export type EntrySource = (typeof ENTRY_SOURCES)[number];
 
 /** Receipts: images or PDF, at most 10 MB (the server sniffs the bytes again). */
 export const RECEIPT_ACCEPT = "image/jpeg,image/png,image/webp,application/pdf";
@@ -58,25 +64,14 @@ export interface ExpenseActions {
   approve: boolean;
   reject: boolean;
   approveOverrun: boolean;
+  /** record the payment made outside the system (POST /expenses/:id/record-payment) */
   pay: boolean;
   attach: boolean;
+  link?: boolean;
   reason?: string;
 }
 
-export interface BudgetCheck {
-  hasBudget: boolean;
-  budgetId?: string;
-  budgetNumber?: string;
-  budgetName?: string;
-  periodType?: string;
-  periodStart?: string;
-  periodEnd?: string;
-  department: string;
-  category: string;
-  budgeted: boolean;
-  check: { budget: number; spent: number; pending: number; remaining: number; amount: number; wouldExceed: boolean; overrunAmount: number };
-  levels: ApprovalLevel[];
-}
+export type BudgetCheck = ExpenseBudgetCheck;
 
 export interface Expense {
   id: string;
@@ -98,6 +93,16 @@ export interface Expense {
   levels: LevelState[];
   nextLevel: number | null;
   budget: {
+    /** how the budget line was set: chosen by the user, suggested by the system, marked unbudgeted, or no approved budget */
+    mode?: "chosen" | "suggested" | "unbudgeted" | "none";
+    lineId?: string | null;
+    lineCategory?: string | null;
+    lineCategoryName?: string | null;
+    lineBudgetId?: string | null;
+    lineBudgetNumber?: string | null;
+    lineDepartment?: string | null;
+    unbudgeted?: boolean;
+    unbudgetedReason?: string | null;
     budgetId: string | null;
     budgetNumber: string | null;
     remaining: number | null;
@@ -107,7 +112,16 @@ export interface Expense {
     levels: ApprovalLevel[];
     approvals: LevelState[];
   };
+  /** purchase document the expense was posted from (procurement) */
   source: { type: string; id: string; number: string | null; requestId: string | null; purchaseOrderId: string | null } | null;
+  origin?: ExpenseOrigin;
+  /** petty cash / payroll expense: follows that workflow, read-only here */
+  managed?: boolean;
+  float?: { id: string; number: string; name?: string } | null;
+  voucher?: { id: string; number: string } | null;
+  payrollPeriod?: { id: string; number: string } | null;
+  linkCount?: number;
+  links?: MoneyLink[];
   paidAt: string | null;
   paidBy: { id: string; name: string } | null;
   paymentReference: string | null;
@@ -149,11 +163,16 @@ export interface ExpenseSummary {
   rejectedCount: number;
   overrunPending: number;
   procurement: number;
+  pettyCash?: number;
+  payroll?: number;
+  unbudgeted?: number;
+  unbudgetedCount?: number;
   missingReceipts: number;
   byCategory: Group[];
   byDepartment: Group[];
   byMethod: Group[];
   bySite: Group[];
+  bySource?: Group[];
 }
 
 /** Body of POST /expenses (also the offline record payload). */
@@ -168,6 +187,14 @@ export interface ExpensePayload {
   amount: number;
   description: string;
   reference: string | null;
+  /** DIRECT (default) or OTHER; petty cash, payroll and procurement expenses are posted by their module */
+  source?: EntrySource;
+  /** explicit budget line; with neither this nor `unbudgeted` the suggested line is used */
+  budgetLineId?: string | null;
+  unbudgeted?: boolean;
+  unbudgetedReason?: string | null;
+  /** POST only: links collected before the expense exists */
+  links?: LinkInput[];
   confirmOverrun?: boolean;
   overrunReason?: string | null;
 }
@@ -204,11 +231,12 @@ export function useFloats(enabled: boolean) {
 }
 
 const body = (b: object) => b as Record<string, unknown>;
-export const budgetCheck = (b: { category: string; department: string; date: string; amount: number; expenseId?: string | null }) => post<BudgetCheck>("/expenses/budget-check", body(b));
+export const budgetCheck = (b: BudgetCheckInput) => expenseBudgetCheck(b);
 export const createExpense = (b: ExpensePayload) => post<Expense>("/expenses", body(b));
 export const updateExpense = ({ id, body: b }: { id: string; body: Partial<ExpensePayload> }) => patch<Expense>(`/expenses/${id}`, body(b));
 
-export type ExpenseAction = "approve" | "reject" | "cancel" | "overrun/approve" | "overrun/reject" | "pay";
+/** `record-payment` records a payment made outside the system — the system never pays. */
+export type ExpenseAction = "approve" | "reject" | "cancel" | "overrun/approve" | "overrun/reject" | "record-payment";
 export const expenseAction = ({ id, action, payload }: { id: string; action: ExpenseAction; payload?: Record<string, unknown> }) => post<Expense>(`/expenses/${id}/${action}`, payload ?? {});
 
 export function uploadReceipt(id: string, file: File) {
@@ -232,8 +260,27 @@ export function receiptProblem(file: { type: string; size: number }): "expenses.
   return null;
 }
 
-/** Payment methods that need a payment reference when paid (transfer / cheque / transaction number). */
-export const needsPaymentReference = (m: PaymentMethod) => m !== "CASH" && m !== "PETTY_CASH";
+/** Payment methods that need a payment reference when the payment is recorded (transfer / cheque / transaction number). */
+export const needsPaymentReference = (m: PaymentMethod) => m !== "CASH" && m !== "PETTY_CASH" && m !== "OTHER";
+
+/** Where the read-only (managed) expense is handled, as a text key; null when it is handled here. */
+export function managedReasonKey(e: Pick<Expense, "managed" | "origin" | "actions">): string | null {
+  if (!e.managed) return null;
+  const r = e.actions?.reason ?? "";
+  if (r.endsWith("managed_payroll") || e.origin === "PAYROLL") return "expenses.reason.managed_payroll";
+  return "expenses.reason.managed_petty_cash";
+}
+
+/** App path of the record an expense comes from (petty cash voucher, wage sheet, purchase document), or null. */
+export function originLink(e: Pick<Expense, "id" | "voucher" | "payrollPeriod" | "source">): { to: string; label: string } | null {
+  if (e.voucher) return { to: `/petty-cash?entry=${encodeURIComponent(e.voucher.id)}`, label: e.voucher.number };
+  if (e.payrollPeriod) return { to: `/payroll/${e.payrollPeriod.id}`, label: e.payrollPeriod.number };
+  if (e.source) {
+    const po = e.source.type === "purchase_order" ? e.source.id : e.source.purchaseOrderId;
+    return { to: po ? `/procurement/orders/${po}` : `/finance/trace?expenseId=${e.id}`, label: e.source.number ?? "" };
+  }
+  return null;
+}
 
 /** Backend reason key (e.g. "expenses.err.self_approve") → frontend text key. */
 export const reasonKey = (backendKey: string | undefined) => (backendKey ? `expenses.reason.${backendKey.split(".").pop()}` : null);

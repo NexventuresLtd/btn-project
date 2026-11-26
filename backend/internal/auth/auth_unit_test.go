@@ -125,6 +125,10 @@ func TestNewRoleMatrix(t *testing.T) {
 		"expenses.view":       {FM, GM, MD, OA, PRO},
 		"expenses.record":     {FM, PM, SUP, STO},
 		"expenses.approve":    {FM, GM, MD},
+		"income.view":         {FM, GM, MD, OA},
+		"income.record":       {FM, SM},
+		"income.verify":       {FM},
+		"payroll.pay":         {FM},
 		"pettycash.custodian": {FM, SUP, PM},
 		"budgets.view":        {FM, GM, MD, OA, PM},
 		"budgets.manage":      {FM},
@@ -173,7 +177,7 @@ func TestNewRoleMatrix(t *testing.T) {
 	}
 	// Neither new role may touch administration or approvals of money.
 	for _, r := range []Role{RoleStockOfficer, RoleProcurementOfficer} {
-		for _, p := range []Permission{"users.manage", "settings.manage", "masterdata.manage", "payroll.authorize", "pettycash.approve", "expenses.approve", "procurement.approve", "transfers.approve", "stockcount.approve", "admin.monitor"} {
+		for _, p := range []Permission{"users.manage", "settings.manage", "masterdata.manage", "payroll.authorize", "pettycash.approve", "expenses.approve", "income.record", "income.verify", "income.view", "procurement.approve", "transfers.approve", "stockcount.approve", "admin.monitor"} {
 			if Can(r, p) {
 				t.Errorf("%s must not hold %s", r, p)
 			}

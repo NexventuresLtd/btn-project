@@ -8,6 +8,7 @@ const LOADERS: Record<string, () => Promise<unknown>> = {
   "/sales": () => import("@/modules/sales/SalesListPage"),
   "/sales/deliveries": () => import("@/modules/sales/DeliveriesPage"),
   "/sales/customers": () => import("@/modules/sales/CustomersPage"),
+  "/income": () => import("@/modules/income/IncomePage"),
   "/petty-cash": () => import("@/modules/pettycash/PettyCashPage"),
   "/payroll": () => import("@/modules/payroll/PeriodsPage"),
   "/payroll/workers": () => import("@/modules/payroll/WorkersPage"),

@@ -26,6 +26,10 @@ type entryInput struct {
 	InvoiceRef  *string
 	FloatID     *string
 	Department  *string
+	// budget link of the spending (an expense): an explicit line, or unbudgeted with a reason; neither = suggested line
+	BudgetLineID     string
+	Unbudgeted       bool
+	UnbudgetedReason *string
 }
 
 func inList(list []string, s string) bool {
@@ -176,6 +180,14 @@ func validateEntry(v *httpx.V, lang i18n.Lang, today string) entryInput {
 	in.InvoiceRef = optionalText(v, lang, "invoiceRef", 60)
 	in.FloatID = v.NullStr("floatId").Trim().Max(60).NilIfEmpty()
 	in.Department = v.NullStr("department").Trim().Max(40).NilIfEmpty()
+	if p := v.NullStr("budgetLineId").Trim().Max(60).NilIfEmpty(); p != nil {
+		in.BudgetLineID = *p
+	}
+	in.Unbudgeted = v.OptBool("unbudgeted").Default(false).Get()
+	in.UnbudgetedReason = v.NullStr("unbudgetedReason").Trim().Collapse().Max(500, "pettycash.v.at_most_500").NilIfEmpty()
+	if in.Unbudgeted && (in.UnbudgetedReason == nil || utf8.RuneCountInString(*in.UnbudgetedReason) < 5) {
+		v.Fail("unbudgetedReason", "pettycash.v.unbudgeted_reason")
+	}
 
 	if v.Failed() {
 		return in

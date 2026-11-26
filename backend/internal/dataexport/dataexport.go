@@ -94,6 +94,15 @@ var Tables = []Table{
 	{Name: "goods-receipts", Label: "procurement.export.receipts", Optional: "goods_receipt", DateCol: `g.date`, Order: `g.date, g.number`,
 		SQL:     `SELECT (to_jsonb(g) || jsonb_build_object('lines', (SELECT COALESCE(jsonb_agg(to_jsonb(l)), '[]') FROM goods_receipt_line l WHERE l.receipt_id = g.id)))::text FROM goods_receipt g`,
 		Columns: []export.Column{c("record", "dataexport.col.record", T)}},
+	// finance records (docs/FINANCE_RECORDS_DESIGN.md): every money-in and money-out record and their links
+	{Name: "income", Label: "dataexport.table.income", Personal: true, Optional: "income", DateCol: `i.date`, Order: `i.date, i.number`,
+		SQL: `SELECT (to_jsonb(i) - 'server_xid')::text FROM income i`, Columns: []export.Column{c("record", "dataexport.col.record", T)}},
+	{Name: "expenses", Label: "dataexport.table.expenses", Optional: "expense", DateCol: `e.date`, Order: `e.date, e.number`,
+		SQL: `SELECT (to_jsonb(e) - 'server_xid')::text FROM expense e`, Columns: []export.Column{c("record", "dataexport.col.record", T)}},
+	{Name: "income-links", Label: "dataexport.table.income_links", Optional: "income_link", DateCol: `l.created_at::date`, Order: `l.created_at, l.id`,
+		SQL: `SELECT to_jsonb(l)::text FROM income_link l`, Columns: []export.Column{c("record", "dataexport.col.record", T)}},
+	{Name: "expense-links", Label: "dataexport.table.expense_links", Optional: "expense_link", DateCol: `l.created_at::date`, Order: `l.created_at, l.id`,
+		SQL: `SELECT to_jsonb(l)::text FROM expense_link l`, Columns: []export.Column{c("record", "dataexport.col.record", T)}},
 	{Name: "workers", Label: "dataexport.table.workers", Personal: true,
 		SQL: `SELECT w.id, w."firstName", w."lastName", w."nationalId", w."momoNumber", w."momoName", w."jobTitle", p.code, w."dailyWage", w."startDate", w."isActive", w."createdAt"
 			FROM "Worker" w LEFT JOIN "Plant" p ON p.id = w."plantId"`, Order: `p.code, w."lastName", w."firstName"`,

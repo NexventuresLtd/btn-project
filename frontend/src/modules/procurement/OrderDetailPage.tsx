@@ -11,6 +11,7 @@ import { useConnectivity } from "@/offline/hooks";
 import { addInvoice, orderAction, PROC_KEY, receiveOrder, useOrder, type OrderDetail, type OrderLine } from "./api";
 import { AttachmentsCard, Info, Money, OrderStatusBadge, SupplierStatusBadge, Timeline } from "./components";
 import { TraceCard } from "./TraceCard";
+import { MoneyPanel } from "@/components/finance/MoneyPanel";
 
 export function OrderDetailPage() {
   const { id = "" } = useParams();
@@ -120,7 +121,7 @@ export function OrderDetailPage() {
                   <li key={i.id} className="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
                     <span className="font-semibold text-slate-900">{i.invoiceNumber}</span>
                     <span className="text-slate-500">{formatDate(i.invoiceDate)}{i.dueDate ? ` · ${t("procurement.orderDetail.due", { date: formatDate(i.dueDate) })}` : ""}{i.receiptNumber ? ` · ${i.receiptNumber}` : ""}</span>
-                    {i.expense ? <Badge tone={i.expense.status === "PAID" ? "green" : "amber"}>{i.expense.number} · {tx(`enums.status.${i.expense.status}`, undefined, i.expense.status)}</Badge> : <Badge>{t("procurement.orderDetail.noExpense")}</Badge>}
+                    {i.expense ? <Badge tone={i.expense.status === "PAID" ? "green" : "amber"}>{i.expense.number} · {i.expense.status === "PAID" ? t("procurement.orderDetail.paymentRecorded") : tx(`enums.status.${i.expense.status}`, undefined, i.expense.status)}</Badge> : <Badge>{t("procurement.orderDetail.noExpense")}</Badge>}
                     <span className="ml-auto tabular font-semibold">{formatRWF(i.amount)}</span>
                   </li>
                 ))}
@@ -128,6 +129,7 @@ export function OrderDetailPage() {
             )}
           </Card>
           {o.status !== "DRAFT" ? <TraceCard purchaseOrderId={o.id} /> : null}
+          <MoneyPanel entityType="purchase_order" entityId={o.id} />
         </div>
         <div className="space-y-5">
           <AttachmentsCard items={o.attachments} entity="order" entityId={o.id} canUpload={o.can.attach && online} invalidate={[...PROC_KEY, "order", o.id]}

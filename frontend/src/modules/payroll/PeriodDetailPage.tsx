@@ -1,20 +1,22 @@
 import { Fragment, useCallback, useState } from "react";
 import { Link, useParams } from "react-router";
-import { BadgeCheck, Banknote, CalendarDays, ChevronDown, ChevronRight, CircleSlash, HandCoins, Info, RotateCcw, ShieldCheck, TriangleAlert, Users, Wallet } from "lucide-react";
-import { Alert, Button, Card, CardHeader, ConfirmDialog, ErrorState, PageHeader, PageLoader, ExportMenu, PdfButton, StatCard, StatusBadge } from "@/components/ui";
+import { BadgeCheck, Banknote, CalendarDays, ChevronDown, ChevronRight, CircleSlash, ClipboardCheck, HandCoins, Info, Receipt, RotateCcw, ShieldCheck, TriangleAlert, Users } from "lucide-react";
+import { Alert, Button, Card, CardHeader, ConfirmDialog, ErrorState, PageHeader, PageLoader, ExportMenu, PdfButton, StatCard } from "@/components/ui";
 import { useT } from "@/i18n";
 import { useAuth } from "@/auth/AuthProvider";
 import { useMutate } from "@/hooks/useMutate";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatInt, formatQty, formatRWF } from "@/lib/format";
-import { formatDateTime } from "@/lib/dates";
+import { formatDateTime, todayISO } from "@/lib/dates";
 import { CalcDetails, CalcSummary, LineFlags } from "./CalcDetails";
 import { advance, PAYROLL_KEY, STEPS, usePeriod, type PayrollStep, type PeriodDetail } from "./api";
 import { ApprovalStepper } from "./ApprovalStepper";
 import { WageGrid } from "./WageGrid";
-import { PayModal, ReturnModal } from "./PeriodDialogs";
+import { RecordPaymentsModal, ReturnModal } from "./PeriodDialogs";
+import { PayrollStatusBadge } from "./components";
 import { MismatchBadge } from "./WorkersPage";
+import { MoneyPanel } from "@/components/finance/MoneyPanel";
 
 type AdvanceStep = Exclude<PayrollStep, "pay">;
 
@@ -66,7 +68,7 @@ export function PeriodDetailPage() {
         title={
           <span className="flex flex-wrap items-center gap-3">
             {p.label}
-            <StatusBadge status={p.status} />
+            <PayrollStatusBadge status={p.status} />
           </span>
         }
         breadcrumbs={[{ label: t("payroll.title"), to: "/payroll" }, { label: p.number }]}
@@ -83,7 +85,7 @@ export function PeriodDetailPage() {
                 <Button
                   key={s}
                   variant={s === "authorize" || s === "pay" ? "success" : "primary"}
-                  icon={s === "pay" ? <Wallet className="size-4" /> : s === "authorize" ? <ShieldCheck className="size-4" /> : <BadgeCheck className="size-4" />}
+                  icon={s === "pay" ? <ClipboardCheck className="size-4" /> : s === "authorize" ? <ShieldCheck className="size-4" /> : <BadgeCheck className="size-4" />}
                   disabled={disabled}
                   title={disabled ? (s === "prepare" && dirty ? t("payroll.detail.saveFirst") : a[s].reason) : undefined}
                   onClick={() => runStep(s)}
@@ -116,6 +118,19 @@ export function PeriodDetailPage() {
         <div className="mb-5">
           <Alert tone="blue" title={t("payroll.detail.waitingTitle", { step: tx(`payroll.step.${next.step}.label`).toLocaleLowerCase() })}>
             <span className="inline-flex items-center gap-1"><Info className="size-3.5" /> {t("payroll.detail.waitingText", { who: tx(`payroll.step.${next.step}.who`) })}</span>
+          </Alert>
+        </div>
+      ) : null}
+
+      {p.status === "PAID" ? (
+        <div className="mb-5">
+          <Alert tone="green" title={t("payroll.detail.paymentsRecordedTitle")}>
+            <span>{t("payroll.detail.paymentsRecordedText")}</span>
+            {can("expenses.view") || can("expenses.record") || can("expenses.approve") ? (
+              <Link to={`/expenses?payrollPeriodId=${encodeURIComponent(p.id)}&from=${p.startDate}&to=${todayISO()}`} className="mt-1 flex items-center gap-1 font-medium text-navy-700 underline">
+                <Receipt className="size-3.5" aria-hidden />{t("payroll.detail.viewExpenses")}
+              </Link>
+            ) : null}
           </Alert>
         </div>
       ) : null}
@@ -165,6 +180,8 @@ export function PeriodDetailPage() {
         {editing ? <WageGrid period={p} onDirtyChange={onDirtyChange} /> : <ReadOnlySheet period={p} />}
       </Card>
 
+      <MoneyPanel entityType="payroll_period" entityId={p.id} className="mt-5" />
+
       {confirm ? (
         <ConfirmDialog
           open
@@ -183,7 +200,7 @@ export function PeriodDetailPage() {
         </ConfirmDialog>
       ) : null}
       <ReturnModal open={returning} onClose={() => setReturning(false)} period={p} />
-      <PayModal open={paying} onClose={() => setPaying(false)} period={p} canRecordPettyCash={can("pettycash.record")} />
+      <RecordPaymentsModal open={paying} onClose={() => setPaying(false)} period={p} canRecordPettyCash={can("pettycash.record")} />
     </>
   );
 }

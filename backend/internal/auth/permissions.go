@@ -108,6 +108,12 @@ var Matrix = []permRule{
 	{"expenses.record", rr(FM, PM, SUP, STO)},
 	{"expenses.approve", rr(FM, GM, MD)},
 
+	// Income records (money in). Recorded, never collected by the system: FM records and verifies, Sales records the
+	// payments customers made on orders, management reads.
+	{"income.view", rr(FM, GM, MD, OA)},
+	{"income.record", rr(FM, SM)},
+	{"income.verify", rr(FM)},
+
 	{"budgets.view", rr(FM, GM, MD, OA, PM)},
 	{"budgets.manage", rr(FM)},
 	{"budgets.approve", rr(GM, MD)}, // overrun approval

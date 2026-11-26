@@ -79,6 +79,7 @@ func (h *handler) reportPDF(c *fiber.Ctx) error {
 		{Label: t("expenses.pdf.k_unpaid"), Value: format.RWF(float64(sum.Unpaid))},
 		{Label: t("expenses.pdf.k_pending"), Value: format.RWF(float64(sum.Pending)), Hint: t("expenses.pdf.n_expenses", "n", sum.PendingCount)},
 		{Label: t("expenses.pdf.k_procurement"), Value: format.RWF(float64(sum.Procurement))},
+		{Label: t("expenses.pdf.k_unbudgeted"), Value: format.RWF(float64(sum.Unbudgeted)), Hint: t("expenses.pdf.n_expenses", "n", sum.UnbudgetedCount)},
 	})
 	var data [][]any
 	var total int64
@@ -116,6 +117,10 @@ func (h *handler) reportPDF(c *fiber.Ctx) error {
 	group(t("expenses.pdf.s_category"), sum.ByCategory)
 	group(t("expenses.pdf.s_department"), sum.ByDepartment)
 	group(t("expenses.pdf.s_method"), sum.ByMethod)
+	group(t("expenses.pdf.s_source"), sum.BySource)
+	group(t("expenses.pdf.s_budget_line"), sum.ByBudgetLine)
+	group(t("expenses.pdf.s_supplier"), sum.BySupplier)
+	group(t("expenses.pdf.s_linked"), sum.ByLinkedType)
 	if sum.MissingReceipts > 0 {
 		rep.Note(t("expenses.pdf.missing_receipts", "n", sum.MissingReceipts))
 	}
@@ -172,11 +177,31 @@ func (h *handler) voucherPDF(c *fiber.Ctx) error {
 		{t("expenses.pdf.c_supplier"), dash(e.SupplierName)}, {t("expenses.pdf.c_description"), e.Description},
 		{t("expenses.pdf.c_method"), t("expenses.method." + e.PaymentMethod)}, {t("expenses.pdf.c_reference"), dash(e.Reference)},
 	}
+	det = append(det, []any{t("expenses.pdf.c_origin"), t("expenses.src." + e.Origin)})
 	if e.Source != nil {
 		det = append(det, []any{t("expenses.pdf.c_source"), t("expenses.source."+e.Source.Type) + " " + dash(e.Source.Number)})
 	}
+	if e.Float != nil {
+		det = append(det, []any{t("expenses.pdf.c_float"), e.Float.Number + " · " + e.Float.Name})
+	}
+	if e.PayrollPeriod != nil {
+		det = append(det, []any{t("expenses.pdf.c_payroll"), e.PayrollPeriod.Number})
+	}
+	switch e.Budget.Mode {
+	case "unbudgeted":
+		det = append(det, []any{t("expenses.pdf.c_budget_line"), t("expenses.budget.unbudgeted") + " — " + dash(e.Budget.UnbudgetedReason)})
+	case "none":
+		det = append(det, []any{t("expenses.pdf.c_budget_line"), t("expenses.budget.none")})
+	default:
+		det = append(det, []any{t("expenses.pdf.c_budget_line"), dash(e.Budget.LineBudgetNumber) + " · " + dash(e.Budget.LineCategoryName)})
+	}
 	if e.PaidAt != nil {
 		det = append(det, []any{t("expenses.pdf.c_paid"), dates.FormatDateTime(*e.PaidAt) + " · " + dash(e.PaymentReference)})
+	}
+	for _, l := range e.Links {
+		if l.RemovedAt == nil {
+			det = append(det, []any{t("expenses.pdf.c_linked"), l.TypeLabel + ": " + l.Label})
+		}
 	}
 	rep.Section(t("expenses.pdf.s_details")).Table([]pdf.Column{{Header: t("expenses.pdf.c_field"), Width: 1.4}, {Header: t("expenses.pdf.c_details"), Width: 4}}, det, nil)
 	var trail [][]any

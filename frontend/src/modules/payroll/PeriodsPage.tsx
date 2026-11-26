@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { Banknote, CalendarDays, ClipboardCheck, HandCoins, Plus, Users } from "lucide-react";
-import { Button, Card, DataTable, ErrorState, FilterBar, PageHeader, Pagination, ExportMenu, PdfButton, Select, StatCard, StatusBadge, Tabs, useFilters, type Column } from "@/components/ui";
+import { Button, Card, DataTable, ErrorState, FilterBar, PageHeader, Pagination, ExportMenu, PdfButton, Select, StatCard, Tabs, useFilters, type Column } from "@/components/ui";
 import { useT } from "@/i18n";
 import { Can } from "@/auth/guards";
 import { formatDateTime, todayISO } from "@/lib/dates";
 import { formatInt, formatQty, formatRWF } from "@/lib/format";
 import { usePeriods, type PayrollStatus, type PeriodRow } from "./api";
+import { PayrollStatusBadge } from "./components";
 import { NewPeriodModal } from "./NewPeriodModal";
 
 const TABS: { value: PayrollStatus | "ALL" }[] = ["ALL", "DRAFT", "PREPARED", "CHECKED", "VERIFIED", "AUTHORIZED", "PAID"].map((value) => ({ value: value as PayrollStatus | "ALL" }));
@@ -61,7 +62,7 @@ export function PeriodsPage() {
       header: tr("common.status"),
       cell: (r) => (
         <div className="flex flex-col items-start gap-1">
-          <StatusBadge status={r.status} />
+          <PayrollStatusBadge status={r.status} />
           {r.status === "DRAFT" && r.rejectComment ? <span className="text-[11px] font-medium text-red-600">{tr("payroll.returned")}</span> : null}
         </div>
       ),
@@ -105,7 +106,7 @@ export function PeriodsPage() {
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 pt-5 pb-4">
           <div className="max-w-full overflow-x-auto">
             <Tabs
-              tabs={TABS.map((tab) => ({ value: tab.value, label: tab.value === "ALL" ? tr("common.all") : tx(`enums.status.${tab.value}`), count: tab.value === "ALL" ? allCount : counts[tab.value] ?? 0 }))}
+              tabs={TABS.map((tab) => ({ value: tab.value, label: tab.value === "ALL" ? tr("common.all") : tab.value === "PAID" ? tr("payroll.status.PAID") : tx(`enums.status.${tab.value}`), count: tab.value === "ALL" ? allCount : counts[tab.value] ?? 0 }))}
               value={status}
               onChange={(v) => setParam("status", v === "ALL" ? null : v)}
             />

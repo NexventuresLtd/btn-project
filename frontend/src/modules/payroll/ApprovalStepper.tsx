@@ -17,17 +17,18 @@ export function ApprovalStepper({ period }: { period: PeriodDetail }) {
         const done = reached >= i + 1 && !!signoff;
         const current = reached === i;
         return (
-          <li key={s.step} className="relative flex gap-3 sm:flex-col sm:gap-2 sm:pr-4">
+          <li key={s.step} className="relative flex gap-3 sm:flex-col sm:gap-2 sm:pr-4" aria-current={current ? "step" : undefined}>
             {i < STEPS.length - 1 ? (
-              <span aria-hidden className={cn("absolute top-4 left-4 hidden h-0.5 w-full sm:block", done ? "bg-emerald-500" : "bg-slate-200")} />
+              <span aria-hidden className={cn("absolute top-4 left-4 hidden h-0.5 w-full sm:block", done ? "bg-emerald-700" : "bg-slate-200")} />
             ) : null}
             <span
               className={cn(
                 "relative z-10 grid size-8 shrink-0 place-items-center rounded-full text-xs font-bold ring-4 ring-white",
-                done ? "bg-emerald-500 text-white" : current ? "bg-accent text-navy-950" : "bg-slate-100 text-slate-400",
+                // white on emerald-500 is 2.5:1; emerald-700 is 5.5:1 (WCAG 1.4.11 needs 3:1 for the check icon)
+                done ? "bg-emerald-700 text-white" : current ? "bg-accent text-navy-950" : "bg-slate-100 text-slate-500",
               )}
             >
-              {done ? <Check className="size-4" /> : i + 1}
+              {done ? <Check className="size-4" aria-hidden /> : i + 1}
             </span>
             <div className="min-w-0">
               <p className={cn("text-[13px] font-semibold", done ? "text-slate-900" : current ? "text-navy-800" : "text-slate-500")}>{tx(`payroll.step.${s.step}.label`)}</p>

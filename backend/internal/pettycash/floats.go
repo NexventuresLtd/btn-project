@@ -69,7 +69,7 @@ FROM petty_cash_float f
 LEFT JOIN "User" cu ON cu.id = f.custodian_id
 LEFT JOIN "Plant" p ON p.id = f.plant_id
 LEFT JOIN LATERAL (
-	SELECT SUM(CASE WHEN e.status = 'APPROVED' THEN (CASE WHEN e.type = 'DEPOSIT' THEN e.amount ELSE -(e.amount + e."momoCharge") END) END) AS bal,
+	SELECT (SELECT SUM(l.effect) FROM petty_cash_ledger l WHERE l.float_id = f.id AND l.status = 'APPROVED') AS bal,
 		SUM(e.amount + e."momoCharge") FILTER (WHERE e.status = 'SUBMITTED' AND e.type = 'EXPENSE') AS pend_out,
 		SUM(e.amount) FILTER (WHERE e.status = 'SUBMITTED' AND e.type = 'DEPOSIT') AS pend_in,
 		count(*) FILTER (WHERE e.status = 'SUBMITTED') AS pend_n, max(e."createdAt") AS last_at
@@ -571,8 +571,8 @@ func (h *handler) reconcile(c *fiber.Ctx) error {
 		}
 		var book int64
 		var pending int
-		if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(`+effSQL+`) FILTER (WHERE e.status = 'APPROVED' AND e.date <= $2), 0)::bigint,
-			count(*) FILTER (WHERE e.status = 'SUBMITTED')::int FROM "PettyCashEntry" e WHERE e."floatId" = $1`, f.ID, date).Scan(&book, &pending); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(l.effect) FILTER (WHERE l.status = 'APPROVED' AND l.date <= $2), 0)::bigint,
+			count(*) FILTER (WHERE l.status = 'SUBMITTED')::int FROM petty_cash_ledger l WHERE l.float_id = $1`, f.ID, date).Scan(&book, &pending); err != nil {
 			return "", err
 		}
 		diff, status := ReconcileDifference(counted, book)
@@ -679,7 +679,7 @@ func (h *handler) reviewReconciliation(c *fiber.Ctx) error {
 			now := db.Now()
 			d, _ := dates.ParseISO(r.Date)
 			if _, err := tx.Exec(ctx, insertSQL, eid, number, d, typ, cat, refCode, nil, desc, r.FloatID, nil, nil, nil, amt, 0, &r.Number,
-				StatusApproved, u.ID, u.ID, now, &comment, ReconciliationSource, r.ID, nil, now); err != nil {
+				StatusApproved, u.ID, u.ID, now, &comment, ReconciliationSource, r.ID, nil, now, nil); err != nil {
 				return err
 			}
 			adj = &eid

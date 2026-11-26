@@ -11,7 +11,8 @@ func init() {
 	export.Register(export.Report{Path: "/budgets/vs-actual", Name: "budget-vs-actual", Title: "budgets.export.vs_title",
 		Build: func(b *export.Builder, j export.J) {
 			b.Filter("budgets.pdf.period", export.FormatDateISO(j.S("periodStart"))+" – "+export.FormatDateISO(j.S("periodEnd")))
-			b.Columns(col("department", "budgets.pdf.c_department", export.Text), col("category", "budgets.pdf.c_category", export.Text),
+			b.Columns(col("type", "budgets.export.line_type", export.Text), col("department", "budgets.pdf.c_department", export.Text),
+				col("category", "budgets.pdf.c_category", export.Text),
 				col("budgetNo", "budgets.export.budget_no", export.Text), col("budget", "budgets.pdf.c_budget", export.Money),
 				col("expenses", "budgets.pdf.c_expenses", export.Money), col("procurement", "budgets.pdf.c_procurement", export.Money),
 				col("petty", "budgets.pdf.c_petty", export.Money), col("payroll", "budgets.pdf.c_payroll", export.Money),
@@ -19,12 +20,23 @@ func init() {
 				col("used", "budgets.pdf.c_used", export.Percent), col("pending", "budgets.pdf.c_pending", export.Money),
 				col("remaining", "budgets.export.remaining", export.Money), col("status", "budgets.pdf.c_status", export.Text))
 			for _, r := range j.Arr("rows") {
-				b.Row(r.V("departmentName"), r.V("categoryName"), r.V("budgetNumber"), r.V("variance.budget"), r.V("actual.expenses"), r.V("actual.procurement"),
+				typ := b.T("budgets.line_type.EXPENSE")
+				if r.V("unbudgeted") == true {
+					typ = b.T("budgets.unbudgeted_marked")
+				}
+				b.Row(typ, r.V("departmentName"), r.V("categoryName"), r.V("budgetNumber"), r.V("variance.budget"), r.V("actual.expenses"), r.V("actual.procurement"),
 					r.V("actual.pettyCash"), r.V("actual.payroll"), r.V("variance.actual"), r.V("variance.variance"), r.V("variance.usedPct"), r.V("variance.pending"),
 					r.V("variance.remaining"), b.T("budgets.vstatus."+r.S("variance.status")))
 			}
-			b.Row(b.T("budgets.pdf.total"), "", "", j.V("totals.budget"), j.V("actual.expenses"), j.V("actual.procurement"), j.V("actual.pettyCash"),
+			b.Row(b.T("budgets.pdf.total"), "", "", "", j.V("totals.budget"), j.V("actual.expenses"), j.V("actual.procurement"), j.V("actual.pettyCash"),
 				j.V("actual.payroll"), j.V("totals.actual"), j.V("totals.variance"), j.V("totals.usedPct"), j.V("totals.pending"), j.V("totals.remaining"), "")
+			for _, r := range j.Arr("incomeRows") {
+				b.Row(b.T("budgets.line_type.INCOME"), r.V("departmentName"), r.V("categoryName"), r.V("budgetNumber"), r.V("variance.budget"), nil, nil, nil, nil,
+					r.V("variance.actual"), r.V("variance.variance"), r.V("variance.usedPct"), nil, nil, b.T("budgets.vstatus."+r.S("variance.status")))
+			}
+			b.Row(b.T("budgets.export.income_total"), "", "", "", j.V("incomeTotals.budget"), nil, nil, nil, nil, j.V("incomeTotals.actual"), j.V("incomeTotals.variance"),
+				j.V("incomeTotals.usedPct"), nil, nil, "")
+			b.Row(b.T("budgets.export.net"), "", "", "", j.V("net.planned"), nil, nil, nil, nil, j.V("net.actual"), nil, nil, nil, nil, "")
 		}})
 	export.Register(export.Report{Path: "/budgets", Name: "budgets", Title: "budgets.export.list_title",
 		Build: func(b *export.Builder, j export.J) {
@@ -44,12 +56,16 @@ func init() {
 		Build: func(b *export.Builder, j export.J) {
 			b.Name("budget-" + j.S("number"))
 			b.Filter("budgets.pdf.period", export.FormatDateISO(j.S("periodStart"))+" – "+export.FormatDateISO(j.S("periodEnd")))
-			b.Columns(col("category", "budgets.pdf.c_category", export.Text), col("proposed", "budgets.pdf.c_proposed", export.Money),
+			b.Columns(col("type", "budgets.export.line_type", export.Text), col("category", "budgets.pdf.c_category", export.Text), col("proposed", "budgets.pdf.c_proposed", export.Money),
 				col("approved", "budgets.pdf.c_approved", export.Money), col("actual", "budgets.pdf.c_actual", export.Money),
 				col("variance", "budgets.pdf.c_variance", export.Money), col("used", "budgets.pdf.c_used", export.Percent),
 				col("pending", "budgets.pdf.c_pending", export.Money), col("status", "budgets.pdf.c_status", export.Text))
 			for _, l := range j.Arr("lines") {
-				b.Row(l.V("categoryName"), l.V("amount"), l.V("approvedAmount"), l.V("variance.actual"), l.V("variance.variance"), l.V("variance.usedPct"),
+				typ := b.T("budgets.line_type." + l.S("type"))
+				if l.V("unbudgeted") == true {
+					typ = b.T("budgets.unbudgeted_marked")
+				}
+				b.Row(typ, l.V("categoryName"), l.V("amount"), l.V("approvedAmount"), l.V("variance.actual"), l.V("variance.variance"), l.V("variance.usedPct"),
 					l.V("variance.pending"), b.T("budgets.vstatus."+l.S("variance.status")))
 			}
 		}})

@@ -53,6 +53,11 @@ export interface PettyEntry {
   reviewComment: string | null;
   createdAt: string;
   balanceAfter: number | null;
+  /** the expense this spending voucher is (kept in step by the server); null for top-ups */
+  expenseId?: string | null;
+  expenseNumber?: string | null;
+  budgetLineId?: string | null;
+  unbudgeted?: boolean;
 }
 
 export interface EntriesResponse {
@@ -101,6 +106,10 @@ export interface EntryPayload {
   amount: number;
   momoCharge: number;
   invoiceRef: string | null;
+  /** budget link of the spending (expense entries): an explicit line, or unbudgeted with a reason; neither = the suggested line */
+  budgetLineId?: string | null;
+  unbudgeted?: boolean;
+  unbudgetedReason?: string | null;
 }
 
 export const PC_KEY = ["pettycash"] as const;

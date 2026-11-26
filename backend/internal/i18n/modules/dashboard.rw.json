@@ -380,7 +380,7 @@
  "dashboard.w.deliveries.pending.description": "Ibyatumijwe biteguye koherezwa n'ibiri mu nzira bigezwa.",
  "dashboard.w.deliveries.pending.empty": "Nta kintu gitegereje kugezwa.",
  "dashboard.w.deliveries.pending.title": "Ibitegereje kugezwa",
- "dashboard.w.finance.expenses.description": "Amafaranga yakoreshejwe yemejwe, amasoko, amafaranga make n'imishahara yishyuwe, ku cyiciro.",
+ "dashboard.w.finance.expenses.description": "Ibisohoka byose byanditswe — bisanzwe, fagitire z'abatanga ibicuruzwa, amafaranga make n'imishahara — ku cyiciro.",
  "dashboard.w.finance.expenses.empty": "Nta mafaranga yakoreshejwe yanditswe muri iki gihe.",
  "dashboard.w.finance.expenses.title": "Amafaranga yakoreshejwe",
  "dashboard.w.finance.revenue.description": "Ibyagurishijwe byemejwe, ubwishyu bwakusanyijwe n'amadeni y'abakiriya atarishyurwa.",
@@ -461,5 +461,13 @@
  "dashboard.w.transfers.pending.title": "Ihererekanya ritegereje",
  "dashboard.w.workforce.headcount.description": "Abakozi bahari, bakoze igice cy'umunsi, badahari cyangwa bari mu kiruhuko uyu munsi, n'abataranditswe.",
  "dashboard.w.workforce.headcount.empty": "Nta mukozi ukora uranditswe.",
- "dashboard.w.workforce.headcount.title": "Umubare w'abakozi uyu munsi"
+ "dashboard.w.workforce.headcount.title": "Umubare w'abakozi uyu munsi",
+ "dashboard.m.income": "Ibyinjiye byanditswe",
+ "dashboard.m.orderPayments": "Ubwishyu bw'ibyatumijwe",
+ "dashboard.m.otherIncome": "Andi mafaranga yinjiye",
+ "dashboard.m.unverifiedIncome": "Bitaragenzurwa",
+ "dashboard.m.net": "Uko bihagaze (ibyinjiye − ibyasohotse)",
+ "dashboard.w.finance.income.title": "Ibyinjiye",
+ "dashboard.w.finance.income.description": "Amafaranga yakiriwe akandikwa (ubwishyu bw'ibyatumijwe n'ibindi) ku cyiciro, n'uko bihagaze.",
+ "dashboard.w.finance.income.empty": "Nta byinjiye byanditswe muri iki gihe."
 }

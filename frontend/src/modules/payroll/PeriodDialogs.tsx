@@ -6,7 +6,7 @@ import { useT } from "@/i18n";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { formatInt, formatRWF } from "@/lib/format";
 import { todayISO } from "@/lib/dates";
-import { PAYMENT_METHODS, PAYROLL_KEY, payPeriod, returnToDraft, type PaymentMethod, type PeriodDetail } from "./api";
+import { PAYMENT_METHODS, PAYROLL_KEY, recordWagePayments, returnToDraft, type PaymentMethod, type PeriodDetail } from "./api";
 
 const invalidate = (id: string) => [[...PAYROLL_KEY, "period", id], [...PAYROLL_KEY, "periods"]];
 
@@ -57,7 +57,8 @@ export function ReturnModal({ open, onClose, period }: { open: boolean; onClose:
   );
 }
 
-export function PayModal({ open, onClose, period, canRecordPettyCash }: { open: boolean; onClose: () => void; period: PeriodDetail; canRecordPettyCash: boolean }) {
+/** Record the wage payments of an authorised sheet: the money was paid outside the system; this keeps the record. */
+export function RecordPaymentsModal({ open, onClose, period, canRecordPettyCash }: { open: boolean; onClose: () => void; period: PeriodDetail; canRecordPettyCash: boolean }) {
   const { t, tx } = useT();
   const payable = period.lines.filter((l) => l.netAmount > 0);
   const [refs, setRefs] = useState<Record<string, string>>({});
@@ -75,9 +76,9 @@ export function PayModal({ open, onClose, period, canRecordPettyCash }: { open: 
     }
   }, [open]);
 
-  const pay = useMutate(payPeriod, {
+  const pay = useMutate(recordWagePayments, {
     success: (r) => (r.pettyCash.created ? t("payroll.pay.donePetty", { number: period.number, count: r.pettyCash.created }) : t("payroll.pay.done", { number: period.number })),
-    invalidate: [...invalidate(period.id), ["pettycash"]],
+    invalidate: [...invalidate(period.id), ["pettycash"], ["expenses"], ["finance"], ["budgets"]],
     onSuccess: (r) => {
       if (r.period.payments?.count) toast.info(t("payroll.wrk.paymentsRecorded", { count: r.period.payments.count, amount: formatRWF(r.period.payments.amount) }));
       if (r.warning) toast.warning(r.warning, { duration: 12_000 });
@@ -119,6 +120,7 @@ export function PayModal({ open, onClose, period, canRecordPettyCash }: { open: 
       }
     >
       <div className="space-y-4">
+        <p className="text-sm text-slate-600">{t("payroll.pay.recordNote")}</p>
         {mismatches.length ? (
           <Alert tone="amber" title={t("payroll.pay.mismatchTitle", { count: mismatches.length })}>
             {mismatches.map((l) => `${l.worker.fullName} → ${l.worker.momoName}`).join(" · ")}
@@ -189,9 +191,9 @@ export function PayModal({ open, onClose, period, canRecordPettyCash }: { open: 
         {canRecordPettyCash ? (
           <div className="rounded-xl border border-line bg-slate-50/60 p-3.5">
             <Checkbox label={t("payroll.pay.pettyLabel")} checked={petty} onChange={(e) => setPetty(e.target.checked)} />
-            <p className="mt-1 ml-6 text-xs text-slate-500">{t("payroll.pay.pettyNote", { amount: formatRWF(period.totals.net), number: period.number })}</p>
+            <p className="mt-1 ml-6 text-xs text-slate-500">{petty ? t("payroll.pay.pettyNote", { amount: formatRWF(period.totals.net), number: period.number }) : t("payroll.pay.expenseNote", { number: period.number })}</p>
           </div>
-        ) : null}
+        ) : <p className="text-xs text-slate-500">{t("payroll.pay.expenseNote", { number: period.number })}</p>}
       </div>
     </Modal>
   );

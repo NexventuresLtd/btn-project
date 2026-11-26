@@ -94,6 +94,7 @@ func init() {
 	registerWidget("sync.conflicts", widgetDef{perms: []auth.Permission{"sync.resolve"}, link: "/sync/conflicts", build: wSyncConflicts})
 	registerWidget("sync.sites", widgetDef{perms: []auth.Permission{"admin.monitor", "reports.view", "sync.resolve"}, link: "/admin/sync-monitor", wide: true, build: wSyncSites})
 	registerWidget("finance.revenue", widgetDef{perms: []auth.Permission{"sales.view"}, link: "/sales/receivables", build: wRevenue})
+	registerWidget("finance.income", widgetDef{perms: []auth.Permission{"income.view"}, link: "/income", build: wIncome})
 	registerWidget("finance.expenses", widgetDef{perms: []auth.Permission{"expenses.view", "pettycash.view", "budgets.view"}, link: "/expenses", build: wExpenses})
 	registerWidget("pettycash.summary", widgetDef{perms: []auth.Permission{"pettycash.view"}, link: "/petty-cash", build: wPettyCash})
 	registerWidget("budgets.status", widgetDef{perms: []auth.Permission{"budgets.view"}, link: "/budgets", wide: true, build: wBudgets})
@@ -756,6 +757,49 @@ func wRevenue(ctx context.Context, e *env, w *Widget) error {
 	return nil
 }
 
+// wIncome: money in recorded in the period (every income record, not void) — order payments and other income — and
+// the net position against approved / recorded expenses.
+func wIncome(ctx context.Context, e *env, w *Widget) error {
+	var total, orders, other, unverified, spend int64
+	if err := e.pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0)::bigint, COALESCE(SUM(amount) FILTER (WHERE source='ORDER_PAYMENT'),0)::bigint,
+			COALESCE(SUM(amount) FILTER (WHERE source<>'ORDER_PAYMENT'),0)::bigint, COALESCE(SUM(amount) FILTER (WHERE status='RECORDED'),0)::bigint
+		FROM income WHERE status <> 'VOID' AND date >= $1::date AND date <= $2::date AND ($3 = '' OR plant_id = $3)`, e.from, e.to, e.plant).
+		Scan(&total, &orders, &other, &unverified); err != nil {
+		return err
+	}
+	if err := e.pool.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0)::bigint FROM expense WHERE status IN ('APPROVED','PAID') AND date >= $1::date AND date <= $2::date
+		AND ($3 = '' OR plant_id = $3)`, e.from, e.to, e.plant).Scan(&spend); err != nil {
+		return err
+	}
+	w.Metrics = append(w.Metrics, e.metric("income", iv(total), "rwf"), e.metric("orderPayments", iv(orders), "rwf"), e.metric("otherIncome", iv(other), "rwf"),
+		Metric{Key: "unverifiedIncome", Label: e.t("dashboard.m.unverifiedIncome"), Value: iv(unverified), Unit: "rwf", Link: "/income?status=RECORDED"})
+	if e.u.Can("expenses.view") {
+		net := e.metric("net", iv(total-spend), "rwf")
+		net.Tone = toneFor(total >= spend)
+		w.Metrics = append(w.Metrics, net)
+	}
+	nc := nameCol(e.lang)
+	err := each(ctx, e, `SELECT i.category, COALESCE(ri.`+nc+`, ri.name_en, i.category), SUM(i.amount)::bigint FROM income i
+		LEFT JOIN refdata_item ri ON ri.kind = 'income_category' AND ri.code = i.category
+		WHERE i.status <> 'VOID' AND i.date >= $1::date AND i.date <= $2::date AND ($3 = '' OR i.plant_id = $3) GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 8`,
+		[]any{e.from, e.to, e.plant}, func(r pgx.Rows) error {
+			var code, label string
+			var a int64
+			if err := r.Scan(&code, &label, &a); err != nil {
+				return err
+			}
+			w.Bars = append(w.Bars, Bar{Label: label, Value: float64(a), Unit: "rwf", Link: "/income?category=" + code})
+			return nil
+		})
+	if err != nil {
+		return err
+	}
+	if total == 0 {
+		w.Status = "empty"
+	}
+	return nil
+}
+
 func formatChange(p float64) string {
 	sign := "+"
 	if p < 0 {
@@ -778,22 +822,14 @@ func replaceRange(sql string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(sql, "$1::date", "rng.f"), "$2::date", "rng.t")
 }
 
-// SpendSQL is every approved spend row (d, department, category, src, amount, plant) in [$1,$2] — expenses (incl.
-// procurement-posted ones), approved petty-cash expenses not already counted elsewhere, and paid wages; the same
-// definition the budgets module uses for budget vs actual (FIN-03/FIN-06).
+// SpendSQL is every approved spend row (d, department, category, src, amount, plant) in [$1,$2]. Every money-out record
+// is an expense (docs/FINANCE_RECORDS_DESIGN.md): direct/other ("expense"), supplier invoices ("procurement"), petty cash
+// spending ("petty_cash") and wages ("payroll") — the same records budgets use for budget vs actual (FIN-03/FIN-06).
 const SpendSQL = `
-	SELECT e.date AS d, e.department, e.category, CASE WHEN e.source_type IS NOT NULL THEN 'procurement' ELSE 'expense' END AS src, e.amount::bigint AS amount, e.plant_id AS plant
-	FROM expense e WHERE e.status IN ('APPROVED','PAID') AND e.date >= $1::date AND e.date <= $2::date
-	UNION ALL
-	SELECT pe.date, COALESCE(pe.department, f.department, ''), COALESCE(pe."expenseCategory", pe.category::text), 'petty_cash', (pe.amount + pe."momoCharge")::bigint, pe."plantId"
-	FROM "PettyCashEntry" pe LEFT JOIN petty_cash_float f ON f.id = pe."floatId"
-	WHERE pe.status = 'APPROVED' AND pe.type = 'EXPENSE' AND pe.date >= $1::date AND pe.date <= $2::date
-		AND (pe."sourceType" IS NULL OR pe."sourceType" NOT IN ('PayrollPeriod','Expense'))
-	UNION ALL
-	SELECT (p."paidAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Kigali')::date, 'PRODUCTION', 'WAGES', 'payroll', l."netAmount"::bigint, p."plantId"
-	FROM "PayrollPeriod" p JOIN "PayrollLine" l ON l."periodId" = p.id
-	WHERE p.status = 'PAID' AND p."paidAt" IS NOT NULL
-		AND (p."paidAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Kigali')::date >= $1::date AND (p."paidAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Africa/Kigali')::date <= $2::date`
+	SELECT e.date AS d, e.department, e.category,
+		CASE e.source WHEN 'PROCUREMENT' THEN 'procurement' WHEN 'PETTY_CASH' THEN 'petty_cash' WHEN 'PAYROLL' THEN 'payroll' ELSE 'expense' END AS src,
+		e.amount::bigint AS amount, e.plant_id AS plant
+	FROM expense e WHERE e.status IN ('APPROVED','PAID') AND e.date >= $1::date AND e.date <= $2::date`
 
 func wExpenses(ctx context.Context, e *env, w *Widget) error {
 	nc := nameCol(e.lang)
@@ -853,11 +889,16 @@ func wPettyCash(ctx context.Context, e *env, w *Widget) error {
 		FROM "PettyCashEntry" WHERE ($3 = '' OR "plantId" = $3)`, e.from, e.to, e.plant).Scan(&bal, &dep, &exp, &pendN, &pendA); err != nil {
 		return err
 	}
+	// the balance is the float ledger: top-ups in, the expenses paid out of the floats
+	if err := e.pool.QueryRow(ctx, `SELECT COALESCE(SUM(effect), 0)::bigint FROM petty_cash_ledger WHERE status = 'APPROVED' AND date <= $1::date
+		AND ($2 = '' OR plant_id = $2)`, e.to, e.plant).Scan(&bal); err != nil {
+		return err
+	}
 	w.Metrics = append(w.Metrics, e.metric("balance", iv(bal), "rwf"), e.metric("deposits", iv(dep), "rwf"), e.metric("pettyCashSpend", iv(exp), "rwf"),
 		Metric{Key: "awaitingApproval", Label: e.t("dashboard.m.awaitingApproval"), Value: iv(pendN), Unit: "int", Hint: e.t("dashboard.hint.amount", "amount", fmtRWF(pendA)), Link: "/petty-cash?status=SUBMITTED"})
 	w.Columns = []Column{e.col("float", "text"), e.col("custodian", "text"), e.col("balance", "rwf"), e.col("lowThreshold", "rwf")}
-	err := each(ctx, e, `WITH b AS (SELECT "floatId" fid, SUM(CASE WHEN type='DEPOSIT' THEN amount ELSE -(amount + "momoCharge") END)::bigint bal
-			FROM "PettyCashEntry" WHERE status='APPROVED' AND "floatId" IS NOT NULL GROUP BY 1)
+	err := each(ctx, e, `WITH b AS (SELECT float_id fid, SUM(effect)::bigint bal
+			FROM petty_cash_ledger WHERE status='APPROVED' AND float_id IS NOT NULL GROUP BY 1)
 		SELECT f.name, COALESCE(u.name, ''), COALESCE(b.bal,0), f.low_threshold::bigint FROM petty_cash_float f
 		LEFT JOIN b ON b.fid = f.id LEFT JOIN "User" u ON u.id = f.custodian_id
 		WHERE f.is_active AND ($1 = '' OR f.plant_id = $1) ORDER BY COALESCE(b.bal,0) - f.low_threshold, f.name LIMIT 6`, []any{e.plant}, func(r pgx.Rows) error {
@@ -1430,7 +1471,7 @@ func wApprovals(ctx context.Context, e *env, w *Widget) error {
 		{"transfers.receive", "/transfers?status=IN_TRANSIT", "transfers.receive", `SELECT COUNT(*) FROM stock_transfer WHERE status='IN_TRANSIT' AND $1 = $1` + pc("to_plant_id")},
 		{"stockcount.approve", "/stock-counts?status=SUBMITTED", "stockcount.approve", `SELECT COUNT(*) FROM stock_count WHERE status='SUBMITTED' AND COALESCE(submitted_by_id,'') <> $1` + pc("plant_id")},
 		{"stock.adjust", "/stock?tab=adjustments", "stock.adjust", `SELECT COUNT(*) FROM stock_adjustment WHERE status='PENDING' AND requested_by_id <> $1` + pc("plant_id")},
-		{"expenses.approve", "/expenses?status=SUBMITTED", "expenses.approve", `SELECT COUNT(*) FROM expense WHERE status='SUBMITTED' AND created_by_id <> $1` + pc("plant_id")},
+		{"expenses.approve", "/expenses?status=SUBMITTED", "expenses.approve", `SELECT COUNT(*) FROM expense WHERE status='SUBMITTED' AND source NOT IN ('PETTY_CASH','PAYROLL') AND created_by_id <> $1` + pc("plant_id")},
 		{"budgets.approve", "/expenses?overrun=PENDING", "budgets.approve", `SELECT COUNT(*) FROM expense WHERE overrun_status='PENDING' AND created_by_id <> $1` + pc("plant_id")},
 		{"procurement.approve", "/procurement/requests?status=SUBMITTED", "procurement.approve", `SELECT COUNT(*) FROM procurement_request WHERE status='SUBMITTED' AND requested_by_id <> $1` + pc("plant_id")},
 		{"procurement.receive", "/procurement/orders?status=ORDERED", "procurement.receive", `SELECT COUNT(*) FROM purchase_order WHERE status IN ('ORDERED','PARTIALLY_RECEIVED') AND $1 = $1` + pc("delivery_plant_id")},

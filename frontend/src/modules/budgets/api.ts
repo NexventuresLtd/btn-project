@@ -3,7 +3,11 @@ import { del, get, patch, post } from "@/lib/api";
 
 export type PeriodType = "MONTH" | "QUARTER" | "YEAR";
 export type BudgetStatus = "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED" | "ARCHIVED";
-export type VarianceStatus = "ok" | "warning" | "over" | "unbudgeted" | "idle";
+/** Expense lines: ok | warning | over | unbudgeted | idle. Income lines (revenue targets): met | on_track | behind | unplanned | idle. */
+export type VarianceStatus = "ok" | "warning" | "over" | "unbudgeted" | "idle" | "met" | "on_track" | "behind" | "unplanned";
+/** EXPENSE = spending limit for an expense category; INCOME = revenue target for an income category. */
+export type LineType = "EXPENSE" | "INCOME";
+export const LINE_TYPES: LineType[] = ["EXPENSE", "INCOME"];
 
 export const PERIOD_TYPES: PeriodType[] = ["MONTH", "QUARTER", "YEAR"];
 export const BUDGET_STATUSES: BudgetStatus[] = ["DRAFT", "SUBMITTED", "APPROVED", "REJECTED", "ARCHIVED"];
@@ -14,6 +18,16 @@ export interface Actual {
   pettyCash: number;
   payroll: number;
   pending: number;
+  /** approved spending explicitly marked unbudgeted */
+  unbudgeted?: number;
+  /** income lines: income recorded (not void) */
+  income?: number;
+}
+
+/** Net position: income − expenses (planned = income targets − expense budget). */
+export interface Net {
+  planned: number;
+  actual: number;
 }
 
 export interface Variance {
@@ -28,6 +42,9 @@ export interface Variance {
 }
 
 export interface VsRow {
+  type?: LineType;
+  /** spending explicitly marked unbudgeted (no line) */
+  unbudgeted?: boolean;
   department: string;
   departmentName: string;
   category: string;
@@ -57,10 +74,16 @@ export interface VsActual {
   overCount: number;
   warningCount: number;
   unbudgeted: number;
+  incomeRows?: VsRow[];
+  incomeTotals?: Variance;
+  net?: Net;
 }
 
 export interface BudgetLine {
   id: string;
+  type?: LineType;
+  /** pseudo-line: spending of the period marked unbudgeted */
+  unbudgeted?: boolean;
   category: string;
   categoryName: string;
   amount: number;
@@ -108,6 +131,8 @@ export interface Budget {
   updatedAt: string;
   totals: Variance;
   actualTotals: Actual;
+  incomeTotals?: Variance;
+  net?: Net;
   lines: BudgetLine[];
   actions: BudgetActions;
 }
@@ -127,7 +152,7 @@ export interface BudgetPayload {
   periodType: PeriodType;
   periodStart: string;
   notes: string | null;
-  lines: { category: string; amount: number; note: string | null }[];
+  lines: { type: LineType; category: string; amount: number; note: string | null }[];
   submit?: boolean;
 }
 

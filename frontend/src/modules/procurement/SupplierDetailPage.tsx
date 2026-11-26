@@ -9,6 +9,7 @@ import { formatRWF } from "@/lib/format";
 import { useSupplier, useSupplierOrders } from "./api";
 import { Info, Money, OrderStatusBadge, SupplierStatusBadge } from "./components";
 import { SupplierModal } from "./SuppliersPage";
+import { MoneyPanel } from "@/components/finance/MoneyPanel";
 
 /** PRC-03: supplier card with contacts, terms, categories and the purchase history. */
 export function SupplierDetailPage() {
@@ -64,6 +65,7 @@ export function SupplierDetailPage() {
               { key: "rc", header: t("procurement.col.receivedValue"), align: "right", cell: (r) => <Money value={r.received} /> },
             ]} />
           </Card>
+          <MoneyPanel entityType="supplier" entityId={s.id} />
         </div>
         <Card>
           <CardHeader title={t("procurement.suppliers.details")} />

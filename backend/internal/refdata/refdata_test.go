@@ -23,10 +23,10 @@ func TestSeededKindsAndPublicRead(t *testing.T) {
 		Items map[string][]map[string]any `json:"items"`
 	}
 	e.Decode(r, &all)
-	if r.StatusCode != 200 || len(all.Kinds) != 10 {
+	if r.StatusCode != 200 || len(all.Kinds) != 11 {
 		t.Fatalf("all: %d %v", r.StatusCode, all.Kinds)
 	}
-	for kind, want := range map[string]int{"defect_reason": 6, "exception_flag": 5, "unit": 5, "expense_category": 11, "department": 6, "client_type": 4, "payment_term": 5, "delivery_zone": 2} {
+	for kind, want := range map[string]int{"defect_reason": 6, "exception_flag": 5, "unit": 5, "expense_category": 11, "income_category": 9, "department": 6, "client_type": 4, "payment_term": 5, "delivery_zone": 2} {
 		if got := len(all.Items[kind]); got != want {
 			t.Errorf("%s: %d items, want %d", kind, got, want)
 		}
@@ -251,7 +251,7 @@ func TestHQSeedIdempotent(t *testing.T) {
 	_ = e.Pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE kind='HQ' AND code='HQ'), count(*) FILTER (WHERE kind='SITE') FROM "Plant"`).Scan(&hq, &sites)
 	_ = e.Pool.QueryRow(ctx, `SELECT count(*) FROM refdata_item`).Scan(&refRows)
 	_ = e.Pool.QueryRow(ctx, `SELECT count(*) FROM approval_threshold`).Scan(&thRows)
-	if hq != 1 || sites != 3 || refRows != 55 || thRows != len(approvals.Defaults) {
+	if hq != 1 || sites != 3 || refRows != 64 || thRows != len(approvals.Defaults) {
 		t.Fatalf("hq=%d sites=%d refdata=%d thresholds=%d", hq, sites, refRows, thRows)
 	}
 	// an admin edit survives a re-seed

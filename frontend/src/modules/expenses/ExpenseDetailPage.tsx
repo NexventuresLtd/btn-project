@@ -1,13 +1,15 @@
 import { useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router";
-import { AlertTriangle, Ban, Banknote, CheckCircle2, Circle, Download, Eye, GitBranch, Paperclip, Pencil, ShieldCheck, Trash2, XCircle } from "lucide-react";
+import { AlertTriangle, Ban, CheckCircle2, Circle, ClipboardCheck, Download, Eye, GitBranch, Lock, Paperclip, Pencil, ShieldCheck, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Alert, Badge, Button, Card, CardBody, CardHeader, ConfirmDialog, DateInput, EmptyState, ErrorState, Field, Input, Modal, PageHeader, PageLoader, PdfButton, Select, StatusBadge, Textarea,
+  Alert, Badge, Button, Card, CardBody, CardHeader, ConfirmDialog, DateInput, EmptyState, ErrorState, Field, Input, Modal, PageHeader, PageLoader, PdfButton, Select, Textarea,
 } from "@/components/ui";
+import { LinksEditor } from "@/components/finance/LinksEditor";
 import { useT } from "@/i18n";
 import { useMutate, fieldError } from "@/hooks/useMutate";
+import { useLookups } from "@/hooks/useLookups";
 import { ApiError, downloadFile } from "@/lib/api";
 import { formatDate, formatDateTime, todayISO } from "@/lib/dates";
 import { formatRWF } from "@/lib/format";
@@ -15,13 +17,14 @@ import { cn } from "@/lib/cn";
 import { useConnectivity, useOfflineRecord } from "@/offline/hooks";
 import { SyncBadge } from "@/offline/ui/SyncBadge";
 import {
-  deleteReceipt, EXP_KEY, expenseAction, fileSize, needsPaymentReference, openReceipt, RECEIPT_ACCEPT, receiptDownloadPath, receiptProblem, reasonKey, uploadReceipt,
+  deleteReceipt, EXP_KEY, expenseAction, fileSize, managedReasonKey, needsPaymentReference, openReceipt, originLink, RECEIPT_ACCEPT, receiptDownloadPath, receiptProblem, reasonKey, uploadReceipt,
   useExpense, useFloats, type Expense, type ExpenseAction, type LevelState,
 } from "./api";
+import { ExpenseStatusBadge, OriginBadge } from "./components";
 import { EXPENSE_TYPE, type LocalExpense } from "./offline";
 import { BudgetPanel, ExpenseFormModal } from "./ExpenseFormModal";
 
-type Dialog = "approve" | "reject" | "cancel" | "overrunApprove" | "overrunReject" | "pay" | null;
+type Dialog = "approve" | "reject" | "cancel" | "overrunApprove" | "overrunReject" | "recordPayment" | null;
 
 export function ExpenseDetailPage() {
   const { id = "" } = useParams();
@@ -69,18 +72,22 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
   const net = useConnectivity();
   const online = net.reachable;
   const qc = useQueryClient();
-  const a = e.actions ?? { edit: false, cancel: false, approve: false, reject: false, approveOverrun: false, pay: false, attach: false };
+  const managedKey = managedReasonKey(e);
+  const managed = !!managedKey;
+  const base = e.actions ?? { edit: false, cancel: false, approve: false, reject: false, approveOverrun: false, pay: false, attach: false, link: false };
+  // petty cash / payroll expenses follow their own workflow: approve, edit and record payment happen there
+  const a = managed ? { ...base, edit: false, cancel: false, approve: false, reject: false, approveOverrun: false, pay: false } : base;
   const [dialog, setDialog] = useState<Dialog>(null);
   const [editing, setEditing] = useState(false);
   const [comment, setComment] = useState("");
   const [touched, setTouched] = useState(false);
   const [pay, setPay] = useState({ paymentReference: "", paidOn: todayISO(), floatId: "" });
-  const floats = useFloats(dialog === "pay" && e.paymentMethod === "PETTY_CASH");
+  const floats = useFloats(dialog === "recordPayment" && e.paymentMethod === "PETTY_CASH");
 
   const close = () => { setDialog(null); setComment(""); setTouched(false); act.reset(); };
   const act = useMutate(({ action, payload }: { action: ExpenseAction; payload?: Record<string, unknown> }) => expenseAction({ id: e.id, action, payload }), {
     invalidate: [EXP_KEY, ["finance"], ["budgets"], ["pettycash"]],
-    success: (r) => t("expenses.detail.done", { number: r.number, status: tx(`expenses.status.${r.status}`) }),
+    success: (r) => (r.status === "PAID" ? t("expenses.detail.paymentRecordedToast", { number: r.number }) : t("expenses.detail.done", { number: r.number, status: tx(`expenses.status.${r.status}`) })),
     onSuccess: () => close(),
   });
 
@@ -96,11 +103,11 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
     else if (dialog === "overrunApprove") act.mutate({ action: "overrun/approve", payload: { comment: c } });
     else if (dialog === "overrunReject") act.mutate({ action: "overrun/reject", payload: { comment: c } });
   };
-  const payNow = () => {
+  const recordPayment = () => {
     setTouched(true);
     if (needsPaymentReference(e.paymentMethod) && !pay.paymentReference.trim()) return;
     if (e.paymentMethod === "PETTY_CASH" && !pay.floatId) return;
-    act.mutate({ action: "pay", payload: { paymentReference: pay.paymentReference.trim() || null, paidOn: pay.paidOn, floatId: pay.floatId || null } });
+    act.mutate({ action: "record-payment", payload: { paymentReference: pay.paymentReference.trim() || null, paidOn: pay.paidOn, floatId: pay.floatId || null } });
   };
 
   const reason = reasonKey(a.reason);
@@ -108,13 +115,14 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
   const overrun = e.budget.overrunStatus !== "NONE";
   const dialogTitle: Record<Exclude<Dialog, null>, string> = {
     approve: t("expenses.detail.approveTitle"), reject: t("expenses.detail.rejectTitle"), cancel: t("expenses.detail.cancelTitle"),
-    overrunApprove: t("expenses.detail.overrunApproveTitle"), overrunReject: t("expenses.detail.overrunRejectTitle"), pay: t("expenses.detail.payTitle"),
+    overrunApprove: t("expenses.detail.overrunApproveTitle"), overrunReject: t("expenses.detail.overrunRejectTitle"), recordPayment: t("expenses.detail.recordPaymentTitle"),
   };
+  const origin = originLink(e);
 
   return (
     <>
       <PageHeader
-        title={<span className="inline-flex flex-wrap items-center gap-3">{e.number}<StatusBadge status={e.status} /></span>}
+        title={<span className="inline-flex flex-wrap items-center gap-3">{e.number}<ExpenseStatusBadge status={e.status} />{e.origin && e.origin !== "DIRECT" ? <OriginBadge origin={e.origin} /> : null}</span>}
         description={`${formatDate(e.date)} · ${e.categoryName} · ${e.departmentName}${e.plant ? ` · ${e.plant.code}` : ""}`}
         breadcrumbs={[{ label: t("expenses.title"), to: "/expenses" }, { label: e.number }]}
         actions={
@@ -129,7 +137,22 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
       {!online ? <div className="mb-4"><Alert tone="amber">{t("expenses.detail.offlineActions")}</Alert></div> : null}
       {e.status === "REJECTED" && e.decisionComment ? <div className="mb-4"><Alert tone="red" title={t("expenses.detail.rejectedBy", { name: e.decidedBy?.name ?? "—" })}>{e.decisionComment}</Alert></div> : null}
 
-      {e.status === "SUBMITTED" ? (
+      {managedKey ? (
+        <Card className="mb-5 border-purple-200 bg-purple-50/40">
+          <CardBody className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex min-w-0 items-start gap-2.5">
+              <Lock className="mt-0.5 size-4 shrink-0 text-purple-700" aria-hidden />
+              <div>
+                <p className="font-semibold text-slate-900">{tx(managedKey)}</p>
+                <p className="text-sm text-slate-600">{e.origin === "PAYROLL" ? t("expenses.detail.managedPayrollHint") : t("expenses.detail.managedPettyHint")}</p>
+              </div>
+            </div>
+            {origin ? <Link to={origin.to}><Button variant="secondary">{e.origin === "PAYROLL" ? t("expenses.detail.openWageSheet") : t("expenses.detail.openVoucher")}</Button></Link> : null}
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {e.status === "SUBMITTED" && !managed ? (
         <Card className="mb-5 border-amber-200 bg-amber-50/40">
           <CardBody className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
@@ -161,8 +184,8 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
       {a.pay ? (
         <Card className="mb-5 border-navy-100 bg-navy-50/40">
           <CardBody className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-slate-700">{t("expenses.detail.payHint", { method: tx(`expenses.method.${e.paymentMethod}`) })}</p>
-            <Button icon={<Banknote className="size-4" />} disabled={!online} onClick={() => setDialog("pay")}>{t("expenses.detail.pay")}</Button>
+            <p className="text-sm text-slate-700">{t("expenses.detail.recordPaymentHint", { method: tx(`expenses.method.${e.paymentMethod}`) })}</p>
+            <Button icon={<ClipboardCheck className="size-4" />} disabled={!online} onClick={() => setDialog("recordPayment")}>{t("expenses.detail.recordPayment")}</Button>
           </CardBody>
         </Card>
       ) : null}
@@ -183,26 +206,40 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
                 <Info label={t("expenses.field.reference")}>{e.reference ?? "—"}</Info>
                 <div className="sm:col-span-2"><Info label={t("expenses.field.description")}>{e.description}</Info></div>
                 <Info label={t("expenses.detail.recordedBy")}>{e.createdBy.name} · {formatDateTime(e.createdAt)}{e.capturedOffline ? <Badge tone="slate" className="ml-2">{t("expenses.badge.offline")}</Badge> : null}</Info>
-                {e.source ? <Info label={t("expenses.detail.source")}>{tx(`expenses.source.${e.source.type}`)} {e.source.number ?? ""}</Info> : null}
-                {e.paidAt ? <Info label={t("expenses.detail.paid")}>{formatDateTime(e.paidAt)} · {e.paidBy?.name ?? "—"} · {e.paymentReference ?? "—"}</Info> : null}
+                <Info label={t("expenses.detail.source")}>
+                  <span>{tx(`expenses.origin.${e.origin ?? (e.source ? "PROCUREMENT" : "DIRECT")}`)}</span>
+                  {origin ? (
+                    <>
+                      {" · "}
+                      {e.source && !e.voucher && !e.payrollPeriod ? <span className="text-slate-600">{tx(`expenses.source.${e.source.type}`)} </span> : null}
+                      <Link to={origin.to} className="font-medium text-navy-700 hover:underline">{origin.label || t("expenses.detail.open")}</Link>
+                    </>
+                  ) : null}
+                  {e.float ? <span className="block text-xs text-slate-500">{t("expenses.detail.fromFloat", { float: `${e.float.number}${e.float.name ? ` · ${e.float.name}` : ""}` })}</span> : null}
+                </Info>
+                {e.paidAt ? <Info label={t("expenses.detail.paymentRecorded")}>{formatDateTime(e.paidAt)} · {e.paidBy?.name ?? "—"} · {e.paymentReference ?? "—"}</Info> : null}
               </dl>
             </CardBody>
           </Card>
 
           <Receipts e={e} online={online} onChanged={() => void qc.invalidateQueries({ queryKey: EXP_KEY })} />
+          <LinksEditor basePath="/expenses" recordId={e.id} links={e.links} canEdit={!!a.link} invalidateKeys={[EXP_KEY]} online={online} />
         </div>
 
         <div className="space-y-5">
           <Card>
-            <CardHeader title={t("expenses.detail.budget")} />
+            <CardHeader title={t("expenses.detail.budget")}
+              actions={a.edit ? <Button size="sm" variant="ghost" icon={<Pencil className="size-3.5" />} disabled={!online} onClick={() => setEditing(true)}>{t("expenses.detail.changeLine")}</Button> : null} />
             <CardBody className="space-y-3 text-sm">
+              <BudgetLink e={e} />
               {e.budget.budgetId ? (
                 <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
-                  <dt className="text-slate-500">{t("expenses.detail.budgetNo")}</dt><dd className="font-medium">{e.budget.budgetNumber}</dd>
+                  <dt className="text-slate-500">{t("expenses.detail.budgetNo")}</dt>
+                  <dd className="font-medium"><Link to={`/budgets/${e.budget.budgetId}`} className="text-navy-700 hover:underline">{e.budget.budgetNumber}</Link></dd>
                   <dt className="text-slate-500">{t("expenses.detail.remainingAtEntry")}</dt><dd className="tabular font-medium">{e.budget.remaining == null ? "—" : formatRWF(e.budget.remaining)}</dd>
                   {overrun ? <><dt className="text-slate-500">{t("expenses.budget.overrun")}</dt><dd className="tabular font-semibold text-red-700">{formatRWF(e.budget.overrunAmount)}</dd></> : null}
                 </dl>
-              ) : <p className="text-slate-500">{t("expenses.budget.none")}</p>}
+              ) : null}
               {overrun ? (
                 <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-900">
                   <AlertTriangle className="mt-0.5 size-4 shrink-0" />
@@ -239,7 +276,7 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
 
       <ExpenseFormModal open={editing} onClose={() => setEditing(false)} expense={e} />
 
-      {dialog && dialog !== "pay" ? (
+      {dialog && dialog !== "recordPayment" ? (
         <ConfirmDialog
           open
           onClose={close}
@@ -260,15 +297,16 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
       ) : null}
 
       <Modal
-        open={dialog === "pay"}
+        open={dialog === "recordPayment"}
         onClose={close}
         size="sm"
-        title={dialogTitle.pay}
+        title={dialogTitle.recordPayment}
         description={`${e.number} · ${formatRWF(e.amount)}`}
-        footer={<><Button variant="secondary" onClick={close}>{t("common.cancel")}</Button><Button loading={act.isPending} onClick={payNow}>{t("expenses.detail.pay")}</Button></>}
+        footer={<><Button variant="secondary" onClick={close}>{t("common.cancel")}</Button><Button loading={act.isPending} onClick={recordPayment}>{t("expenses.detail.recordPayment")}</Button></>}
       >
         <div className="space-y-4">
-          <Field label={t("expenses.detail.paidOn")} htmlFor="pay-date">
+          <p className="text-sm text-slate-600">{t("expenses.detail.recordPaymentNote")}</p>
+          <Field label={t("expenses.detail.paymentDate")} htmlFor="pay-date">
             <DateInput id="pay-date" value={pay.paidOn} max={todayISO()} onChange={(v) => setPay((p) => ({ ...p, paidOn: v || todayISO() }))} />
           </Field>
           {e.paymentMethod === "PETTY_CASH" ? (
@@ -287,6 +325,33 @@ function Detail({ e }: { e: Expense; t: ReturnType<typeof useT>["t"] }) {
         </div>
       </Modal>
     </>
+  );
+}
+
+/** How the expense is linked to the budget: the line (chosen or suggested), unbudgeted with its reason, or no plan. */
+function BudgetLink({ e }: { e: Expense }) {
+  const { t, tx } = useT();
+  const { data: lookups } = useLookups();
+  const deptName = (code: string) => lookups?.refdata?.department?.find((d) => d.code === code)?.name ?? code;
+  const b = e.budget;
+  const mode = b.unbudgeted ? "unbudgeted" : b.mode ?? (b.budgetId ? "suggested" : "none");
+  const tone = mode === "unbudgeted" ? "amber" : mode === "none" ? "slate" : mode === "chosen" ? "navy" : "blue";
+  return (
+    <div className="space-y-1.5">
+      <Badge tone={tone}>{tx(`finrecords.mode.${mode}`)}</Badge>
+      {mode === "chosen" || mode === "suggested" ? (
+        b.lineId ? (
+          <p className="text-slate-800">
+            {b.lineBudgetId ? <Link to={`/budgets/${b.lineBudgetId}`} className="font-medium text-navy-700 hover:underline">{b.lineBudgetNumber}</Link> : b.lineBudgetNumber}
+            {" · "}{b.lineCategoryName ?? b.lineCategory}{b.lineDepartment ? ` · ${deptName(b.lineDepartment)}` : ""}
+          </p>
+        ) : <p className="text-slate-600">{t("expenses.detail.noLine")}</p>
+      ) : mode === "unbudgeted" ? (
+        <p className="text-slate-700">{b.unbudgetedReason ? <>“{b.unbudgetedReason}”</> : t("expenses.detail.noReason")}</p>
+      ) : (
+        <p className="text-slate-500">{t("expenses.budget.none")}</p>
+      )}
+    </div>
   );
 }
 

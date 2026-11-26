@@ -537,6 +537,14 @@ func TestPurchaseTraceAndPettyCashPayment(t *testing.T) {
 	})
 	defer expenses.RegisterPurchaseTracer(nil)
 	req, po := "REQ1", "PO1"
+	// expense.purchase_order_id is a typed link (FK) to a real purchase order
+	if _, err := e.Pool.Exec(ctx, `INSERT INTO supplier (id, code, name, created_by_id) VALUES ('SUP1', 'SUP-1', 'Cimerwa', $1)`, e.pro.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Pool.Exec(ctx, `INSERT INTO purchase_order (id, number, status, supplier_id, delivery_plant_id, order_date, created_by_id)
+		VALUES ('PO1', 'PO-2026-0001', 'RECEIVED', 'SUP1', $1, current_date, $2)`, e.b1, e.pro.ID); err != nil {
+		t.Fatal(err)
+	}
 	var ref, again expenses.Ref
 	err := db.Tx(ctx, e.Pool, func(tx pgx.Tx) error {
 		var err error

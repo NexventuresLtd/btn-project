@@ -1,7 +1,9 @@
 import { Link } from "react-router";
 import { BarChart3, CalendarCheck, Clock, Coins, Users } from "lucide-react";
-import { Alert, Card, CardHeader, DataTable, ErrorState, ExportMenu, FilterBar, PdfButton, StatCard, StatusBadge, useFilters, type Column } from "@/components/ui";
+import { Alert, Card, CardHeader, DataTable, ErrorState, ExportMenu, FilterBar, PdfButton, StatCard, useFilters, type Column } from "@/components/ui";
 import { useT } from "@/i18n";
+import { PayrollStatusBadge } from "@/modules/payroll/components";
+import type { PayrollStatus } from "@/modules/payroll/api";
 import { formatDateRange } from "@/lib/dates";
 import { formatInt, formatQty, formatRWF } from "@/lib/format";
 import { spanDays, useSummaryReport, type SiteReport, type SummaryReport } from "./api";
@@ -52,7 +54,7 @@ export function ReportsTab() {
     { key: "no", header: t("workforce.col.sheet"), cell: (p) => <Link to={`/payroll/${p.id}`} className="font-medium text-navy-700 hover:underline">{p.number}</Link> },
     { key: "site", header: t("workforce.col.site"), cell: (p) => p.plantCode },
     { key: "range", header: t("workforce.col.period"), cell: (p) => formatDateRange(p.startDate, p.endDate), hideOnMobile: true },
-    { key: "status", header: t("workforce.col.status"), cell: (p) => <StatusBadge status={p.status} /> },
+    { key: "status", header: t("workforce.col.status"), cell: (p) => <PayrollStatusBadge status={p.status as PayrollStatus} /> },
     { key: "workers", header: t("workforce.col.workers"), align: "right", cell: (p) => formatInt(p.workers), hideOnMobile: true },
     { key: "days", header: t("workforce.col.days"), align: "right", cell: (p) => formatQty(p.days), hideOnMobile: true },
     { key: "ot", header: t("workforce.col.overtimeHours"), align: "right", cell: (p) => formatQty(p.overtimeHours), hideOnMobile: true },

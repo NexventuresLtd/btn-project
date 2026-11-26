@@ -62,6 +62,9 @@ func applyExpense(ctx context.Context, tx pgx.Tx, rec syncsvc.Record, a syncsvc.
 		if before.CreatedByID != a.UserID {
 			return syncsvc.Reject(syncsvc.ReasonPermissionDenied, i18n.T(a.Lang, "expenses.err.only_creator"))
 		}
+		if managed(before.Source) {
+			return syncsvc.Reject(syncsvc.ReasonConflict, i18n.T(a.Lang, "expenses.err.managed"))
+		}
 		if before.Status != StatusSubmitted && before.Status != StatusRejected {
 			if rec.Force {
 				return syncsvc.Reject(syncsvc.ReasonConflict, i18n.T(a.Lang, "expenses.err.not_editable", "status", i18n.T(a.Lang, "expenses.status."+before.Status)))
@@ -70,6 +73,7 @@ func applyExpense(ctx context.Context, tx pgx.Tx, rec syncsvc.Record, a syncsvc.
 				ServerVersion: before.ServerVersion, PlantID: deref(before.PlantID),
 				Reason: i18n.T(a.Lang, "expenses.sync.decided_meanwhile", "status", i18n.T(a.Lang, "expenses.status."+before.Status))})
 		}
+		in.Links = nil
 		out, err = applyUpdate(ctx, tx, a.Lang, before, in, a.UserID, func(ai audit.Input) error {
 			ai.Summary += " (offline sync)"
 			return audit.Log(ctx, tx, a.Audit(), ai)
@@ -81,7 +85,7 @@ func applyExpense(ctx context.Context, tx pgx.Tx, rec syncsvc.Record, a syncsvc.
 		if err := checkRefs(ctx, tx, a.Lang, &in); err != nil {
 			return syncsvc.FromError(a.Lang, err)
 		}
-		c, err := insertExpense(ctx, tx, a.Lang, in, actor{ID: a.UserID, Name: a.Name, Role: a.Role, DeviceID: a.DeviceID}, rec.UUID, nil,
+		c, err := insertExpense(ctx, tx, a.Lang, in, actor{ID: a.UserID, Name: a.Name, Role: a.Role, DeviceID: a.DeviceID, PlantID: a.PlantID}, rec.UUID, nil,
 			func(ai audit.Input) error {
 				ai.Summary += " (offline sync)"
 				if m, ok := ai.After.(map[string]any); ok {

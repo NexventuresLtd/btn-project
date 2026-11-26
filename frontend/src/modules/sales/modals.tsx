@@ -13,7 +13,7 @@ import { useConnectivity, useOfflineMutation } from "@/offline/hooks";
 import { DISPATCH_NOTE, type DispatchNote } from "./offline";
 import { pinnedPlantId } from "@/lib/scope";
 
-const invalidate = (saleId: string) => [salesKeys.detail(saleId), ["sales"], ["stock"], ["dashboard"], ["notifications"]];
+const invalidate = (saleId: string) => [salesKeys.detail(saleId), ["sales"], ["stock"], ["dashboard"], ["notifications"], ["finance"], ["income"]];
 
 function GeneralError({ error }: { error: unknown }) {
   if (!(error instanceof ApiError)) return null;

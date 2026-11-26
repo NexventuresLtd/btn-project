@@ -147,6 +147,9 @@ func updateFromDevice(ctx context.Context, tx pgx.Tx, rec syncsvc.Record, a sync
 		in.PlantID, in.PayeeName, in.MomoNumber, in.Amount, in.MomoCharge, in.InvoiceRef, db.Now(), refCode, in.Department, a.DeviceID); err != nil {
 		return syncsvc.Reject(syncsvc.ReasonHandlerError, err.Error())
 	}
+	if err := applyBudget(ctx, tx, lang, rec.UUID, in); err != nil {
+		return syncsvc.FromError(lang, err)
+	}
 	after, err := getRow(ctx, tx, rec.UUID)
 	if err != nil {
 		return syncsvc.Reject(syncsvc.ReasonHandlerError, err.Error())

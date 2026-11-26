@@ -907,7 +907,7 @@ func (h *handler) pay(c *fiber.Ctx) error {
 				pettyNo[l.ID] = nums[i]
 			}
 			var balance int
-			if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(CASE WHEN type = 'DEPOSIT' THEN amount ELSE -amount END - "momoCharge"), 0) FROM "PettyCashEntry" WHERE status = 'APPROVED'`).Scan(&balance); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(effect), 0) FROM petty_cash_ledger WHERE status = 'APPROVED'`).Scan(&balance); err != nil {
 				return r, err
 			}
 			if balance < 0 {
@@ -942,6 +942,15 @@ func (h *handler) pay(c *fiber.Ctx) error {
 			if _, err := tx.Exec(ctx, `UPDATE "PayrollLine" AS l SET "paymentMethod" = x.m FROM unnest($1::text[], $2::text[]) AS x(id, m) WHERE l.id = x.id`, lids, meths); err != nil {
 				return r, err
 			}
+			// every wage paid is an expense (docs/FINANCE_RECORDS_DESIGN.md §2): cash vouchers already own theirs (petty cash
+			// mirror); the rest is one PAYROLL expense per payment method, linked to the period and to each worker paid
+			if r.created == 0 {
+				if err := recordWageExpenses(ctx, tx, p, payable, method, methods, paidOn, rangeShort, u.ID); err != nil {
+					return r, err
+				}
+			} else if err := linkVoucherWorkers(ctx, tx, p.ID); err != nil {
+				return r, err
+			}
 		}
 		// WRK-05: a paid period is locked — its attendance days too; later corrections become adjustments (§7.4)
 		if _, err := attendance.LockDays(ctx, tx, p.PlantID, p.Start, p.End, u.ID, "Paid on wage sheet "+p.Number); err != nil {
@@ -950,7 +959,7 @@ func (h *handler) pay(c *fiber.Ctx) error {
 		if err := notifyPaid(ctx, tx, p, u, len(payable), totals.Net); err != nil {
 			return r, err
 		}
-		summary := fmt.Sprintf("Paid wage sheet %s: %d workers, net %s", p.Number, len(payable), format.RWF(float64(totals.Net)))
+		summary := fmt.Sprintf("Wage payments recorded for %s: %d workers, net %s", p.Number, len(payable), format.RWF(float64(totals.Net)))
 		if r.created > 0 {
 			summary += fmt.Sprintf("; %d petty cash entries recorded", r.created)
 		}

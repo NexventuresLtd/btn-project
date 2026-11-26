@@ -254,5 +254,6 @@
  "pettycash.export.c_pending": "በመጠባበቅ ላይ ያሉ ግቤቶች",
  "pettycash.export.c_explanation": "ማብራሪያ",
  "pettycash.export.c_counted_by": "የቆጠረው",
- "pettycash.export.c_comment": "የግምገማ አስተያየት"
+ "pettycash.export.c_comment": "የግምገማ አስተያየት",
+ "pettycash.v.unbudgeted_reason": "ይህ ወጪ ለምን በበጀቱ እንደሌለ ያብራሩ (ቢያንስ 5 ፊደላት)"
 }

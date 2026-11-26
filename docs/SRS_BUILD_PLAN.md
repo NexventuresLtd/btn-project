@@ -77,6 +77,10 @@ Manager, GM/MD = top management, FM = Finance Manager, SA = System Admin, SUP/LE
 | `expenses.view` | FM, GM, MD, OPERATIONS_ADVISOR, PROCUREMENT_OFFICER |
 | `expenses.record` | FM, PM, SUP (own site), STOCK_OFFICER |
 | `expenses.approve` | FM, GM, MD |
+| `income.view` (income records, money in — FIN-04/FIN-09) | FM, GM, MD, OPERATIONS_ADVISOR |
+| `income.record` (record income; SALES_MANAGER records the payments customers made on orders) | FM, SALES_MANAGER |
+| `income.verify` (verify / void income records) | FM |
+| `payroll.pay` — label **"Record wage payments"** (records payments made outside the system; never pays) | FM |
 | `pettycash.custodian` (hold a float, request top-ups, reconcile) | FM, SUP, PM |
 | `budgets.view` | FM, GM, MD, OPERATIONS_ADVISOR, PM |
 | `budgets.manage` | FM |

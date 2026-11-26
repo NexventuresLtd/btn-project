@@ -254,5 +254,6 @@
  "pettycash.export.c_pending": "Ibikorwa bitegereje",
  "pettycash.export.c_explanation": "Ibisobanuro",
  "pettycash.export.c_counted_by": "Byabazwe na",
- "pettycash.export.c_comment": "Igitekerezo cy'isuzuma"
+ "pettycash.export.c_comment": "Igitekerezo cy'isuzuma",
+ "pettycash.v.unbudgeted_reason": "Sobanura impamvu ibi byakoreshejwe bitari mu ngengo (nibura inyuguti 5)"
 }

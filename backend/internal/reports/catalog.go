@@ -109,8 +109,16 @@ var catalog = []Entry{
 	e("suppliers", "Procurement", gen("/procurement/suppliers"), "/procurement/suppliers", none, "procurement.view"),
 	e("procurement-expense", "Procurement", "/reports/pdf/procurement-expense", "/reports/data/procurement-expense", rangePlant, "procurement.view", "expenses.view"),
 	// Finance
+	e("income-report", "Finance", "/income/pdf/report", "/income", rangePlant, "income.view", "income.verify", "income.record").
+		with("status", "RECORDED", "VERIFIED", "VOID").with("source", "ORDER_PAYMENT", "OTHER"),
+	e("income-summary", "Finance", gen("/income/summary"), "/income/summary", rangePlant, "income.view", "income.verify"),
 	e("expenses-report", "Finance", "/expenses/pdf/report", "/expenses", rangePlant, "expenses.view").
-		with("status", "SUBMITTED", "APPROVED", "REJECTED", "PAID", "CANCELLED"),
+		with("status", "SUBMITTED", "APPROVED", "REJECTED", "PAID", "CANCELLED").with("source", "DIRECT", "PETTY_CASH", "PROCUREMENT", "PAYROLL", "OTHER"),
+	e("cash-flow", "Finance", "/finance/pdf/cash-flow", "/finance/cash-flow", rangePlant, "income.view", "expenses.view").
+		with("granularity", "day", "week", "month"),
+	e("unbudgeted-spending", "Finance", "/expenses/pdf/unbudgeted", "/expenses/unbudgeted", rangePlant, "expenses.view", "budgets.view"),
+	e("linked-records", "Finance", "/finance/pdf/linked-summary", "/finance/linked-summary", rangePlant, "income.view", "expenses.view").
+		with("entityType", "sale", "customer", "purchase_order", "supplier", "payroll_period", "petty_cash_float", "production_report", "transfer", "worker"),
 	e("expenses-summary", "Finance", gen("/expenses/summary"), "/expenses/summary", rangePlant, "expenses.view"),
 	e("budgets-vs-actual", "Finance", "/budgets/pdf/vs-actual", "/budgets/vs-actual", []string{"date"}, "budgets.view"),
 	e("budget-monitoring", "Finance", "/reports/pdf/budget-monitoring", "/reports/data/budget-monitoring", rangePlant, "budgets.view"),

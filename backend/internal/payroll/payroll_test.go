@@ -577,7 +577,7 @@ func TestPayWithoutPettyCashAndPermission(t *testing.T) {
 	f.step(t, id2, "check", f.pm, 200)
 	f.step(t, id2, "verify", f.fm2, 200)
 	f.step(t, id2, "authorize", f.gm, 200)
-	out = e.Map(e.Do("POST", "/api/payroll/periods/"+id2+"/pay", nil, f.fm3))
+	out = e.Map(e.Do("POST", "/api/payroll/periods/"+id2+"/record-payment", nil, f.fm3))
 	if out["period"].(M)["status"] != "PAID" || num(out["pettyCash"].(M)["created"]) != 0 || num(out["pettyCash"].(M)["amount"]) != 0 {
 		t.Fatalf("no petty %v", out)
 	}
@@ -585,6 +585,18 @@ func TestPayWithoutPettyCashAndPermission(t *testing.T) {
 	_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM "PettyCashEntry" WHERE "sourceType"='PayrollPeriod'`).Scan(&n)
 	if n != 1 {
 		t.Fatalf("petty rows %d", n)
+	}
+	// recording the wage payments records the wages as PAYROLL expenses: one for the MoMo sheet (linked to the period and
+	// its worker), one per cash voucher of the first sheet; together they equal the net wages paid
+	var sheetExp, workerLinks, vouchers int
+	var netPaid, recorded int64
+	_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM expense WHERE source='PAYROLL' AND status='PAID' AND payroll_period_id=$1 AND petty_cash_entry_id IS NULL`, id2).Scan(&sheetExp)
+	_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM expense_link l JOIN expense x ON x.id = l.expense_id WHERE x.payroll_period_id=$1 AND l.entity_type='worker'`, id2).Scan(&workerLinks)
+	_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM expense WHERE source='PAYROLL' AND petty_cash_entry_id IS NOT NULL AND float_id IS NOT NULL`).Scan(&vouchers)
+	_ = e.Pool.QueryRow(t.Context(), `SELECT COALESCE(SUM(l."netAmount"),0) FROM "PayrollLine" l JOIN "PayrollPeriod" p ON p.id=l."periodId" WHERE p.status='PAID'`).Scan(&netPaid)
+	_ = e.Pool.QueryRow(t.Context(), `SELECT COALESCE(SUM(amount),0) FROM expense WHERE source='PAYROLL' AND status='PAID'`).Scan(&recorded)
+	if sheetExp != 1 || workerLinks != 1 || vouchers != 1 || netPaid != recorded {
+		t.Fatalf("payroll expenses: sheet %d links %d vouchers %d net %d recorded %d", sheetExp, workerLinks, vouchers, netPaid, recorded)
 	}
 }
 

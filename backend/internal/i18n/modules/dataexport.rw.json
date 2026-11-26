@@ -45,5 +45,9 @@
   "dataexport.col.paid_at": "Igihe byishyuwe",
   "dataexport.col.role": "Uruhare",
   "dataexport.col.language": "Ururimi",
-  "dataexport.col.last_login": "Igihe aheruka kwinjira"
+  "dataexport.col.last_login": "Igihe aheruka kwinjira",
+  "dataexport.table.income": "Inyandiko z'ibyinjiye",
+  "dataexport.table.expenses": "Inyandiko z'ibisohoka",
+  "dataexport.table.income_links": "Isano z'ibyinjiye",
+  "dataexport.table.expense_links": "Isano z'ibisohoka"
 }

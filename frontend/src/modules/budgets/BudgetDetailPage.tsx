@@ -10,7 +10,8 @@ import { useConnectivity } from "@/offline/hooks";
 import { formatDateRange, formatDateTime } from "@/lib/dates";
 import { formatInt, formatRWF } from "@/lib/format";
 import { BUDGETS_KEY, approveBudget, archiveBudget, deleteBudget, rejectBudget, submitBudget, useBudget, type BudgetLine } from "./api";
-import { BudgetStatusBadge, UsedBar, VarianceBadge, VarianceCell } from "./components";
+import { BudgetStatusBadge, IncomeBar, UsedBar, VarianceBadge, VarianceCell } from "./components";
+import { splitLines } from "./helpers";
 import { BudgetEditor } from "./BudgetEditor";
 
 export function BudgetDetailPage() {
@@ -40,13 +41,22 @@ export function BudgetDetailPage() {
   const a = b.actions;
 
   const columns: Column<BudgetLine>[] = [
-    { key: "cat", header: t("budgets.col.category"), cell: (l) => <div><p className="text-slate-800">{l.categoryName}</p>{l.note ? <p className="text-xs text-slate-500">{l.note}</p> : null}{!l.id ? <Badge tone="red">{t("budgets.detail.notInBudget")}</Badge> : null}</div> },
+    { key: "cat", header: t("budgets.col.category"), cell: (l) => <div><p className="text-slate-800">{l.categoryName}</p>{l.note ? <p className="text-xs text-slate-500">{l.note}</p> : null}{l.unbudgeted ? <Badge tone="amber">{t("budgets.detail.markedUnbudgeted")}</Badge> : !l.id ? <Badge tone="red">{t("budgets.detail.notInBudget")}</Badge> : null}</div> },
     { key: "proposed", header: t("budgets.col.proposed"), align: "right", cell: (l) => (l.id ? formatInt(l.amount) : "—") },
     { key: "approved", header: t("budgets.col.approved"), align: "right", hideOnMobile: true, cell: (l) => (l.approvedAmount != null ? formatInt(l.approvedAmount) : "—") },
     { key: "actual", header: t("budgets.col.actual"), align: "right", cell: (l) => <span className="font-medium text-slate-900">{formatInt(l.variance.actual)}</span> },
     { key: "variance", header: t("budgets.col.variance"), align: "right", cell: (l) => <VarianceCell value={l.variance.variance} /> },
     { key: "used", header: t("budgets.col.used"), hideOnMobile: true, cell: (l) => <UsedBar usedPct={l.variance.usedPct} actual={l.variance.actual} /> },
     { key: "pending", header: t("budgets.col.pending"), align: "right", hideOnMobile: true, cell: (l) => formatInt(l.variance.pending) },
+    { key: "status", header: t("budgets.col.status"), cell: (l) => <VarianceBadge status={l.variance.status} /> },
+  ];
+  const { expense: expenseLines, income: incomeLines } = splitLines(b.lines);
+  const incomeColumns: Column<BudgetLine>[] = [
+    { key: "cat", header: t("budgets.col.incomeCategory"), cell: (l) => <div><p className="text-slate-800">{l.categoryName}</p>{l.note ? <p className="text-xs text-slate-500">{l.note}</p> : null}{!l.id ? <Badge tone="blue">{t("budgets.income.unplannedRow")}</Badge> : null}</div> },
+    { key: "target", header: t("budgets.col.target"), align: "right", cell: (l) => (l.id ? formatInt(l.approvedAmount ?? l.amount) : "—") },
+    { key: "received", header: t("budgets.col.received"), align: "right", cell: (l) => <span className="font-medium text-slate-900">{formatInt(l.variance.actual)}</span> },
+    { key: "variance", header: t("budgets.col.incomeVariance"), align: "right", cell: (l) => <VarianceCell value={l.variance.variance} /> },
+    { key: "progress", header: t("budgets.col.receivedPct"), hideOnMobile: true, cell: (l) => <IncomeBar receivedPct={l.variance.usedPct} received={l.variance.actual} /> },
     { key: "status", header: t("budgets.col.status"), cell: (l) => <VarianceBadge status={l.variance.status} /> },
   ];
   const rejectErr = touched && reason.trim().length < 3 ? t("budgets.detail.reasonRequired") : fieldError(reject.error, "comment");
@@ -91,10 +101,25 @@ export function BudgetDetailPage() {
         <StatCard label={t("budgets.kpi.variance")} value={formatRWF(b.totals.variance)} tone={b.totals.variance < 0 ? "red" : "green"} hint={t("budgets.kpi.varianceHint")} />
         <StatCard label={t("budgets.kpi.pending")} value={formatRWF(b.totals.pending)} tone="amber" hint={t("budgets.kpi.pendingHint")} />
       </div>
+      {incomeLines.length || b.incomeTotals?.budget ? (
+        <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard label={t("budgets.kpi.incomeTarget")} value={formatRWF(b.incomeTotals?.budget ?? 0)} tone="green" />
+          <StatCard label={t("budgets.kpi.incomeReceived")} value={formatRWF(b.incomeTotals?.actual ?? 0)} tone="green"
+            footer={<IncomeBar receivedPct={b.incomeTotals?.usedPct ?? null} received={b.incomeTotals?.actual ?? 0} />} />
+          <StatCard label={t("budgets.kpi.netPlanned")} value={formatRWF(b.net?.planned ?? 0)} tone={(b.net?.planned ?? 0) < 0 ? "red" : "navy"} hint={t("budgets.kpi.netPlannedHint")} />
+          <StatCard label={t("budgets.kpi.netActual")} value={formatRWF(b.net?.actual ?? 0)} tone={(b.net?.actual ?? 0) < 0 ? "red" : "green"} hint={t("budgets.kpi.netActualHint")} />
+        </div>
+      ) : null}
       <Card className="mb-5">
         <CardHeader title={t("budgets.detail.lines")} description={t("budgets.detail.linesDesc")} />
-        <DataTable columns={columns} rows={b.lines} rowKey={(l) => l.id || `x-${l.category}`} empty={t("budgets.detail.noLines")} />
+        <DataTable columns={columns} rows={expenseLines} rowKey={(l) => l.id || `x-${l.unbudgeted ? "u-" : ""}${l.category}`} empty={t("budgets.detail.noLines")} />
       </Card>
+      {incomeLines.length ? (
+        <Card className="mb-5">
+          <CardHeader title={t("budgets.detail.incomeLines")} description={t("budgets.detail.incomeLinesDesc")} />
+          <DataTable columns={incomeColumns} rows={incomeLines} rowKey={(l) => l.id || `i-${l.category}`} empty={t("budgets.detail.noLines")} />
+        </Card>
+      ) : null}
       <Card>
         <CardHeader title={t("budgets.detail.history")} />
         <dl className="grid gap-x-6 gap-y-2 px-5 pb-5 text-sm sm:grid-cols-[auto_1fr]">

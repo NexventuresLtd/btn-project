@@ -12,6 +12,8 @@ import { formatRWF } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { OfflineLockedError, useConnectivity, useDirtyForm, useOfflineMutation } from "@/offline/hooks";
 import { ProvisionalTag } from "@/offline/ui/SyncBadge";
+import { BudgetLinePicker } from "@/components/finance/BudgetLinePicker";
+import { budgetLinkBody, budgetLinkProblem, EMPTY_BUDGET_LINK, type BudgetLinkValue } from "@/components/finance/api";
 import { createEntry, updateEntry, PC_KEY, type EntryPayload, type EntryType, type PettyEntry, type PettyFloat } from "./api";
 import { EXPENSE_CATEGORIES, categoryLabel, normaliseMomo } from "./labels";
 import { PETTY_CASH_TYPE } from "./offline";
@@ -28,9 +30,10 @@ interface FormState {
   amount: string;
   momoCharge: string;
   invoiceRef: string;
+  budget: BudgetLinkValue;
 }
 
-const empty = (floatId = "", amount = ""): FormState => ({ floatId, date: todayISO(), category: "", department: "", description: "", plantId: "", payeeName: "", momoNumber: "", amount, momoCharge: "", invoiceRef: "" });
+const empty = (floatId = "", amount = ""): FormState => ({ floatId, date: todayISO(), category: "", department: "", description: "", plantId: "", payeeName: "", momoNumber: "", amount, momoCharge: "", invoiceRef: "", budget: EMPTY_BUDGET_LINK });
 
 function fromEntry(e: PettyEntry): FormState {
   return {
@@ -45,6 +48,8 @@ function fromEntry(e: PettyEntry): FormState {
     amount: String(e.amount),
     momoCharge: e.momoCharge ? String(e.momoCharge) : "",
     invoiceRef: e.invoiceRef ?? "",
+    // the voucher's expense keeps its line / unbudgeted mark; the reason must be confirmed again when correcting
+    budget: e.unbudgeted ? { budgetLineId: null, unbudgeted: true, unbudgetedReason: "" } : e.budgetLineId ? { budgetLineId: e.budgetLineId, unbudgeted: false, unbudgetedReason: "" } : EMPTY_BUDGET_LINK,
   };
 }
 
@@ -68,6 +73,7 @@ function validate(type: EntryType, f: FormState, t: T): Record<string, string> {
     if (!Number.isFinite(charge) || charge < 0) errors.momoCharge = t("pettycash.err.negative");
     else if (!Number.isInteger(charge)) errors.momoCharge = t("pettycash.err.wholeFrancs");
     else if (!errors.amount && charge > amount) errors.momoCharge = t("pettycash.err.chargeExceeds");
+    if (budgetLinkProblem(f.budget)) errors.unbudgetedReason = t("pettycash.err.unbudgetedReason");
   }
   return errors;
 }
@@ -120,7 +126,7 @@ export function EntryFormModal({ open, onClose, type, entry, floats, defaultFloa
     }
   }, [open, entry, reset]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const set = (k: keyof FormState) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const set = (k: Exclude<keyof FormState, "budget">) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const clientErrors = useMemo(() => validate(type, form, t), [type, form, t]);
   const err = (k: string) => (touched ? clientErrors[k] : undefined) ?? fieldError(save.error, k);
   const dirty = open && (form.description !== "" || form.amount !== "");
@@ -148,6 +154,7 @@ export function EntryFormModal({ open, onClose, type, entry, floats, defaultFloa
     amount,
     momoCharge: charge,
     invoiceRef: form.invoiceRef.trim() || null,
+    ...(type === "EXPENSE" ? budgetLinkBody(form.budget) : {}),
   });
 
   const submit = async (e: FormEvent) => {
@@ -274,6 +281,27 @@ export function EntryFormModal({ open, onClose, type, entry, floats, defaultFloa
               {lookups?.plants.map((p) => <option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
             </Select>
           </Field>
+        )}
+
+        {isDeposit ? (
+          <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{t("pettycash.form.topUpIsTransfer")}</p>
+        ) : (
+          <>
+            <BudgetLinePicker
+              type="EXPENSE"
+              idPrefix="pc-budget"
+              date={form.date}
+              department={form.department || fl?.department || ""}
+              category={form.category}
+              amount={outflow}
+              expenseId={entry?.expenseId ?? null}
+              value={form.budget}
+              onChange={(v) => setForm((f) => ({ ...f, budget: v }))}
+              errors={{ budgetLineId: fieldError(save.error, "budgetLineId"), unbudgetedReason: err("unbudgetedReason") }}
+              showCheck={net.reachable}
+            />
+            <p className="-mt-2 text-xs text-slate-500">{t("pettycash.form.expenseNote")}</p>
+          </>
         )}
 
         <BalanceHint type={type} currentBalance={currentBalance} provisional={!!fl?.provisional} after={after} outflow={outflow} exceeds={exceeds}

@@ -18,6 +18,7 @@ import (
 	"btn-ops/internal/deps"
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/i18n"
+	"btn-ops/internal/openapi"
 	"btn-ops/internal/ratelimit"
 
 	"github.com/gofiber/fiber/v2"
@@ -41,7 +42,12 @@ func Register(r fiber.Router, d *deps.Deps) {
 		st := st
 		r.Post("/periods/:id/"+string(st), auth.RequirePermission(auth.Permission(StepPermission[st])), func(c *fiber.Ctx) error { return h.advance(c, st) })
 	}
-	r.Post("/periods/:id/pay", auth.RequirePermission("payroll.pay"), h.pay)
+	r.Post("/periods/:id/record-payment", auth.RequirePermission("payroll.pay"), h.pay)
+	r.Post("/periods/:id/pay", auth.RequirePermission("payroll.pay"), h.pay) // deprecated alias (one release): payments are recorded, never made here
+	openapi.Describe("POST", "/payroll/periods/:id/record-payment", openapi.Op{Summary: "Record the payment of an authorised wage sheet",
+		Description: "Records wage payments made outside the system (MoMo, cash, bank) with method and references per worker, creates the PAYROLL expense(s) and locks the period."})
+	openapi.Describe("POST", "/payroll/periods/:id/pay", openapi.Op{Summary: "Deprecated alias of /payroll/periods/:id/record-payment",
+		Description: "Kept for one release for older clients. Use /record-payment."})
 	r.Post("/periods/:id/return", auth.RequirePermission("payroll.check", "payroll.verify", "payroll.authorize"), h.returnToDraft)
 
 	r.Get("/pdf/period/:id", auth.RequirePermission("payroll.view"), ratelimit.Group("pdf"), h.pdfPeriod)

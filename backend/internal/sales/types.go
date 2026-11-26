@@ -124,6 +124,10 @@ type paymentOut struct {
 	ReceivedBy  *person `json:"receivedBy"`
 	CreatedAt   jsTime  `json:"createdAt"`
 	Kind        string  `json:"kind"`
+	// the income record this payment is (docs/FINANCE_RECORDS_DESIGN.md §3: recording a payment on an order is recording an income)
+	IncomeID     string `json:"incomeId"`
+	IncomeNumber string `json:"incomeNumber"`
+	IncomeStatus string `json:"incomeStatus"`
 }
 
 type returnOut struct {

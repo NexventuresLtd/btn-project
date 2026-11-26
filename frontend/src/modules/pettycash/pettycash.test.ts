@@ -37,6 +37,14 @@ describe("petty cash offline record type", () => {
     expect(validatePettyEntry(spend({ date: "01/02/2026" }))).toBe(tr("pettycash.err.date"));
     expect(validatePettyEntry(spend({ momoNumber: "12345" }))).toBe(tr("pettycash.err.momoFormat"));
   });
+  it("carries the budget link of the spending (it is an expense)", () => {
+    expect(validatePettyEntry(spend({ budgetLineId: "line-1" }))).toBeNull();
+    expect(validatePettyEntry(spend({ unbudgeted: true, unbudgetedReason: "Unplanned moto" }))).toBeNull();
+    expect(validatePettyEntry(spend({ unbudgeted: true, unbudgetedReason: "abc" }))).toBe(tr("pettycash.err.unbudgetedReason"));
+    expect(validatePettyEntry(spend({ unbudgeted: true, unbudgetedReason: null }))).toBe(tr("pettycash.err.unbudgetedReason"));
+    // top-ups are float transfers: no budget link is checked
+    expect(validatePettyEntry(spend({ type: "DEPOSIT", category: "FLOAT_DEPOSIT", payeeName: null, invoiceRef: null, unbudgeted: true, unbudgetedReason: null }))).toBeNull();
+  });
 });
 
 describe("cash count by denomination", () => {

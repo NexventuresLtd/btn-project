@@ -105,6 +105,7 @@ var scheduleDefaults = []struct {
 	{"wage_workforce", FreqWagePeriod, "07:30", 1, []string{"FINANCE_MANAGER", "PRODUCTION_MANAGER", "GENERAL_MANAGER"}},
 	{"budget_monitoring", FreqMonthly, "07:40", 2, []string{"FINANCE_MANAGER", "GENERAL_MANAGER", "MANAGING_DIRECTOR"}},
 	{"site_performance", FreqMonthly, "07:50", 2, []string{"GENERAL_MANAGER", "MANAGING_DIRECTOR", "OPERATIONS_ADVISOR", "PRODUCTION_MANAGER"}},
+	{"finance_monthly", FreqMonthly, "08:00", 2, []string{"FINANCE_MANAGER", "GENERAL_MANAGER", "MANAGING_DIRECTOR"}},
 }
 
 // EnsureSchedules inserts missing schedule rows (idempotent).

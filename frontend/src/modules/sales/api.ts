@@ -299,7 +299,7 @@ export interface SaleDetail {
   cancelReason: string | null;
   lines: SaleLine[];
   deliveries: DeliveryDetail[];
-  payments: { id: string; date: string; amount: number; method: PaymentMethod; methodLabel: string; reference: string | null; receivedBy: Person | null; createdAt: string; kind: PaymentKind }[];
+  payments: { id: string; date: string; amount: number; method: PaymentMethod; methodLabel: string; reference: string | null; receivedBy: Person | null; createdAt: string; kind: PaymentKind; /** the income record this payment is (finance records) */ incomeId?: string | null; incomeNumber?: string | null }[];
   returns: { id: string; date: string; plant: Ref; productId: string; product: ProductRef; quantity: number; note: string | null; createdBy: Person | null; createdAt: string }[];
   returnable: { productId: string; product: ProductRef | null; delivered: number; returned: number; returnable: number }[];
   totals: { quantity: number; amount: number; paid: number; balance: number; delivered: number; remaining: number; returned: number; gross: number; discount: number; charge: number; subtotal: number };

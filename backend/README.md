@@ -349,22 +349,58 @@ jobs.Enqueue(ctx, q, name, userID) (jobs.Run, error)   // queue a run now (then 
 
 ## Shared services — P5 (finance: expenses, petty cash floats, budgets, finance dashboard)
 
-* **Expenses** (`internal/expenses`, `/api/expenses`, migration 02400): `expenses.CreateFromPurchase(ctx, tx, PurchaseExpense) (Ref, error)` (idempotent on
+* **Expenses** (`internal/expenses`, `/api/expenses`, migration 02400; restructured by 03100 — see "finance records" below): `expenses.CreateFromPurchase(ctx, tx, PurchaseExpense) (Ref, error)` (idempotent on
   source), `ForSource`, `ForPurchaseOrder`, `RegisterPurchaseTracer(fn)`, `BuildTrace`, `ComputeSummary(ctx, q, lang, from, to, plantID, userID)`,
   `SniffReceipt(bytes)`, `NextApproval(...)` (separation of duties). Receipts are stored in `expense_attachment.data` (≤ 10 MB, JPEG/PNG/WebP/PDF by
   magic bytes, active PDFs refused; served with `nosniff` + sandbox CSP). App `BodyLimit` is 11 MB for these uploads (JSON stays capped at 1 MB).
   Sync record type `expense`, pull entity `expenses`; flag `BUDGET_OVERRUN` on accepted offline overruns.
 * **Budgets** (`internal/budgets`, `/api/budgets`): `budgets.Check(ctx, q, dept, category, date, amount, excludeExpenseID) (*CheckResult, error)` (FIN-08),
-  `budgets.Actuals(ctx, q, from, to, dept, exclude) map[Key]Actual` (expenses + procurement + petty cash + payroll net wages, committed = submitted
+  `budgets.Actuals(ctx, q, from, to, dept, exclude) map[Key]Actual` (every expense by source: direct, procurement, petty cash, payroll; committed = submitted
   expenses), `ComputeVsActual(ctx, q, lang, periodType, date, dept)`, `PeriodBounds`, `ComputeVariance`, `CheckOverrun`.
 * **Petty cash floats** (`internal/pettycash`): table `petty_cash_float` (custodian, site, department, imprest, low threshold, reconcile period);
   every `"PettyCashEntry"` has a `"floatId"` (trigger `btn_petty_cash_defaults` fills the main box `btn_default_float()` for rows written by other
-  modules, e.g. payroll); `pettycash.PayExpense(ctx, tx, lang, ExpensePayment)`, `ListFloats`, `DefaultFloatID`, `RemindReconciliations` (job
+  modules, e.g. payroll); every spending voucher owns an expense and balances come from `petty_cash_ledger` (03100); `pettycash.PayExpense(ctx, tx, lang, ExpensePayment)`, `ListFloats`, `DefaultFloatID`, `RemindReconciliations` (job
   `pettycash.reconcile_reminder`, 07:45). Sync record type `petty_cash_entry`, pull `petty_cash_entries` + snapshot `petty_cash_floats`.
 * **Finance dashboard** (`internal/finance`, `/api/finance/dashboard`, `/api/finance/pdf/dashboard`): sections by permission (FIN-09).
 * Notification events: `expenses.approval_pending`, `expenses.decided`, `budgets.overrun`, `budgets.submitted`, `budgets.decided`,
   `pettycash.approval_pending`, `pettycash.topup_requested`, `pettycash.decided`, `pettycash.reconciliation_difference`, `pettycash.float_low`,
   `pettycash.reconcile_due`.
+
+## Shared services — finance records (income, expense sources, budget links, links; migrations 03100/03110)
+
+**Principle: the system keeps records; it never moves money.** Payments happen outside (cash, MoMo, Airtel, bank,
+cheque) and are recorded with date, method, amount and reference. No endpoint, job or document may initiate a transfer.
+Spec: `docs/FINANCE_RECORDS_DESIGN.md`.
+
+* **Income** (`internal/income`, `/api/income`, perms `income.view|record|verify`): list/summary/detail, `POST` record,
+  `PATCH` (RECORDED only), `/:id/verify` (not the recorder), `/:id/void {reason}` (never deleted), attachments, links,
+  PDFs `/pdf/report`, `/pdf/:id`, exports. Sync record type `income`, pull `income`. `income.Invalidate()` /
+  `income.OnChange(fn)` (sales registers its cache). Order payments: `POST /api/sales/:id/payments` inserts into the
+  **view** `"Payment"` (INSTEAD OF trigger `btn_payment_view_write`) → an `income` row (source ORDER_PAYMENT, same id,
+  linked to order + customer); every reader of `"Payment"` sees non-void ORDER_PAYMENT income. The pre-migration table is
+  kept as `payment_legacy`.
+* **Expense sources** `expense.source` DIRECT | PETTY_CASH | PROCUREMENT | PAYROLL | OTHER (JSON `origin`). PETTY_CASH /
+  PAYROLL expenses are `managed` (decided on the voucher / wage sheet). `expenses.CreateRecorded(ctx, tx, RecordedExpense)`
+  stores money already paid by another module (payroll) as PAID with links. `POST /expenses/:id/record-payment` (alias
+  `/pay` kept one release), `POST/DELETE /expenses/:id/links[/:linkId]`, `GET /expenses/unbudgeted` (+ PDF/export).
+* **Petty cash = expenses**: trigger `btn_petty_expense_mirror` gives every EXPENSE voucher its expense (status mirrored:
+  voucher approved = expense PAID; wage vouchers → PAYROLL); vouchers written with `"expenseId"` set (an expense paid from a
+  float, `pettycash.PayExpense`) are left alone. Ledger = view `petty_cash_ledger(id, float_id, date, created_at, plant_id,
+  type, status, effect, expense_id)`; all balances read it. Approval rules unchanged.
+* **Payroll**: `POST /payroll/periods/:id/record-payment` (alias `/pay`) records `wage_payment` rows and PAYROLL expense(s)
+  (one per method, linked to the period and every worker; cash vouchers own theirs).
+* **Budgets**: `budget_line.type` EXPENSE | INCOME. `budgets.Check` (suggestion, FIN-08), `CheckLine` (explicit line),
+  `CheckUnbudgeted` (budget_overrun levels on the whole amount), `Resolve(choice)`, `LineOptions`, `SuggestIncomeLine`,
+  `ValidIncomeLine`; `GET /budgets/line-options`. Actuals come from expenses only: attributed to the explicit line's
+  department/category, else the expense's own (suggested match); explicitly unbudgeted spend is reported separately.
+  Income lines compare income records. `ComputeVsActual` adds `incomeRows`, `incomeTotals`, `net`.
+* **Links** (`internal/finlink`): entity types (sale, customer, delivery, purchase_request/order, goods_receipt,
+  supplier_invoice, supplier, payroll_period, worker, production_report/day, transfer, stock_count, site, petty_cash_float,
+  reference); `ParseInput`, `Validate` (exists + site scope), `Add`, `Remove` (stamps removed_at), `List`, `Search`,
+  `ComputeMoney` (typed relations + links), `TraceSummary`.
+* **Finance** (`/api/finance`): `dashboard` (income, net, netCash added), `cash-flow` (+PDF/export), `money?entityType&entityId`
+  (Money panel, +PDF/export), `linked-summary` (linked-records trace, +PDF/export), `link-targets?type&q`.
+* Reports catalog: income-report, income-summary, cash-flow, unbudgeted-spending, linked-records; scheduled `finance_monthly`.
 
 ## Workforce — P4 (SRS WRK-01…07, §7.4)
 
@@ -373,8 +409,9 @@ jobs.Enqueue(ctx, q, name, userID) (jobs.Run, error)   // queue a run now (then 
   piece work (units × rate, PIECE/MIXED) + adjustments. Rates per day come from `wage_rate_rule` (most specific wins: worker 4 + site 2 + job 1,
   effective dated; NULL rates = worker's daily wage / half rounded up / daily × 1.5 ÷ 8) — built-in "Standard" rule when nothing matches.
 * **Payroll** computes lines on create and `POST /api/payroll/periods/:id/calculate`; `PUT /lines` accepts deductions/notes, and `daysWorked` /
-  `overtimeHours` that differ from the calculation only with `overrideReason` (audited; `calculatedGross` kept). Pay: `{method MOMO|CASH|BANK,
-  paidOn, paymentRefs:[{lineId, ref, method}], createPettyCash}` → `wage_payment` rows, attendance days locked, notifications.
+  `overtimeHours` that differ from the calculation only with `overrideReason` (audited; `calculatedGross` kept). Record payment
+  (`POST /payroll/periods/:id/record-payment`): `{method MOMO|CASH|BANK, paidOn, paymentRefs:[{lineId, ref, method}], createPettyCash}` →
+  `wage_payment` rows, PAYROLL expense(s), attendance days locked, notifications.
 * **Attendance** (`internal/attendance`): marks carry `overtimeHours` (0–16, ¼ h), `exception` + `exceptionReason` (WRK-07: other site / second
   paid mark the same day); one row per (worker, date, site). Day state `attendance_day` OPEN → SUBMITTED → APPROVED (locked):
   `POST /attendance/submit`, `POST /attendance/approve {plantId, from, to, acceptUnmarked}` (`attendance.approve`), `GET /attendance/days`.

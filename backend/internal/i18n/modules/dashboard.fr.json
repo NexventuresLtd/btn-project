@@ -380,7 +380,7 @@
  "dashboard.w.deliveries.pending.description": "Commandes prêtes à expédier et livraisons en route.",
  "dashboard.w.deliveries.pending.empty": "Rien en attente de livraison.",
  "dashboard.w.deliveries.pending.title": "Livraisons en attente",
- "dashboard.w.finance.expenses.description": "Dépenses approuvées, achats, petite caisse et salaires versés, par catégorie.",
+ "dashboard.w.finance.expenses.description": "Toutes les dépenses enregistrées — directes, factures fournisseurs, menues dépenses et salaires — par catégorie.",
  "dashboard.w.finance.expenses.empty": "Aucune dépense enregistrée sur cette période.",
  "dashboard.w.finance.expenses.title": "Dépenses",
  "dashboard.w.finance.revenue.description": "Ventes confirmées, paiements encaissés et soldes clients impayés.",
@@ -461,5 +461,13 @@
  "dashboard.w.transfers.pending.title": "Transferts en attente",
  "dashboard.w.workforce.headcount.description": "Ouvriers présents, en demi-journée, absents ou en congé aujourd'hui, et ceux pas encore pointés.",
  "dashboard.w.workforce.headcount.empty": "Aucun ouvrier actif enregistré pour l'instant.",
- "dashboard.w.workforce.headcount.title": "Effectif du jour"
+ "dashboard.w.workforce.headcount.title": "Effectif du jour",
+ "dashboard.m.income": "Recettes enregistrées",
+ "dashboard.m.orderPayments": "Paiements de commandes",
+ "dashboard.m.otherIncome": "Autres recettes",
+ "dashboard.m.unverifiedIncome": "Non encore vérifié",
+ "dashboard.m.net": "Net (recettes − dépenses)",
+ "dashboard.w.finance.income.title": "Recettes",
+ "dashboard.w.finance.income.description": "Argent reçu et enregistré (paiements de commandes et autres recettes) par catégorie, et la position nette.",
+ "dashboard.w.finance.income.empty": "Aucune recette enregistrée sur cette période."
 }

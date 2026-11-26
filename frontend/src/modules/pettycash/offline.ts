@@ -2,6 +2,7 @@
  * Petty cash entries as an offline record type (SRS §5.2 "Petty cash and expense entries — Create; queued; approval
  * requires online"). Payload = the POST /pettycash/entries body. Server handler: backend/internal/pettycash/sync.go.
  * The record uuid becomes the entry id; pulled server entries (entity "petty_cash_entries") land in the same local table.
+ * A spending voucher IS an expense on the server: the payload carries its budget link (budgetLineId | unbudgeted + reason).
  */
 import { tr } from "@/i18n";
 import { formatDate, todayISO } from "@/lib/dates";
@@ -32,6 +33,11 @@ export function validatePettyEntry(p: EntryPayload): string | null {
     const c = p.momoCharge ?? 0;
     if (!Number.isInteger(c) || c < 0) return tr("pettycash.err.negative");
     if (c > p.amount) return tr("pettycash.err.chargeExceeds");
+    if (p.unbudgeted) {
+      const r = (p.unbudgetedReason ?? "").trim();
+      if (r.length < 5) return tr("pettycash.err.unbudgetedReason");
+      if (r.length > 500) return tr("pettycash.offline.tooLong");
+    }
   }
   return null;
 }
@@ -50,6 +56,7 @@ registerOfflineRecordType<EntryPayload, LocalPettyEntry>({
     { name: "momoCharge", kind: "number", label: () => tr("pettycash.form.momoCharge") },
     { name: "payeeName", kind: "text", label: () => tr("pettycash.form.paidTo") },
     { name: "invoiceRef", kind: "text", label: () => tr("pettycash.form.receiptRef") },
+    { name: "unbudgetedReason", kind: "text", label: () => tr("pettycash.form.unbudgetedReason") },
   ],
   invalidate: [PC_KEY, ["dashboard"]],
   pull: {
@@ -61,6 +68,7 @@ registerOfflineRecordType<EntryPayload, LocalPettyEntry>({
       date: String(d.date), type: d.type as EntryPayload["type"], category: (d.category as string) ?? null, description: String(d.description ?? ""),
       plantId: (d.plantId as string) ?? null, payeeName: (d.payeeName as string) ?? null, momoNumber: (d.momoNumber as string) ?? null,
       amount: Number(d.amount ?? 0), momoCharge: Number(d.momoCharge ?? 0), invoiceRef: (d.invoiceRef as string) ?? null,
+      budgetLineId: (d.budgetLineId as string | null) ?? null, unbudgeted: !!d.unbudgeted,
     }),
   },
 });

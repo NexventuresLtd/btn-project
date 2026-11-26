@@ -24,6 +24,7 @@ import { transfersRoutes } from "@/modules/transfers/routes";
 import { stockcountRoutes } from "@/modules/stockcount/routes";
 import { procurementRoutes } from "@/modules/procurement/routes";
 import { expensesRoutes } from "@/modules/expenses/routes";
+import { incomeRoutes } from "@/modules/income/routes"; // finance records: income (money received, as recorded)
 import { budgetsRoutes } from "@/modules/budgets/routes";
 import { financeRoutes } from "@/modules/finance/routes"; // P5 finance dashboard + purchase trace
 import { workforceRoutes } from "@/modules/workforce/routes";
@@ -61,6 +62,7 @@ export const router = createBrowserRouter([
       ...stockcountRoutes,
       ...procurementRoutes,
       ...expensesRoutes,
+      ...incomeRoutes,
       ...budgetsRoutes,
       ...financeRoutes,
       ...workforceRoutes,

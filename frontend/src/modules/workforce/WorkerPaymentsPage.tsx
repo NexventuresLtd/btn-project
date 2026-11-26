@@ -1,6 +1,8 @@
 import { Link, useParams } from "react-router";
-import { Badge, Card, CardHeader, DataTable, ErrorState, ExportMenu, PageHeader, PageLoader, PdfButton, StatCard, StatusBadge, type Column } from "@/components/ui";
+import { Badge, Card, CardHeader, DataTable, ErrorState, ExportMenu, PageHeader, PageLoader, PdfButton, StatCard, type Column } from "@/components/ui";
 import { useT } from "@/i18n";
+import { PayrollStatusBadge } from "@/modules/payroll/components";
+import type { PayrollStatus } from "@/modules/payroll/api";
 import { formatDate, formatDateRange } from "@/lib/dates";
 import { formatInt, formatQty, formatRWF } from "@/lib/format";
 import { PAYMENT_METHODS, useWorkerHistory, type Payment, type WorkerHistory } from "./api";
@@ -29,7 +31,7 @@ export function WorkerPaymentsPage() {
   const lineCols: Column<Line>[] = [
     { key: "no", header: t("workforce.col.sheet"), cell: (l) => <Link to={`/payroll/${l.periodId}`} className="font-medium text-navy-700 hover:underline">{l.number}</Link> },
     { key: "range", header: t("workforce.col.period"), cell: (l) => formatDateRange(l.startDate, l.endDate), hideOnMobile: true },
-    { key: "status", header: t("workforce.col.status"), cell: (l) => <StatusBadge status={l.status} /> },
+    { key: "status", header: t("workforce.col.status"), cell: (l) => <PayrollStatusBadge status={l.status as PayrollStatus} /> },
     { key: "days", header: t("workforce.col.days"), align: "right", cell: (l) => formatQty(l.days) },
     { key: "ot", header: t("workforce.col.overtimeHours"), align: "right", cell: (l) => formatQty(l.overtimeHours), hideOnMobile: true },
     { key: "adj", header: t("workforce.col.adjustment"), align: "right", cell: (l) => formatInt(l.adjustment), hideOnMobile: true },

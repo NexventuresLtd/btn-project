@@ -83,3 +83,29 @@ func TestTransitions(t *testing.T) {
 		t.Error("editable rules")
 	}
 }
+
+func TestIncomeVarianceRules(t *testing.T) {
+	cases := []struct {
+		target, income int64
+		status         string
+		variance       int64
+	}{
+		{0, 0, "idle", 0},
+		{0, 5000, "unplanned", 5000},
+		{100000, 100000, "met", 0},
+		{100000, 120000, "met", 20000},
+		{100000, 95000, "on_track", -5000},
+		{100000, 40000, "behind", -60000},
+	}
+	for _, c := range cases {
+		v := ComputeIncomeVariance(c.target, Actual{Income: c.income, Expenses: 999}) // expenses never count on an income line
+		if v.Status != c.status || v.Variance != c.variance || v.Actual != c.income {
+			t.Errorf("%+v → %+v", c, v)
+		}
+	}
+	// explicitly unbudgeted spend is reported but never counted against a line
+	a := Actual{Expenses: 100, Unbudgeted: 50}
+	if a.Total() != 100 || a.Add(Actual{Unbudgeted: 1, Income: 2}).Unbudgeted != 51 {
+		t.Errorf("actual totals: %+v", a)
+	}
+}

@@ -14,6 +14,7 @@
 package sales
 
 import (
+	"btn-ops/internal/income"
 	"context"
 	"strconv"
 	"strings"
@@ -46,6 +47,7 @@ func invalidate() { respCache.Clear() }
 
 // Register mounts the module on a router that is already behind LoadSession + RequireAuth.
 func Register(r fiber.Router, d *deps.Deps) {
+	income.OnChange(invalidate) // an order's paid amount comes from its income records
 	h := &handler{d: d, s: &service{pool: d.Pool}}
 	view := auth.RequirePermission("sales.view")
 	viewOrDispatch := auth.RequirePermission("sales.view", "deliveries.create")

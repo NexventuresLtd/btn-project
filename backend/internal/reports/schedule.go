@@ -101,7 +101,16 @@ var Defs = []Def{
 		Parts: []Part{{Key: "payroll-summary", PDF: func(p Period) string { return "/payroll/pdf/summary?" + p.q() },
 			Export: func(p Period) string { return "/payroll/summary?" + p.q() }}, hubPart("headcount")}},
 	{Key: "budget_monitoring", Perms: []auth.Permission{"budgets.view"}, Frequencies: []string{FreqMonthly},
-		Parts: []Part{hubPart("budget-monitoring")}},
+		Parts: []Part{hubPart("budget-monitoring"), {Key: "budgets-vs-actual", PDF: func(p Period) string { return "/budgets/pdf/vs-actual?" + p.asAt() },
+			Export: func(p Period) string { return "/budgets/vs-actual?" + p.asAt() }}}},
+	// monthly finance records report (docs/FINANCE_RECORDS_DESIGN.md §5): money in vs out, income, expenses, unbudgeted
+	{Key: "finance_monthly", Perms: []auth.Permission{"income.view", "expenses.view"}, Frequencies: []string{FreqMonthly, FreqWeekly},
+		Parts: []Part{
+			{Key: "cash-flow", PDF: func(p Period) string { return "/finance/pdf/cash-flow?" + p.q() }, Export: func(p Period) string { return "/finance/cash-flow?" + p.q() }},
+			{Key: "income-report", PDF: func(p Period) string { return "/income/pdf/report?" + p.q() }, Export: func(p Period) string { return "/income?" + p.q() }},
+			{Key: "expenses-report", PDF: func(p Period) string { return "/expenses/pdf/report?" + p.q() }, Export: func(p Period) string { return "/expenses/summary?" + p.q() }},
+			{Key: "unbudgeted-spending", PDF: func(p Period) string { return "/expenses/pdf/unbudgeted?" + p.q() },
+				Export: func(p Period) string { return "/expenses/unbudgeted?" + p.q() }}}},
 	{Key: "site_performance", Perms: []auth.Permission{"reports.view"}, Frequencies: []string{FreqMonthly},
 		Parts: []Part{hubPart("site-performance"), {Key: "management-summary", PDF: func(p Period) string { return "/reports/pdf/management?" + p.q() },
 			Export: func(p Period) string { return "/dashboard?" + p.q() }}}},
