@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"btn-ops/internal/app/apptest"
+	"btn-ops/internal/approvals"
 	"btn-ops/internal/auth"
 	"btn-ops/internal/dates"
 	"btn-ops/internal/db"
@@ -504,5 +505,48 @@ func TestLowStockPageCacheInvalidatedByStockWrites(t *testing.T) {
 	f.ok(t, e.Do("POST", "/api/stock/issues", map[string]any{"plantId": f.plant["BTN-1"], "itemKind": "material", "itemId": cement, "date": f.today, "qty": 1, "note": "run"}, f.sto1), 201)
 	if n := count(); n != 0 {
 		t.Fatalf("a stock write must refresh the low-stock page (139 >= 50): %d", n)
+	}
+}
+
+// TestOneUserPerRoleStockAdjustments: with BTN's org chart (one PM, one HQ stock officer, one supervisor per site) and
+// the shipped thresholds (PM only, any value), opening balances and adjustment requests reach their terminal state.
+func TestOneUserPerRoleStockAdjustments(t *testing.T) {
+	f := p2setup(t)
+	e := f.e
+	if err := approvals.SeedDefaults(t.Context(), e.Pool); err != nil {
+		t.Fatal(err)
+	}
+	approvals.Invalidate()
+	// opening balance: the PM (stock.adjust)
+	if r := e.Do("POST", "/api/stock/opening", map[string]any{"plantId": f.plant["BTN-1"], "date": f.d1, "lines": []map[string]any{{"productId": f.prod["HB10"], "quantity": 1000}}}, f.pm); r.StatusCode >= 300 {
+		t.Fatalf("opening %d %s", r.StatusCode, e.Text(r))
+	}
+	// large adjustment requested by the site supervisor (1 000 blocks: well above the old 1 000 000 RWF GM band)
+	for _, req := range []*testutil.TestUser{f.sup1, f.sto} {
+		adj := f.ok(t, e.Do("POST", "/api/stock/adjustment-requests", map[string]any{"plantId": f.plant["BTN-1"], "itemKind": "product", "itemId": f.prod["HB10"],
+			"date": f.today, "qty": -400, "note": "TEST storm damage"}, req), 201)
+		id := adj["id"].(string)
+		if r := e.Do("POST", "/api/stock/adjustments/"+id+"/approve", map[string]any{}, f.gm); r.StatusCode != 403 {
+			t.Fatalf("gm approves %d", r.StatusCode)
+		}
+		ok := f.ok(t, e.Do("POST", "/api/stock/adjustments/"+id+"/approve", map[string]any{"note": "seen"}, f.pm), 200)
+		if ok["adjustment"].(map[string]any)["status"] != "APPROVED" {
+			t.Fatalf("one PM decision ends it: %+v", ok)
+		}
+	}
+	if n := f.count(t, `SELECT COALESCE(sum(quantity),0)::int FROM "StockMovement" WHERE "productId"=$1 AND "plantId"=$2`, f.prod["HB10"], f.plant["BTN-1"]); n != 200 {
+		t.Fatalf("balance %d", n)
+	}
+	// a two-band chain both naming the PM is still one decision for BTN's single PM
+	if _, err := e.Pool.Exec(t.Context(), `INSERT INTO approval_threshold (domain, level, min_amount, permission, role, label)
+		VALUES ('stock_adjustment', 2, 100000, 'stock.adjust', 'PRODUCTION_MANAGER', 'PM, large adjustments')`); err != nil {
+		t.Fatal(err)
+	}
+	approvals.Invalidate()
+	adj := f.ok(t, e.Do("POST", "/api/stock/adjustment-requests", map[string]any{"plantId": f.plant["BTN-1"], "itemKind": "product", "itemId": f.prod["HB10"],
+		"date": f.today, "qty": -100, "note": "TEST more damage"}, f.sup1), 201)
+	ok := f.ok(t, e.Do("POST", "/api/stock/adjustments/"+adj["id"].(string)+"/approve", map[string]any{}, f.pm), 200)
+	if a := ok["adjustment"].(map[string]any); a["status"] != "APPROVED" || len(a["approvals"].([]any)) != 2 {
+		t.Fatalf("two PM levels in one decision: %+v", a)
 	}
 }

@@ -304,6 +304,26 @@ func (o *op) decideApproval(id string, approve bool, note string) (*approvalOut,
 		return nil, nil, err
 	}
 	a.Steps = append(a.Steps, approvalStep{Level: lvl.Level, Decision: decision, decidedBy: o.u.ID})
+	// One approver's decision covers every further consecutive level they are entitled to (BTN has one person per
+	// role: e.g. a 20 M RWF amendment or a cancellation of a ≥ 5 M order needs a sales.approve level and a Production
+	// Manager / sales.cancel level, and only the PM is left once the Sales Manager is the requester). Four eyes is
+	// kept: the requester never decides, and each covered level is recorded and audited.
+	for approve {
+		nl := nextLevel(a.Levels, a.Steps)
+		if nl == nil || !nl.Satisfies(o.u.Role) {
+			break
+		}
+		if _, err := o.tx.Exec(o.ctx, `INSERT INTO sale_approval_step (approval_id, level, label, decision, decided_by, note) VALUES ($1,$2,$3,'APPROVED',$4,$5)`,
+			id, nl.Level, nl.Label, o.u.ID, nilIfEmpty(note)); err != nil {
+			return nil, nil, err
+		}
+		if err := o.audit(audit.Input{Action: "sales.approval.approve", Entity: "Sale", EntityID: h.ID,
+			Summary: fmt.Sprintf("APPROVED level %d of %s approval for %s (same approver)", nl.Level, a.Kind, h.Number),
+			After:   map[string]any{"approvalId": id, "level": nl.Level, "decision": "APPROVED", "note": nilIfEmpty(note), "cascade": true}}); err != nil {
+			return nil, nil, err
+		}
+		a.Steps = append(a.Steps, approvalStep{Level: nl.Level, Decision: "APPROVED", decidedBy: o.u.ID})
+	}
 	var warnings []stockWarning
 	final := ""
 	if !approve {

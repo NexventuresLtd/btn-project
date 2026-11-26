@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"btn-ops/internal/app/apptest"
+	"btn-ops/internal/approvals"
 	"btn-ops/internal/auth"
 	"btn-ops/internal/dates"
 	"btn-ops/internal/testutil"
@@ -277,4 +278,40 @@ func TestOwnCountApprovalAndSync(t *testing.T) {
 	if body := e.Text(r); r.StatusCode != 200 || !strings.Contains(body, id) {
 		t.Fatalf("pull %d %s", r.StatusCode, body)
 	}
+}
+
+// TestOneUserPerRoleStockCount: one holder per role. The site stock officer counts, the one PM approves (counter ≠
+// approver), then the BTN-2 supervisor counts his own site and the same PM approves; a two-band PM chain is one decision.
+func TestOneUserPerRoleStockCount(t *testing.T) {
+	f := setup(t)
+	e := f.e
+	if err := approvals.SeedDefaults(t.Context(), e.Pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Pool.Exec(t.Context(), `INSERT INTO approval_threshold (domain, level, min_amount, permission, role, label)
+		VALUES ('stock_adjustment', 2, 1, 'stockcount.approve', 'PRODUCTION_MANAGER', 'PM, every variance')`); err != nil {
+		t.Fatal(err)
+	}
+	approvals.Invalidate()
+	walk := func(plant string, counter *testutil.TestUser, qty, counted float64) {
+		t.Helper()
+		f.ok(t, e.Do("POST", "/api/stock/receipts", map[string]any{"plantId": f.plant[plant], "itemKind": "material", "itemId": f.mat["CEMENT"], "date": f.today, "qty": qty, "unitCost": 9000}, counter), 201)
+		c := count(f.ok(t, e.Do("POST", "/api/stock-counts", map[string]any{"plantId": f.plant[plant], "countDate": f.today, "scope": "CATEGORY",
+			"itemKind": "material", "category": "CEMENT"}, counter), 201))
+		id := c["id"].(string)
+		f.ok(t, e.Do("PUT", "/api/stock-counts/"+id+"/lines", map[string]any{"lines": []any{map[string]any{"lineId": lineFor(c, f.mat["CEMENT"])["id"], "countedQty": counted}}}, counter), 200)
+		f.ok(t, e.Do("POST", "/api/stock-counts/"+id+"/submit", map[string]any{}, counter), 200)
+		if r := e.Do("POST", "/api/stock-counts/"+id+"/approve", map[string]any{}, f.gm); r.StatusCode != 403 {
+			t.Fatalf("gm approves %d", r.StatusCode)
+		}
+		ap := count(f.ok(t, e.Do("POST", "/api/stock-counts/"+id+"/approve", map[string]any{}, f.pm), 200))
+		if ap["status"] != "APPROVED" {
+			t.Fatalf("%s: one PM decision ends the count: %v %+v", plant, ap["status"], ap["approvals"])
+		}
+		if b := f.balance(t, plant, f.mat["CEMENT"]); b != counted {
+			t.Fatalf("%s balance %v want %v", plant, b, counted)
+		}
+	}
+	walk("BTN-1", f.sto1, 120, 112)
+	walk("BTN-2", f.sup2, 50, 49)
 }

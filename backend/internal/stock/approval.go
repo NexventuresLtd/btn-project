@@ -51,6 +51,24 @@ func NextLevel(required []approvals.Level, done []Approval) *approvals.Level {
 	return nil
 }
 
+// ApproveFrom records one person's approval decision starting at level next: it covers next and every following
+// pending level the same role may also approve (consecutive levels held by one role, e.g. two value bands that both
+// name the Production Manager). One decision per person: with BTN's org chart (one holder per role) a chain whose
+// levels all belong to one role is decided in one step instead of deadlocking on "a different person per level",
+// while a level that needs another role still waits for that role. The requester never approves (callers check).
+func ApproveFrom(required []approvals.Level, done []Approval, next approvals.Level, role auth.Role, basePerm auth.Permission, ap Approval) []Approval {
+	ap.Level, ap.Label = next.Level, next.Label
+	done = append(done, ap)
+	for {
+		n := NextLevel(required, done)
+		if n == nil || !CanApproveLevel(role, *n, basePerm) {
+			return done
+		}
+		ap.Level, ap.Label = n.Level, n.Label
+		done = append(done, ap)
+	}
+}
+
 // CanApproveLevel: the user's role satisfies the level and holds basePerm (the module's approve permission).
 func CanApproveLevel(role auth.Role, l approvals.Level, basePerm auth.Permission) bool {
 	return auth.Can(role, basePerm) && l.Satisfies(role)

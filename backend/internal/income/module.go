@@ -47,7 +47,8 @@ func Register(r fiber.Router, d *deps.Deps) {
 	r.Post("/", record, h.create)
 	r.Get("/:id", view, h.get)
 	r.Patch("/:id", record, h.patch)
-	r.Post("/:id/verify", verify, h.verify)
+	// top management verifies income the Finance Manager recorded (escalatedVerifier); the handler checks it
+	r.Post("/:id/verify", auth.RequirePermission("income.verify", "expenses.approve"), h.verify)
 	r.Post("/:id/void", verify, h.void)
 	r.Get("/:id/links", view, h.listLinks)
 	r.Post("/:id/links", record, h.addLink)

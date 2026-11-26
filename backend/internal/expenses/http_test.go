@@ -267,15 +267,16 @@ func TestExpenseApprovalPaymentAndReceipts(t *testing.T) {
 			t.Error("raw delete must be refused")
 		}
 	}
-	// approvals: level 1 finance, level 2 GM, distinct people, never the creator
-	if c, _ := e.call("POST", "/api/expenses/"+id+"/approve", map[string]any{}, e.gm); c != 200 {
-		t.Fatalf("gm signs level 1: %d", c)
+	// approvals: level 1 finance, level 2 GM, never the creator. Another finance user signs level 1; finance cannot sign
+	// the GM level; one GM signature covers level 2.
+	if c, _ := e.call("POST", "/api/expenses/"+id+"/approve", map[string]any{}, e.rec); c != 403 {
+		t.Fatalf("creator approves: %d", c)
 	}
-	if c, m := e.call("POST", "/api/expenses/"+id+"/approve", map[string]any{}, e.gm); c != 403 || !strings.Contains(s(obj(m, "error"), "message"), "different person") {
+	if c, _ := e.call("POST", "/api/expenses/"+id+"/approve", map[string]any{}, e.fm); c != 200 {
+		t.Fatalf("finance signs level 1: %d", c)
+	}
+	if c, m := e.call("POST", "/api/expenses/"+id+"/approve", map[string]any{}, e.fm); c != 403 || !strings.Contains(s(obj(m, "error"), "message"), "different person") {
 		t.Fatalf("same approver twice: %d %v", c, m)
-	}
-	if c, _ := e.call("POST", "/api/expenses/"+id+"/approve", map[string]any{}, e.fm); c != 403 {
-		t.Fatalf("finance cannot sign the GM level: %d", c)
 	}
 	done := e.must(200, "POST", "/api/expenses/"+id+"/approve", map[string]any{"comment": "ok"}, e.gm2)
 	if s(done, "status") != "APPROVED" || obj(done, "decidedBy")["id"] != e.gm2.ID {

@@ -70,41 +70,41 @@ func TestNextApprovalSeparationOfDuties(t *testing.T) {
 	fm, gm := "FINANCE_MANAGER", "GENERAL_MANAGER"
 	levels := []approvals.Level{{Level: 1, Permission: "expenses.approve", Role: &fm, Label: "Finance"}, {Level: 2, Permission: "expenses.approve", Role: &gm, Label: "GM"}}
 	// creator never approves
-	if d := NextApproval(levels, nil, "expense", "u1", auth.RoleFinanceManager, "u1"); d.OK || d.Reason != "expenses.err.self_approve" {
+	if d := NextApproval(levels, nil, "expense", "u1", auth.RoleFinanceManager, "u1", ""); d.OK || d.Reason != "expenses.err.self_approve" {
 		t.Errorf("self: %+v", d)
 	}
 	// FM approves level 1
-	d := NextApproval(levels, nil, "expense", "fm", auth.RoleFinanceManager, "u1")
+	d := NextApproval(levels, nil, "expense", "fm", auth.RoleFinanceManager, "u1", "")
 	if !d.OK || d.Level.Level != 1 {
 		t.Fatalf("fm level 1: %+v", d)
 	}
 	dec := []approvalRow{{Kind: "expense", Level: 1, Decision: "APPROVED", UserID: "fm"}}
 	// the same person cannot sign level 2 too
-	if d := NextApproval(levels, dec, "expense", "fm", auth.RoleSuperAdmin, "u1"); d.OK || d.Reason != "expenses.err.already_signed" {
+	if d := NextApproval(levels, dec, "expense", "fm", auth.RoleSuperAdmin, "u1", ""); d.OK || d.Reason != "expenses.err.already_signed" {
 		t.Errorf("same signer twice: %+v", d)
 	}
 	// level 2 needs a GM
-	if d := NextApproval(levels, dec, "expense", "fm2", auth.RoleFinanceManager, "u1"); d.OK || d.Reason != "expenses.err.level_role" {
+	if d := NextApproval(levels, dec, "expense", "fm2", auth.RoleFinanceManager, "u1", ""); d.OK || d.Reason != "expenses.err.level_role" {
 		t.Errorf("fm on gm level: %+v", d)
 	}
-	if d := NextApproval(levels, dec, "expense", "gm", auth.RoleGeneralManager, "u1"); !d.OK || d.Level.Level != 2 {
+	if d := NextApproval(levels, dec, "expense", "gm", auth.RoleGeneralManager, "u1", ""); !d.OK || d.Level.Level != 2 {
 		t.Errorf("gm level 2: %+v", d)
 	}
 	// escalation: a GM may sign the finance level when the FM recorded the expense
-	if d := NextApproval(levels, nil, "expense", "gm", auth.RoleGeneralManager, "fm"); !d.OK || d.Level.Level != 1 {
+	if d := NextApproval(levels, nil, "expense", "gm", auth.RoleGeneralManager, "fm", ""); !d.OK || d.Level.Level != 1 {
 		t.Errorf("gm signs level 1 for fm: %+v", d)
 	}
 	// a role without the permission never approves
-	if d := NextApproval(levels, nil, "expense", "sup", auth.RoleSupervisor, "u1"); d.OK {
+	if d := NextApproval(levels, nil, "expense", "sup", auth.RoleSupervisor, "u1", ""); d.OK {
 		t.Errorf("supervisor: %+v", d)
 	}
 	// all levels done
 	done := append(dec, approvalRow{Kind: "expense", Level: 2, Decision: "APPROVED", UserID: "gm"})
-	if d := NextApproval(levels, done, "expense", "md", auth.RoleManagingDirector, "u1"); d.OK || d.Reason != "expenses.err.no_level" {
+	if d := NextApproval(levels, done, "expense", "md", auth.RoleManagingDirector, "u1", ""); d.OK || d.Reason != "expenses.err.no_level" {
 		t.Errorf("done: %+v", d)
 	}
 	// overrun decisions are a separate track
-	if d := NextApproval(levels, dec, "overrun", "fm", auth.RoleFinanceManager, "u1"); !d.OK {
+	if d := NextApproval(levels, dec, "overrun", "fm", auth.RoleFinanceManager, "u1", ""); !d.OK {
 		t.Errorf("overrun track independent: %+v", d)
 	}
 }

@@ -26,6 +26,7 @@ func actionsFor(u *auth.User, r *row) *Actions {
 	a.Attach = open && canWrite(u, r)
 	a.Link = a.Attach
 	if !u.Can("income.verify") {
+		a.Verify = escalatedVerifier(u, r) && r.Status == StatusRecorded
 		return a
 	}
 	switch {
@@ -43,6 +44,17 @@ func actionsFor(u *auth.User, r *row) *Actions {
 		}
 	}
 	return a
+}
+
+// escalatedVerifier: income recorded by a finance verifier (the Finance Manager) cannot be verified by its recorder, and
+// BTN has one Finance Manager, so top management (GM / MD, §8 Finance "Top Mgt R A") verifies it instead. Separation of
+// duties is kept: the recorder never verifies their own record.
+func escalatedVerifier(u *auth.User, r *row) bool {
+	if u.ID == r.CreatedByID || r.CreatedByRole == nil {
+		return false
+	}
+	topMgt := u.Role == auth.RoleGeneralManager || u.Role == auth.RoleManagingDirector
+	return topMgt && auth.Can(auth.Role(*r.CreatedByRole), "income.verify")
 }
 
 // transition runs fn on a locked, visible record, then reloads it, audits and answers the detail.
@@ -111,6 +123,9 @@ func (h *handler) verify(c *fiber.Ctx) error {
 		}
 		if r.CreatedByID == u.ID {
 			return "", "", nil, httpx.Forbidden("income.err.self_verify")
+		}
+		if !u.Can("income.verify") && !escalatedVerifier(u, r) {
+			return "", "", nil, httpx.Forbidden()
 		}
 		now := db.Now()
 		if _, err := tx.Exec(httpx.Ctx(c), `UPDATE income SET status = 'VERIFIED', verified_by_id = $2, verified_at = $3, updated_at = $3 WHERE id = $1`,

@@ -465,13 +465,10 @@ func TestValueApprovalsAndCancellation(t *testing.T) {
 	if r := e.Do("POST", "/api/sales/approvals/"+gaid+"/approve", M{}, f.pm); r.StatusCode != 403 {
 		t.Errorf("own cancellation: %d", r.StatusCode)
 	}
-	// level 1 (sales.approve) by a second sales manager, level 2 (sales.cancel) needs yet another person
-	status(t, e, "POST", "/api/sales/approvals/"+gaid+"/approve", M{}, md, 200)
-	if r := e.Do("POST", "/api/sales/approvals/"+gaid+"/approve", M{}, md); r.StatusCode != 403 {
-		t.Errorf("same approver twice: %d", r.StatusCode)
+	// level 1 (sales.approve) and level 2 (sales.cancel): one approver entitled to both covers both in one decision
+	if ap := status(t, e, "POST", "/api/sales/approvals/"+gaid+"/approve", M{}, md, 200)["approval"].(M); ap["status"] != "APPROVED" || len(ap["steps"].([]any)) != 2 {
+		t.Errorf("one decision covers both levels: %v", ap["status"])
 	}
-	md2 := e.User(auth.RoleProductionManager)
-	status(t, e, "POST", "/api/sales/approvals/"+gaid+"/approve", M{}, md2, 200)
 	if s := status(t, e, "GET", "/api/sales/"+mid["id"].(string), nil, f.sm, 200)["sale"].(M); s["status"] != "CANCELLED" {
 		t.Fatalf("confirmed → cancelled: %v", s["status"])
 	}

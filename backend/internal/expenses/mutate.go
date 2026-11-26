@@ -32,7 +32,10 @@ type Decision struct {
 
 // NextApproval applies the rules: never the creator; one person approves at most one level of a kind; the approver must
 // satisfy the next pending level, or a higher configured level of the same domain (a senior may sign for a junior level).
-func NextApproval(levels []approvals.Level, decisions []approvalRow, kind, userID string, role auth.Role, creatorID string) Decision {
+// Self-approval escalates: when the creator holds the role a level asks for (only Finance records expenses, and the
+// first level is "Finance approval"), top management (GM / MD, §8 Finance "Top Mgt R A") signs that level instead, so
+// the workflow completes with one Finance Manager while the creator never approves. See coversLevel for the cascade.
+func NextApproval(levels []approvals.Level, decisions []approvalRow, kind, userID string, role auth.Role, creatorID string, creatorRole auth.Role) Decision {
 	if userID == creatorID {
 		return Decision{Reason: "expenses.err.self_approve"}
 	}
@@ -51,7 +54,7 @@ func NextApproval(levels []approvals.Level, decisions []approvalRow, kind, userI
 			lv = s.Level
 		}
 	}
-	if lv.Satisfies(role) {
+	if coversLevel(lv, role, creatorRole) {
 		return Decision{OK: true, Level: lv}
 	}
 	for _, s := range states {
@@ -60,6 +63,40 @@ func NextApproval(levels []approvals.Level, decisions []approvalRow, kind, userI
 		}
 	}
 	return Decision{Reason: "expenses.err.level_role", Level: lv}
+}
+
+// coversLevel: role may sign level lv of an expense created by creatorRole — it satisfies the level, or the level's
+// role is the creator's own (self-approval) and role is top management holding the level's permission.
+func coversLevel(lv approvals.Level, role, creatorRole auth.Role) bool {
+	if lv.Satisfies(role) {
+		return true
+	}
+	topMgt := role == auth.RoleGeneralManager || role == auth.RoleManagingDirector
+	return topMgt && creatorRole != "" && lv.Satisfies(creatorRole) && auth.Can(role, auth.Permission(lv.Permission))
+}
+
+// cascade records an approval of every further consecutive pending level the same approver covers (one approver,
+// one click, for an org with one person per role); the creator never approves and each level is still recorded.
+func cascade(ctx context.Context, tx pgx.Tx, id, kind string, levels []approvals.Level, dec []approvalRow, u *auth.User, creatorRole auth.Role, comment *string) ([]approvalRow, error) {
+	for {
+		states, next := levelStates(levels, dec, kind)
+		if next == nil {
+			return dec, nil
+		}
+		var lv approvals.Level
+		for _, st := range states {
+			if st.Level.Level == *next {
+				lv = st.Level
+			}
+		}
+		if !coversLevel(lv, u.Role, creatorRole) {
+			return dec, nil
+		}
+		if err := recordDecision(ctx, tx, id, kind, lv, "APPROVED", u, comment); err != nil {
+			return dec, err
+		}
+		dec = append(dec, approvalRow{Kind: kind, Level: lv.Level, Decision: "APPROVED", UserID: u.ID})
+	}
 }
 
 func actionsFor(u *auth.User, r *row, decisions []approvalRow) *Actions {
@@ -84,7 +121,7 @@ func actionsFor(u *auth.User, r *row, decisions []approvalRow) *Actions {
 	if r.Status == StatusSubmitted {
 		if r.OverrunStatus == OverrunPending {
 			if u.Can("budgets.approve") {
-				d := NextApproval(decodeLevels(r.OverrunLevels), decisions, "overrun", u.ID, u.Role, r.CreatedByID)
+				d := NextApproval(decodeLevels(r.OverrunLevels), decisions, "overrun", u.ID, u.Role, r.CreatedByID, auth.Role(deref(r.CreatedByRole)))
 				a.ApproveBudget, a.Reject = d.OK, d.OK
 				if !d.OK {
 					a.Reason = d.Reason
@@ -93,7 +130,7 @@ func actionsFor(u *auth.User, r *row, decisions []approvalRow) *Actions {
 				a.Reason = "expenses.err.overrun_pending"
 			}
 		} else if u.Can("expenses.approve") {
-			d := NextApproval(decodeLevels(r.Levels), decisions, "expense", u.ID, u.Role, r.CreatedByID)
+			d := NextApproval(decodeLevels(r.Levels), decisions, "expense", u.ID, u.Role, r.CreatedByID, auth.Role(deref(r.CreatedByRole)))
 			a.Approve, a.Reject = d.OK, d.OK
 			if !d.OK {
 				a.Reason = d.Reason
@@ -409,7 +446,7 @@ func (h *handler) approve(c *fiber.Ctx) error {
 		if r.SourceType == nil && r.Attachments == 0 {
 			return "", httpx.NewKey(409, "receipt_required", "expenses.err.receipt_required")
 		}
-		d := NextApproval(decodeLevels(r.Levels), dec, "expense", u.ID, u.Role, r.CreatedByID)
+		d := NextApproval(decodeLevels(r.Levels), dec, "expense", u.ID, u.Role, r.CreatedByID, auth.Role(deref(r.CreatedByRole)))
 		if !d.OK {
 			if d.Reason == "expenses.err.level_role" {
 				return "", httpx.Forbidden(i18n.T(lang, d.Reason, "level", d.Level.Label))
@@ -420,6 +457,9 @@ func (h *handler) approve(c *fiber.Ctx) error {
 			return "", err
 		}
 		dec = append(dec, approvalRow{Kind: "expense", Level: d.Level.Level, Decision: "APPROVED", UserID: u.ID})
+		if dec, err = cascade(ctx, tx, r.ID, "expense", decodeLevels(r.Levels), dec, u, auth.Role(deref(r.CreatedByRole)), comment); err != nil {
+			return "", err
+		}
 		if _, next := levelStates(decodeLevels(r.Levels), dec, "expense"); next == nil {
 			now := db.Now()
 			if _, err := tx.Exec(ctx, `UPDATE expense SET status='APPROVED', decided_by_id=$2, decided_at=$3, decision_comment=$4, updated_at=$3 WHERE id=$1`,
@@ -455,7 +495,7 @@ func (h *handler) reject(c *fiber.Ctx) error {
 		} else if !u.Can("expenses.approve") {
 			return "", httpx.Forbidden()
 		}
-		d := NextApproval(levels, dec, kind, u.ID, u.Role, r.CreatedByID)
+		d := NextApproval(levels, dec, kind, u.ID, u.Role, r.CreatedByID, auth.Role(deref(r.CreatedByRole)))
 		if !d.OK {
 			return "", httpx.Forbidden(d.Reason)
 		}
@@ -486,7 +526,7 @@ func (h *handler) overrunApprove(c *fiber.Ctx) error {
 			return "", httpx.NewKey(409, "conflict", "expenses.err.no_overrun")
 		}
 		levels := decodeLevels(r.OverrunLevels)
-		d := NextApproval(levels, dec, "overrun", u.ID, u.Role, r.CreatedByID)
+		d := NextApproval(levels, dec, "overrun", u.ID, u.Role, r.CreatedByID, auth.Role(deref(r.CreatedByRole)))
 		if !d.OK {
 			if d.Reason == "expenses.err.level_role" {
 				return "", httpx.Forbidden(i18n.T(lang, d.Reason, "level", d.Level.Label))
@@ -497,6 +537,9 @@ func (h *handler) overrunApprove(c *fiber.Ctx) error {
 			return "", err
 		}
 		dec = append(dec, approvalRow{Kind: "overrun", Level: d.Level.Level, Decision: "APPROVED", UserID: u.ID})
+		if dec, err = cascade(ctx, tx, r.ID, "overrun", levels, dec, u, auth.Role(deref(r.CreatedByRole)), comment); err != nil {
+			return "", err
+		}
 		if _, next := levelStates(levels, dec, "overrun"); next != nil {
 			_, err := tx.Exec(ctx, `UPDATE expense SET updated_at=$2 WHERE id=$1`, r.ID, db.Now())
 			return "budgets.overrun_approve_level", err

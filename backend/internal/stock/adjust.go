@@ -258,7 +258,7 @@ func DecideAdjustment(ctx context.Context, tx pgx.Tx, lang i18n.Lang, a Actor, p
 			return x, err
 		}
 	} else {
-		x.Approvals = append(x.Approvals, Approval{Level: next.Level, Label: next.Label, UserID: a.UserID, Name: a.Name, At: now})
+		x.Approvals = ApproveFrom(x.RequiredLevels, x.Approvals, *next, a.Role, ApprovePerm, Approval{UserID: a.UserID, Name: a.Name, At: now})
 		if NextLevel(x.RequiredLevels, x.Approvals) != nil {
 			if _, err := tx.Exec(ctx, `UPDATE stock_adjustment SET approvals=$2, updated_at=now() WHERE id=$1`, id, MustJSON(x.Approvals)); err != nil {
 				return x, err

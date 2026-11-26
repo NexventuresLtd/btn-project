@@ -666,3 +666,57 @@ func TestPeriodsExportsAndDenials(t *testing.T) {
 		t.Fatalf("404 correction: %d", r.StatusCode)
 	}
 }
+
+// TestOneUserPerRoleProduction: BTN's org chart, one holder per role. The site supervisor records and submits, the one
+// PM approves (never his own entry), the supervisor asks for a correction and the PM approves it, the PM closes the day
+// and approves a late correction after the close, sets targets; the System Administrator keeps the recipes.
+func TestOneUserPerRoleProduction(t *testing.T) {
+	f := setup(t)
+	e := f.e
+	pm, sup, adm := e.User(auth.RoleProductionManager), e.User(auth.RoleSupervisor), e.User(auth.RoleSystemAdmin)
+	d := day(-1)
+	if r := e.Do("POST", "/api/production/recipes", map[string]any{"productId": f.hb20, "effectiveFrom": day(-30),
+		"items": []map[string]any{{"materialId": f.cement, "qtyPerUnit": 0.04}}}, adm); r.StatusCode != 201 {
+		t.Fatalf("recipe: %d %s", r.StatusCode, e.Text(r))
+	}
+	if r := e.Do("PUT", "/api/production/targets", map[string]any{"targets": []map[string]any{
+		{"plantId": f.plant1, "productId": f.hb20, "period": "WEEK", "periodStart": d, "quantity": 7000}}}, pm); r.StatusCode != 200 {
+		t.Fatalf("targets: %d %s", r.StatusCode, e.Text(r))
+	}
+	var rep entry
+	r := e.Do("POST", "/api/production/reports", f.entry(f.plant1, d, "DAY", true, line(f.hb20, 500, nil)), sup)
+	e.Decode(r, &rep)
+	if r.StatusCode != 201 || rep.Status != "SUBMITTED" {
+		t.Fatalf("record + submit: %d %s", r.StatusCode, e.Text(r))
+	}
+	if r := e.Do("POST", "/api/production/reports/"+rep.ID+"/approve", nil, sup); r.StatusCode != 403 {
+		t.Fatalf("supervisor approves own entry: %d", r.StatusCode)
+	}
+	if r := e.Do("POST", "/api/production/reports/"+rep.ID+"/approve", nil, pm); r.StatusCode != 200 {
+		t.Fatalf("pm approves: %d %s", r.StatusCode, e.Text(r))
+	}
+	correct := func(qty int, reason string) {
+		t.Helper()
+		body := f.entry(f.plant1, d, "DAY", true, line(f.hb20, qty, nil))
+		body["reason"] = reason
+		r := e.Do("POST", "/api/production/reports/"+rep.ID+"/corrections", body, sup)
+		var co struct{ ID, Status string }
+		e.Decode(r, &co)
+		if r.StatusCode != 201 {
+			t.Fatalf("correction request: %d %s", r.StatusCode, e.Text(r))
+		}
+		if r := e.Do("POST", "/api/production/corrections/"+co.ID+"/approve", map[string]any{"comment": "checked"}, pm); r.StatusCode != 200 {
+			t.Fatalf("pm approves the correction: %d %s", r.StatusCode, e.Text(r))
+		}
+	}
+	correct(520, "Recounted the pallets")
+	if r := e.Do("POST", "/api/production/days/close", map[string]any{"plantId": f.plant1, "date": d}, pm); r.StatusCode != 200 {
+		t.Fatalf("close day: %d %s", r.StatusCode, e.Text(r))
+	}
+	correct(510, "Ten blocks were counted twice")
+	var after entry
+	e.Decode(e.Do("GET", "/api/production/reports/"+rep.ID, nil, pm), &after)
+	if after.Status != "APPROVED" || after.Totals.Produced != 510 || len(after.Corrections) != 2 {
+		t.Fatalf("after: %+v", after)
+	}
+}

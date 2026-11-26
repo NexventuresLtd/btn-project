@@ -619,3 +619,24 @@ func TestPDFRateLimit(t *testing.T) {
 		t.Fatal("pdf endpoint is not rate limited")
 	}
 }
+
+// TestOneUserPerRoleMaterials: one holder per role (BTN's org chart) — opening by the PM, receipt by the stock officer,
+// consumption by the site supervisor, a correcting adjustment by the PM. No step needs a second person of a role.
+func TestOneUserPerRoleMaterials(t *testing.T) {
+	f := setup(t)
+	open := map[string]any{"plantId": f.plant["BTN-1"], "date": f.d2, "note": "TEST opening", "lines": []any{map[string]any{"materialId": f.mat["CEMENT"], "quantity": 50}}}
+	if r := f.post("/api/materials/opening", open, f.pm); r.StatusCode != 201 {
+		t.Fatalf("opening %d %s", r.StatusCode, f.e.Text(r))
+	}
+	f.receipt(t, "BTN-1", "CEMENT", f.d1, 30)
+	if r := f.post("/api/materials/consumption", map[string]any{"plantId": f.plant["BTN-1"], "materialId": f.mat["CEMENT"], "date": f.d1, "quantity": 60, "note": "TEST shift"}, f.sup1); r.StatusCode != 201 {
+		t.Fatalf("consumption %d %s", r.StatusCode, f.e.Text(r))
+	}
+	if r := f.post("/api/materials/adjustments", map[string]any{"plantId": f.plant["BTN-1"], "materialId": f.mat["CEMENT"], "date": f.d1, "quantity": "-2", "reason": "TEST torn bags"}, f.pm); r.StatusCode != 201 {
+		t.Fatalf("adjustment %d %s", r.StatusCode, f.e.Text(r))
+	}
+	var bal float64
+	if err := f.e.Pool.QueryRow(t.Context(), `SELECT COALESCE(sum(quantity),0)::float8 FROM "MaterialMovement" WHERE "plantId"=$1 AND "materialId"=$2`, f.plant["BTN-1"], f.mat["CEMENT"]).Scan(&bal); err != nil || bal != 18 {
+		t.Fatalf("balance %v %v", bal, err)
+	}
+}

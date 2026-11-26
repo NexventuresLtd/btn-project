@@ -73,7 +73,7 @@ const rowCols = `i.id, i.number, i.date, i.amount, i.category, i.description, i.
 	i.verified_by_id, vu.name, i.verified_at,
 	CASE WHEN i.status = 'VERIFIED' THEN (SELECT a."after"->>'comment' FROM "AuditLog" a WHERE a.entity = 'Income' AND a."entityId" = i.id
 		AND a.action = 'income.verify' ORDER BY a."createdAt" DESC LIMIT 1) END,
-	i.void_reason, i.voided_by_id, xu.name, i.voided_at, i.created_by_id, cu.name, i.device_id, i.created_at, i.updated_at, i.server_version,
+	i.void_reason, i.voided_by_id, xu.name, i.voided_at, i.created_by_id, cu.name, cu.role::text, i.device_id, i.created_at, i.updated_at, i.server_version,
 	(SELECT count(*)::int FROM income_attachment a WHERE a.income_id = i.id AND a.removed_at IS NULL),
 	(SELECT count(*)::int FROM income_link l WHERE l.income_id = i.id AND l.removed_at IS NULL)`
 
@@ -112,6 +112,7 @@ type row struct {
 	VoidedAt                    *time.Time
 	CreatedByID                 string
 	CreatedByName               *string
+	CreatedByRole               *string
 	DeviceID                    *string
 	CreatedAt, UpdatedAt        time.Time
 	ServerVersion               int64
@@ -123,7 +124,7 @@ func (r *row) dests() []any {
 		&r.SaleID, &r.SaleNo, &r.OrderStatus, &r.CustomerID, &r.CustomerName, &r.PayerName, &r.Method, &r.Reference, &r.PaymentKind, &r.Status,
 		&r.LineID, &r.LineSuggested, &r.LineCategory, &r.LineBudgetID, &r.LineBudgetNo,
 		&r.VerifiedByID, &r.VerifiedByNm, &r.VerifiedAt, &r.VerifyComment,
-		&r.VoidReason, &r.VoidedByID, &r.VoidedByName, &r.VoidedAt, &r.CreatedByID, &r.CreatedByName, &r.DeviceID, &r.CreatedAt, &r.UpdatedAt,
+		&r.VoidReason, &r.VoidedByID, &r.VoidedByName, &r.VoidedAt, &r.CreatedByID, &r.CreatedByName, &r.CreatedByRole, &r.DeviceID, &r.CreatedAt, &r.UpdatedAt,
 		&r.ServerVersion, &r.Attachments, &r.Links}
 }
 

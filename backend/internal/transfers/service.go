@@ -260,11 +260,15 @@ func approve(ctx context.Context, tx pgx.Tx, lang i18n.Lang, a stock.Actor, id, 
 		return t, httpx.NewKey(403, "forbidden", "stock.err.level_required", "level", next.Label)
 	}
 	if a.Role != auth.RoleSuperAdmin && approvedBy(t, a.UserID) {
-		// each level is a separate person (§7.2 levels are all held by the Production Manager role under SRS §8)
+		// one decision per person: a later level this person could approve was already covered by that decision
+		// (stock.ApproveFrom), so reaching here means the remaining level needs someone else
 		return t, httpx.NewKey(403, "forbidden", "transfers.err.already_approved")
 	}
 	now := db.Now()
-	t.Approvals = append(t.Approvals, stock.Approval{Level: next.Level, Label: next.Label, UserID: a.UserID, Name: a.Name, At: now})
+	// §7.2 "approved by the Production Manager or per threshold": every level is held by the PM role under SRS §8 and
+	// BTN has one PM, so his decision covers the consecutive levels his role satisfies (no deadlock); a threshold
+	// level naming another role still needs that person.
+	t.Approvals = stock.ApproveFrom(t.RequiredLevels, t.Approvals, *next, a.Role, "transfers.approve", stock.Approval{UserID: a.UserID, Name: a.Name, At: now})
 	final := stock.NextLevel(t.RequiredLevels, t.Approvals) == nil
 	if final {
 		_, err = tx.Exec(ctx, `UPDATE stock_transfer SET status='APPROVED', approvals=$2, approved_by_id=$3, approved_at=$4, updated_at=$4 WHERE id=$1`,

@@ -375,19 +375,100 @@ func TestTransferMultiLevelApproval(t *testing.T) {
 	if lv := transferOf(big)["requiredLevels"].([]any); len(lv) != 2 {
 		t.Fatalf("levels %+v", lv)
 	}
-	b := f.ok(t, e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, f.pm), 200)
-	if transferOf(b)["status"] != "REQUESTED" || len(transferOf(b)["approvals"].([]any)) != 1 {
-		t.Fatalf("after level 1 %+v", b)
-	}
-	if r := e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, f.pm); r.StatusCode != 403 {
-		t.Fatalf("pm level 2 %d", r.StatusCode)
-	}
+	// both levels name the Production Manager: BTN's one PM decides once and that covers both levels (no deadlock)
 	if r := e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, f.gm); r.StatusCode != 403 {
-		t.Fatalf("gm level 2 %d", r.StatusCode)
+		t.Fatalf("gm %d", r.StatusCode)
 	}
-	b = f.ok(t, e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, e.User(auth.RoleProductionManager)), 200)
+	b := f.ok(t, e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, f.pm), 200)
+	if aps := transferOf(b)["approvals"].([]any); transferOf(b)["status"] != "APPROVED" || len(aps) != 2 ||
+		aps[0].(map[string]any)["userId"] != f.pm.ID || aps[1].(map[string]any)["userId"] != f.pm.ID {
+		t.Fatalf("after the PM's decision %+v", b)
+	}
+	if r := e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, f.pm); r.StatusCode != 409 {
+		t.Fatalf("approve twice %d", r.StatusCode)
+	}
+	// a level naming another role still needs that person: the PM's decision stops before it
+	if _, err := e.Pool.Exec(t.Context(), `INSERT INTO approval_threshold (domain, level, min_amount, permission, role, label)
+		VALUES ('transfer', 3, 100000, 'transfers.approve', 'SUPER_ADMIN', 'Third level, another role')`); err != nil {
+		t.Fatal(err)
+	}
+	approvals.Invalidate()
+	big2 := f.ok(t, e.Do("POST", "/api/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["HQ"],
+		"note": "Return to HQ", "lines": []any{map[string]any{"itemKind": "product", "itemId": f.prod["SB20"], "qty": 60}}}, f.sto1), 201)
+	id2 := transferOf(big2)["id"].(string)
+	b = f.ok(t, e.Do("POST", "/api/transfers/"+id2+"/approve", map[string]any{}, f.pm), 200)
+	if transferOf(b)["status"] != "REQUESTED" || len(transferOf(b)["approvals"].([]any)) != 2 {
+		t.Fatalf("pm covers levels 1-2 only %+v", b)
+	}
+	if r := e.Do("POST", "/api/transfers/"+id2+"/approve", map[string]any{}, f.pm); r.StatusCode != 403 {
+		t.Fatalf("pm level 3 %d", r.StatusCode)
+	}
+	b = f.ok(t, e.Do("POST", "/api/transfers/"+id2+"/approve", map[string]any{}, e.User(auth.RoleSuperAdmin)), 200)
 	if transferOf(b)["status"] != "APPROVED" {
-		t.Fatalf("after level 2 %+v", b)
+		t.Fatalf("after level 3 %+v", b)
+	}
+}
+
+// TestOneUserPerRoleTransfer walks a transfer with BTN's org chart: one holder per role (one PM, one stock officer
+// at HQ, one supervisor per site), default thresholds plus a second value band for the PM.
+func TestOneUserPerRoleTransfer(t *testing.T) {
+	e := apptest.New(t)
+	if err := approvals.SeedDefaults(t.Context(), e.Pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.Pool.Exec(t.Context(), `INSERT INTO approval_threshold (domain, level, min_amount, permission, role, label)
+		VALUES ('transfer', 2, 100000, 'transfers.approve', 'PRODUCTION_MANAGER', 'PM, large transfers')`); err != nil {
+		t.Fatal(err)
+	}
+	approvals.Invalidate()
+	f := &fx{e: e, plant: map[string]string{}, mat: map[string]string{}, prod: map[string]string{}, today: dates.TodayISO()}
+	pm, sto := e.User(auth.RoleProductionManager), e.User(auth.RoleStockOfficer)
+	sup1, sup2 := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-1"}), e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-2"})
+	f.sto = sto
+	for _, q := range []struct {
+		sql string
+		m   map[string]string
+	}{{`SELECT code, id FROM "Plant"`, f.plant}, {`SELECT code, id FROM "Material"`, f.mat}, {`SELECT code, id FROM "Product"`, f.prod}} {
+		rows, err := e.Pool.Query(t.Context(), q.sql)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var c, id string
+			_ = rows.Scan(&c, &id)
+			q.m[c] = id
+		}
+		rows.Close()
+	}
+	f.receive(t, "BTN-1", "product", f.prod["SB20"], 100)
+	// the BTN-2 supervisor asks BTN-1 for blocks (value 60 × 2 500 = 150 000 RWF → two PM levels)
+	tr := f.ok(t, e.Do("POST", "/api/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-2"],
+		"note": "Order for a client at BTN-2", "lines": []any{map[string]any{"itemKind": "product", "itemId": f.prod["SB20"], "qty": 60}}}, sup2), 201)
+	id := transferOf(tr)["id"].(string)
+	if r := e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{}, sup2); r.StatusCode != 403 {
+		t.Fatalf("requester approves %d", r.StatusCode)
+	}
+	if st := transferOf(f.ok(t, e.Do("POST", "/api/transfers/"+id+"/approve", map[string]any{"note": "ok"}, pm), 200))["status"]; st != "APPROVED" {
+		t.Fatalf("one PM approves every PM level: %v", st)
+	}
+	ls := lines(f.ok(t, e.Do("GET", "/api/transfers/"+id, nil, pm), 200))
+	// the BTN-1 supervisor dispatches, the BTN-2 supervisor receives 58 (2 broken on the road)
+	f.ok(t, e.Do("POST", "/api/transfers/"+id+"/dispatch", map[string]any{"date": f.today, "vehicle": "RAB 123", "lines": []any{map[string]any{"lineId": ls[0]["id"], "qty": 60}}}, sup1), 200)
+	rc := f.ok(t, e.Do("POST", "/api/transfers/"+id+"/receive", map[string]any{"date": f.today, "lines": []any{map[string]any{"lineId": ls[0]["id"], "qty": 58, "note": "2 broken"}}}, sup2), 200)
+	if transferOf(rc)["status"] != "RECEIVED" {
+		t.Fatalf("received %v", transferOf(rc)["status"])
+	}
+	// the shortfall adjustment waits for review; the one PM decides it (requested by the system / receiver, not by him)
+	var adj string
+	if err := e.Pool.QueryRow(t.Context(), `SELECT id FROM stock_adjustment WHERE status='PENDING' AND source_type='transfer_shortfall' LIMIT 1`).Scan(&adj); err != nil {
+		t.Fatalf("shortfall adjustment: %v", err)
+	}
+	f.ok(t, e.Do("POST", "/api/stock/adjustments/"+adj+"/approve", map[string]any{"note": "broken in transit"}, pm), 200)
+	if got := f.balance(t, "BTN-2", "product", f.prod["SB20"]); got != 58 {
+		t.Fatalf("BTN-2 balance %v", got)
+	}
+	if got := f.balance(t, "BTN-1", "product", f.prod["SB20"]); got != 40 {
+		t.Fatalf("BTN-1 balance %v", got)
 	}
 }
 

@@ -492,7 +492,8 @@ func approve(ctx context.Context, tx pgx.Tx, lang i18n.Lang, a stock.Actor, id, 
 		return c, httpx.NewKey(403, "forbidden", "stock.err.level_required", "level", next.Label)
 	}
 	now := db.Now()
-	c.Approvals = append(c.Approvals, stock.Approval{Level: next.Level, Label: next.Label, UserID: a.UserID, Name: a.Name, At: now})
+	prior := c.Approvals
+	c.Approvals = stock.ApproveFrom(c.RequiredLevels, c.Approvals, *next, a.Role, "stockcount.approve", stock.Approval{UserID: a.UserID, Name: a.Name, At: now})
 	final := stock.NextLevel(c.RequiredLevels, c.Approvals) == nil
 	posted := 0
 	if final {
@@ -504,7 +505,8 @@ func approve(ctx context.Context, tx pgx.Tx, lang i18n.Lang, a stock.Actor, id, 
 		if err != nil {
 			return c, err
 		}
-		c.Approvals = append(stock.DecodeApprovals(stock.MustJSON(c.Approvals)), stock.Approval{Level: next.Level, Label: next.Label, UserID: a.UserID, Name: a.Name, At: now})
+		c.Approvals = stock.ApproveFrom(c.RequiredLevels, stock.DecodeApprovals(stock.MustJSON(prior)), *next, a.Role, "stockcount.approve",
+			stock.Approval{UserID: a.UserID, Name: a.Name, At: now})
 		date := dates.MustParseISO(c.CountDate)
 		touched := map[stock.ItemKind][]string{}
 		for _, l := range c.Lines {

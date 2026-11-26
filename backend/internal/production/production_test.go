@@ -5,16 +5,19 @@ import (
 	"io"
 	"strings"
 	"testing"
-	"time"
 
 	"btn-ops/internal/app/apptest"
 	"btn-ops/internal/auth"
+	"btn-ops/internal/dates"
 	"btn-ops/internal/testutil"
 )
 
 func TestMain(m *testing.M) { testutil.Main(m) }
 
-func day(offset int) string { return time.Now().UTC().AddDate(0, 0, offset).Format("2006-01-02") }
+// day is a business date (Africa/Kigali) offset from today — the UTC date is a day behind between 22:00 and 24:00 UTC.
+func day(offset int) string {
+	return dates.ToISO(dates.AddDays(dates.MustParseISO(dates.TodayISO()), offset))
+}
 
 type fx struct {
 	e                  *apptest.Env
