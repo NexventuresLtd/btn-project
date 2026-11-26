@@ -47,8 +47,9 @@ func TestBoardSelectionByRole(t *testing.T) {
 		t.Fatalf("super admin boards %v", got)
 	}
 	// a multi-role manager can switch; a supervisor cannot open the finance or admin boards
-	if !slices.Contains(dashboard.BoardsFor(auth.RoleGeneralManager), "production") {
-		t.Fatalf("gm %v", dashboard.BoardsFor(auth.RoleGeneralManager))
+	// (SRS §8: Top Mgt approves finance and procurement, reads production — so no Production Manager board)
+	if gm := dashboard.BoardsFor(auth.RoleGeneralManager); !slices.Contains(gm, "finance") || slices.Contains(gm, "production") {
+		t.Fatalf("gm %v", gm)
 	}
 	for _, b := range []string{"executive", "finance", "admin", "procurement"} {
 		if dashboard.BoardAllowed(auth.RoleSupervisor, b) {

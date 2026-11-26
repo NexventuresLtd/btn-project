@@ -99,7 +99,7 @@ export const NAV: NavGroup[] = [
     id: "administration",
     labelKey: "layout.nav.administration",
     items: [
-      { labelKey: "layout.nav.users", to: "/admin/users", icon: UserCog, permission: "users.manage" },
+      { labelKey: "layout.nav.users", to: "/admin/users", icon: UserCog, permission: ["users.manage", "users.view"] },
       { labelKey: "layout.nav.sites", to: "/admin/sites", icon: Building2, permission: "masterdata.manage" },
       { labelKey: "layout.nav.masterData", to: "/admin/master-data", icon: ClipboardList, permission: "masterdata.manage" },
       { labelKey: "refdata.nav", to: "/admin/reference-data", icon: ListTree, permission: "masterdata.manage" },

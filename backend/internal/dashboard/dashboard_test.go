@@ -286,7 +286,8 @@ func TestDashboardHappyPathAndBusinessRules(t *testing.T) {
 	for _, a := range d.Actions {
 		got[a.Key] = a.Count
 	}
-	if got["production.approve"] != 1 || got["pettycash.approve"] != 1 || got["payroll.authorize"] != 1 || got["sales.confirm"] != 1 {
+	// SRS §8: Top Mgt approves finance (petty cash, wage payments) but only reads production and orders
+	if got["pettycash.approve"] != 1 || got["payroll.authorize"] != 1 || got["production.approve"] != 0 || got["sales.confirm"] != 0 {
 		t.Fatalf("actions %v", got)
 	}
 	if len(d.Activity) != 1 || d.Activity[0].Action != "test.dashboard" {
@@ -314,11 +315,12 @@ func TestDashboardPlantScopeAndSections(t *testing.T) {
 	if !d.PlantScoped || d.Plant == nil || d.Plant.Code != "BTN-1" || len(d.Plants) != 1 {
 		t.Fatalf("pinned %+v", d.Plant)
 	}
-	if d.Production.Totals.Produced != 1900 || d.Sales != nil || d.Pettycash != nil || d.Cost != nil || d.Activity != nil {
+	// SRS §8: a supervisor reads own-site orders (Clients & orders R) but no finance (petty cash, cost per block)
+	if d.Production.Totals.Produced != 1900 || d.Sales == nil || d.Pettycash != nil || d.Cost != nil || d.Activity != nil {
 		t.Fatal("supervisor sections leak")
 	}
 	for _, k := range d.Kpis {
-		if k.Key == "revenue" || k.Key == "costPerBlock" {
+		if k.Key == "pettyCashBalance" || k.Key == "costPerBlock" {
 			t.Fatalf("kpi %s must be hidden", k.Key)
 		}
 	}

@@ -76,7 +76,7 @@ PDF toolkit, i18n keys, test helpers) are in **`backend/README.md`**.
   (a central store keeper). **PROCUREMENT_OFFICER** is an HQ role and never site-scoped.
   `auth.UserPlantScoped(role, plantID)` / `ScopedPlantID(u)` implement this; the frontend mirrors it with
   `pinnedPlantId(user)` in `src/lib/scope.ts`. The full permission table is in `docs/SRS_BUILD_PLAN.md`
-  ("Roles and permissions"); `auth.TestNewRoleMatrix` pins it.
+  ("Roles and permissions"); `auth.TestSRSRoleMatrix` encodes the SRS §8 table cell by cell and pins it.
 
 ## Reference data & approval thresholds (ADM-01)
 

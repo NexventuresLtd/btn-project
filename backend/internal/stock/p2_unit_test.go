@@ -46,8 +46,8 @@ func TestIsLowAndQty(t *testing.T) {
 }
 
 func TestApprovalLevels(t *testing.T) {
-	gm := "GENERAL_MANAGER"
-	req := []approvals.Level{{Level: 1, Permission: "stockcount.approve"}, {Level: 2, Permission: "stockcount.approve", Role: &gm}}
+	sup := "SUPERVISOR"
+	req := []approvals.Level{{Level: 1, Permission: "stockcount.approve"}, {Level: 2, Permission: "stockcount.record", Role: &sup}}
 	if n := NextLevel(req, nil); n == nil || n.Level != 1 {
 		t.Fatal("first")
 	}
@@ -56,7 +56,7 @@ func TestApprovalLevels(t *testing.T) {
 	if n == nil || n.Level != 2 {
 		t.Fatal("second")
 	}
-	if CanApproveLevel(auth.RoleProductionManager, *n, "stockcount.approve") || !CanApproveLevel(auth.RoleGeneralManager, *n, "stockcount.approve") {
+	if CanApproveLevel(auth.RoleStockOfficer, *n, "stockcount.record") || !CanApproveLevel(auth.RoleSupervisor, *n, "stockcount.record") {
 		t.Fatal("role gate")
 	}
 	if NextLevel(req, append(done, Approval{Level: 2})) != nil {

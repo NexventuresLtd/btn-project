@@ -59,7 +59,7 @@ func TestSyncAttendance(t *testing.T) {
 
 	// someone else changes the mark online after the device captured a different value → conflict
 	captured := time.Now().UTC().Add(-time.Hour)
-	pm := e.User(auth.RoleProductionManager, testutil.UserOpts{})
+	pm := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-1"}) // a second supervisor of the site (§8: supervisors record attendance)
 	if r := e.Do("POST", "/api/attendance", map[string]any{"plantId": b1, "date": today, "entries": []any{map[string]any{"workerId": w2, "status": "ABSENT"}}}, pm); r.StatusCode != 200 {
 		t.Fatalf("online record: %d %s", r.StatusCode, e.Text(r))
 	}

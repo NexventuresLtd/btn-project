@@ -133,10 +133,16 @@ func TestPermissionAndScope(t *testing.T) {
 
 func TestValidation(t *testing.T) {
 	e := apptest.New(t)
-	fm := e.User(auth.RoleFinanceManager)
+	// SRS §8: attendance is recorded by supervisors (C R U); finance reads and updates wages but records no marks
+	fm := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-1"})
 	b1, b2 := plantID(t, e, "BTN-1"), plantID(t, e, "BTN-2")
 	a := newWorker(t, e, b1, "Aline", "Uwase", 5800)
 	other := newWorker(t, e, b2, "David", "Kamanzi", 5500)
+	for _, role := range []auth.Role{auth.RoleFinanceManager, auth.RoleProductionManager, auth.RoleGeneralManager} {
+		if r := e.Do("POST", "/api/attendance", M{"plantId": b1, "date": "2026-11-10", "entries": []M{{"workerId": a, "status": "PRESENT"}}}, e.User(role)); r.StatusCode != 403 {
+			t.Errorf("%s records attendance: %d", role, r.StatusCode)
+		}
+	}
 
 	// future date
 	r := e.Do("POST", "/api/attendance", M{"plantId": b1, "date": "2099-01-01", "entries": []M{{"workerId": a, "status": "PRESENT"}}}, fm)
@@ -242,8 +248,9 @@ func TestPayrollAttendanceFill(t *testing.T) {
 	a := newWorker(t, e, b1, "Aline", "Uwase", 5800)
 	bz := newWorker(t, e, b1, "Bosco", "Niyonzima", 5800)
 
+	fm := e.User(auth.RoleFinanceManager) // §8: wage sheets are prepared by finance; supervisors mark attendance
 	// a period over 1–15 Nov
-	r := e.Do("POST", "/api/payroll/periods", M{"plantId": b1, "startDate": "2026-11-01", "endDate": "2026-11-15"}, sup)
+	r := e.Do("POST", "/api/payroll/periods", M{"plantId": b1, "startDate": "2026-11-01", "endDate": "2026-11-15"}, fm)
 	if r.StatusCode != 201 {
 		t.Fatalf("create period: %d %s", r.StatusCode, e.Text(r))
 	}
@@ -253,7 +260,7 @@ func TestPayrollAttendanceFill(t *testing.T) {
 	e.Do("POST", "/api/attendance", M{"plantId": b1, "date": "2026-11-03", "entries": []M{{"workerId": a, "status": "PRESENT"}, {"workerId": bz, "status": "HALF_DAY"}}}, sup)
 	e.Do("POST", "/api/attendance", M{"plantId": b1, "date": "2026-11-04", "entries": []M{{"workerId": a, "status": "PRESENT"}}}, sup)
 
-	r = e.Do("GET", "/api/payroll/periods/"+pid+"/attendance", nil, sup)
+	r = e.Do("GET", "/api/payroll/periods/"+pid+"/attendance", nil, fm)
 	if r.StatusCode != 200 {
 		t.Fatalf("fill: %d %s", r.StatusCode, e.Text(r))
 	}

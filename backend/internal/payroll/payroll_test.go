@@ -140,20 +140,12 @@ func TestWorkers(t *testing.T) {
 		t.Fatalf("dup %d %s %v", r.StatusCode, msg, f)
 	}
 	w2 := newWorker(t, e, fm, b2, "ALINE", "UWASE", 5500)
-	r = e.Do("POST", "/api/payroll/workers", M{"firstName": "X", "lastName": "Y", "nationalId": e.Map(e.Do("GET", "/api/payroll/workers?plantId="+b2, nil, fm))["items"].([]any)[0].(M)["nationalId"], "momoNumber": "0781234568", "plantId": b1, "dailyWage": 5000}, sup)
-	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || !strings.Contains(msg, "a worker at BTN-2") || strings.Contains(msg, "ALINE") {
-		t.Fatalf("scoped dup leaks: %d %s", r.StatusCode, msg)
-	}
-
-	// plant scope: supervisor of BTN-1 cannot register at / edit BTN-2
-	if r := e.Do("POST", "/api/payroll/workers", workerBody(b2, "A", "B", 5000), sup); r.StatusCode != 403 {
-		t.Fatalf("scope create %d", r.StatusCode)
+	// SRS §8 Attendance & wages: supervisors record attendance only; worker records are Finance's (R U)
+	if r := e.Do("POST", "/api/payroll/workers", workerBody(b1, "A", "B", 5000), sup); r.StatusCode != 403 {
+		t.Fatalf("supervisor create %d", r.StatusCode)
 	}
 	if r := e.Do("PATCH", "/api/payroll/workers/"+w2, M{"dailyWage": 6000}, sup); r.StatusCode != 403 {
-		t.Fatalf("scope patch %d", r.StatusCode)
-	}
-	if r := e.Do("PATCH", "/api/payroll/workers/"+id, M{"plantId": b2}, sup); r.StatusCode != 403 {
-		t.Fatalf("scope move %d", r.StatusCode)
+		t.Fatalf("supervisor patch %d", r.StatusCode)
 	}
 
 	// list: pagination envelope, filters, scope pinning, mismatchCount
@@ -168,13 +160,8 @@ func TestWorkers(t *testing.T) {
 	if list.Total != 2 || len(list.Items) != 2 || list.Page != 1 || list.PageSize != 50 || list.MismatchCount != 1 {
 		t.Fatalf("list %+v", list)
 	}
-	e.Decode(e.Do("GET", "/api/payroll/workers", nil, sup), &list)
-	if list.Total != 1 || list.Items[0]["id"] != id {
-		t.Fatalf("scoped list %+v", list)
-	}
-	e.Decode(e.Do("GET", "/api/payroll/workers?plantId="+b2, nil, sup), &list) // pinned whatever is asked
-	if list.Total != 1 || list.Items[0]["id"] != id {
-		t.Fatalf("pinned list %+v", list)
+	if r := e.Do("GET", "/api/payroll/workers", nil, sup); r.StatusCode != 403 { // wages: no supervisor access (§8)
+		t.Fatalf("supervisor list %d", r.StatusCode)
 	}
 	e.Decode(e.Do("GET", "/api/payroll/workers?q=uwase", nil, fm), &list)
 	if list.Total != 1 || list.Items[0]["id"] != w2 {
@@ -436,6 +423,18 @@ func TestWorkflowSeparationOfDutiesAndPay(t *testing.T) {
 	}
 	// the preparer sees why they cannot check/verify
 	preparerView := e.Map(e.Do("GET", "/api/payroll/periods/"+id, nil, f.fm1))
+	// SRS §7.4: the calculation is reviewed by the Production Manager only — not a supervisor, not top management,
+	// not the finance manager who prepared it
+	for _, u := range []*testutil.TestUser{e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-1"}), f.gm, f.fm2} {
+		if r := e.Do("POST", "/api/payroll/periods/"+id+"/check", M{}, u); r.StatusCode != 403 {
+			t.Fatalf("%s reviews the wage sheet: %d", u.Role, r.StatusCode)
+		}
+	}
+	if view := e.Map(e.Do("GET", "/api/payroll/periods/"+id, nil, f.gm)); view["actions"] != nil {
+		if a, ok := view["actions"].(M)["check"].(M); ok && a["visible"] == true && a["allowed"] == true {
+			t.Errorf("check offered to the general manager: %v", a)
+		}
+	}
 	// separation of duties: preparer (also a finance manager) cannot verify even in the right status; first check by PM
 	d = f.step(t, id, "check", f.pm, 200)
 	if d["status"] != "CHECKED" {
@@ -703,10 +702,8 @@ func TestPeriodListTotalsAndCache(t *testing.T) {
 	}
 	// scope + permission
 	supB2 := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-2"})
-	l = list{}
-	e.Decode(e.Do("GET", "/api/payroll/periods", nil, supB2), &l)
-	if l.Total != 0 || len(l.Items) != 0 {
-		t.Fatalf("scoped %+v", l)
+	if r := e.Do("GET", "/api/payroll/periods", nil, supB2); r.StatusCode != 403 { // §8: supervisors have attendance only
+		t.Fatalf("supervisor periods %d", r.StatusCode)
 	}
 	if r := e.Do("GET", "/api/payroll/periods", nil, e.User(auth.RoleOperator)); r.StatusCode != 403 {
 		t.Fatalf("op %d", r.StatusCode)
@@ -753,9 +750,9 @@ func TestPDFs(t *testing.T) {
 	if r := e.Do("GET", "/api/payroll/pdf/period/nope", nil, f.fm1); r.StatusCode != 404 {
 		t.Fatalf("404 %d", r.StatusCode)
 	}
-	// a scoped supervisor's summary only covers their plant (empty for BTN-2) and still renders
-	if r := e.Do("GET", "/api/payroll/pdf/summary?lang=am", nil, supB2); r.StatusCode != 200 {
-		t.Fatalf("scoped summary %d", r.StatusCode)
+	// supervisors have no wage access (§8), not even their own site's summary
+	if r := e.Do("GET", "/api/payroll/pdf/summary?lang=am", nil, supB2); r.StatusCode != 403 {
+		t.Fatalf("supervisor summary %d", r.StatusCode)
 	}
 }
 

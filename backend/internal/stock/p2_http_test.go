@@ -163,11 +163,13 @@ func TestReceiptsIssuesLotsAndHistory(t *testing.T) {
 			t.Fatalf("scoped history leaks %v", it["plant"])
 		}
 	}
-	e.Decode(e.Do("GET", "/api/stock/history?from="+f.d1, nil, f.sm), &h) // sales: finished goods only
+	e.Decode(e.Do("GET", "/api/stock/history?from="+f.d1, nil, f.sm), &h) // sales: SRS §8 Stock "R" covers materials too
+	kinds := map[any]bool{}
 	for _, it := range h.Items {
-		if it["itemKind"] != "product" {
-			t.Fatalf("sales manager sees materials")
-		}
+		kinds[it["itemKind"]] = true
+	}
+	if !kinds["product"] || !kinds["material"] {
+		t.Fatalf("sales manager history kinds %v", kinds)
 	}
 	if r := e.Do("GET", "/api/stock/history?format=csv&from="+f.d1, nil, f.pm); r.StatusCode != 200 || !strings.Contains(e.Text(r), "CEM-001") {
 		t.Fatalf("history csv %d", r.StatusCode)
@@ -278,10 +280,14 @@ func TestAdjustmentRequestsAndReview(t *testing.T) {
 	if code, _, _ := e.ErrorOf(e.Do("POST", "/api/stock/adjustments/"+own["id"].(string)+"/approve", map[string]any{}, f.pm)); code != "forbidden" {
 		t.Fatalf("own %s", code)
 	}
-	if r := e.Do("POST", "/api/stock/adjustments/"+own["id"].(string)+"/reject", map[string]any{}, f.gm); r.StatusCode != 400 {
+	if r := e.Do("POST", "/api/stock/adjustments/"+own["id"].(string)+"/reject", map[string]any{"note": "not verified"}, f.gm); r.StatusCode != 403 {
+		t.Fatalf("gm decides (SRS §8 Top Mgt R): %d", r.StatusCode)
+	}
+	pm2 := e.User(auth.RoleProductionManager)
+	if r := e.Do("POST", "/api/stock/adjustments/"+own["id"].(string)+"/reject", map[string]any{}, pm2); r.StatusCode != 400 {
 		t.Fatalf("reject needs note %d", r.StatusCode)
 	}
-	rj := f.ok(t, e.Do("POST", "/api/stock/adjustments/"+own["id"].(string)+"/reject", map[string]any{"note": "not verified"}, f.gm), 200)
+	rj := f.ok(t, e.Do("POST", "/api/stock/adjustments/"+own["id"].(string)+"/reject", map[string]any{"note": "not verified"}, pm2), 200)
 	if rj["adjustment"].(map[string]any)["status"] != "REJECTED" {
 		t.Fatal("reject")
 	}

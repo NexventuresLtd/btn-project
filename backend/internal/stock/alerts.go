@@ -27,7 +27,7 @@ const lowStockReminderAfter = 20 * time.Hour
 
 func init() {
 	notify.RegisterEvent(notify.Event{Key: EventLowStock, Category: notify.CatStock, DefaultEmail: true,
-		Permissions: []auth.Permission{"stock.view", "materials.view", "stock.record", "procurement.request"}})
+		Permissions: []auth.Permission{"stock.view", "materials.view", "stock.record", "stock.adjust", "procurement.request"}})
 }
 
 // LowRow is an item below its reorder level at a location.
@@ -222,8 +222,9 @@ func notifyLow(ctx context.Context, tx pgx.Tx, r LowRow) error {
 	n := notify.Notification{Event: EventLowStock, Severity: notify.Warning, TitleKey: "stock.notify.low_title", BodyKey: "stock.notify.low_body",
 		Params: map[string]any{"item": r.Name, "code": r.Code, "plant": r.PlantCode, "balance": FmtQty(r.Balance), "level": FmtQty(r.Level), "unit": r.Unit},
 		Link:   link, DedupKey: "low:" + r.PlantID + ":" + string(r.Kind) + ":" + r.ItemID}
-	// keepers of the location (stock officers, supervisors, production manager) and whoever can raise a purchase request
-	for _, p := range []auth.Permission{"stock.record", "procurement.request"} {
+	// keepers of the location (stock officers, supervisors), the production manager (stock approver, SRS §8 "R A")
+	// and whoever can raise a purchase request. notify dedups a user reached through several permissions.
+	for _, p := range []auth.Permission{"stock.record", "stock.adjust", "procurement.request"} {
 		n.To = notify.ToPermissionAtSite(p, r.PlantID)
 		if err := notify.Send(ctx, tx, n); err != nil {
 			return err

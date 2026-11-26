@@ -15,8 +15,9 @@ import (
 
 type fx struct {
 	e      *apptest.Env
-	pm     *testutil.TestUser // PRODUCTION_MANAGER: view + record + adjust
-	gm     *testutil.TestUser // GENERAL_MANAGER: view + adjust (no record)
+	pm     *testutil.TestUser // PRODUCTION_MANAGER: view + adjust/opening (SRS §8 Stock "R A")
+	sto    *testutil.TestUser // STOCK_OFFICER (no site): view + record (Stock "C R U")
+	gm     *testutil.TestUser // GENERAL_MANAGER: view only (Top Mgt "R")
 	sup1   *testutil.TestUser // SUPERVISOR at BTN-1: view + record, plant scoped
 	op     *testutil.TestUser // OPERATOR: no materials access
 	plant  map[string]string  // code -> id
@@ -30,6 +31,7 @@ func setup(t *testing.T) *fx {
 	e := apptest.New(t)
 	f := &fx{e: e, plant: map[string]string{}, mat: map[string]string{}}
 	f.pm = e.User(auth.RoleProductionManager)
+	f.sto = e.User(auth.RoleStockOfficer)
 	f.gm = e.User(auth.RoleGeneralManager)
 	f.sup1 = e.User(auth.RoleSupervisor)
 	f.op = e.User(auth.RoleOperator)
@@ -56,7 +58,7 @@ func (f *fx) post(path string, body map[string]any, u *testutil.TestUser, header
 
 func (f *fx) receipt(t *testing.T, plant, mat, date string, qty any) {
 	t.Helper()
-	r := f.post("/api/materials/receipts", map[string]any{"plantId": f.plant[plant], "materialId": f.mat[mat], "date": date, "quantity": qty}, f.pm)
+	r := f.post("/api/materials/receipts", map[string]any{"plantId": f.plant[plant], "materialId": f.mat[mat], "date": date, "quantity": qty}, f.sto)
 	if r.StatusCode != 201 {
 		t.Fatalf("receipt: %d %s", r.StatusCode, f.e.Text(r))
 	}
@@ -106,7 +108,7 @@ func TestReceipt(t *testing.T) {
 	f := setup(t)
 	e := f.e
 	body := map[string]any{"plantId": f.plant["BTN-1"], "materialId": f.mat["CEMENT"], "date": f.d1, "quantity": "400.5", "unitCost": "9500", "supplier": " CIMERWA ", "reference": "INV-1", "note": ""}
-	r := f.post("/api/materials/receipts", body, f.pm)
+	r := f.post("/api/materials/receipts", body, f.sto)
 	if r.StatusCode != 201 {
 		t.Fatalf("receipt %d %s", r.StatusCode, e.Text(r))
 	}
@@ -116,7 +118,7 @@ func TestReceipt(t *testing.T) {
 		t.Fatalf("shape %+v", out)
 	}
 	var n int
-	_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM "AuditLog" WHERE action='materials.receive' AND "entityId"=$1 AND "userId"=$2`, out["id"], f.pm.ID).Scan(&n)
+	_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM "AuditLog" WHERE action='materials.receive' AND "entityId"=$1 AND "userId"=$2`, out["id"], f.sto.ID).Scan(&n)
 	if n != 1 {
 		t.Fatal("audit missing")
 	}
@@ -154,25 +156,25 @@ func TestReceipt(t *testing.T) {
 		{map[string]any{"plantId": "p", "materialId": "m", "date": f.d1, "quantity": 1, "supplier": strings.Repeat("a", 121)}, "supplier", "At most 120 characters"},
 	}
 	for i, c := range cases {
-		_, fields := f.wantErr(t, f.post("/api/materials/receipts", c.body, f.pm), 400, "bad_request")
+		_, fields := f.wantErr(t, f.post("/api/materials/receipts", c.body, f.sto), 400, "bad_request")
 		if fields[c.field] != c.msg {
 			t.Errorf("case %d: %s = %q want %q (%v)", i, c.field, fields[c.field], c.msg, fields)
 		}
 	}
 	// unknown plant / material
-	_, fields := f.wantErr(t, f.post("/api/materials/receipts", map[string]any{"plantId": "nope", "materialId": f.mat["CEMENT"], "date": f.d1, "quantity": 1}, f.pm), 400, "bad_request")
+	_, fields := f.wantErr(t, f.post("/api/materials/receipts", map[string]any{"plantId": "nope", "materialId": f.mat["CEMENT"], "date": f.d1, "quantity": 1}, f.sto), 400, "bad_request")
 	if fields["plantId"] != "Unknown plant" {
 		t.Fatalf("%v", fields)
 	}
 	// language-aware validation message
-	am := e.User(auth.RoleProductionManager, testutil.UserOpts{Language: "am"})
+	am := e.User(auth.RoleStockOfficer, testutil.UserOpts{Language: "am"})
 	_, fields = f.wantErr(t, f.post("/api/materials/receipts", map[string]any{"materialId": "x", "date": f.d1, "quantity": 1}, am), 400, "bad_request")
 	if fields["plantId"] != "ፋብሪካ ይምረጡ" {
 		t.Fatalf("am: %v", fields)
 	}
 	// inactive plant is refused
 	_, _ = e.Pool.Exec(t.Context(), `UPDATE "Plant" SET "isActive"=false WHERE code='BTN-3'`)
-	_, fields = f.wantErr(t, f.post("/api/materials/receipts", map[string]any{"plantId": f.plant["BTN-3"], "materialId": f.mat["CEMENT"], "date": f.d1, "quantity": 1}, f.pm), 400, "bad_request")
+	_, fields = f.wantErr(t, f.post("/api/materials/receipts", map[string]any{"plantId": f.plant["BTN-3"], "materialId": f.mat["CEMENT"], "date": f.d1, "quantity": 1}, f.sto), 400, "bad_request")
 	if fields["plantId"] != "BTN-3 is inactive" {
 		t.Fatalf("%v", fields)
 	}
@@ -200,7 +202,7 @@ func TestInstantTransferRetiredHistoryReadable(t *testing.T) {
 	e := f.e
 	f.receipt(t, "BTN-1", "CEMENT", f.d3, 100)
 	tr := map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-2"], "date": f.d3, "materialId": f.mat["CEMENT"], "quantity": "40"}
-	f.wantErr(t, f.post("/api/materials/transfers", tr, f.pm), 410, "transfer_workflow")
+	f.wantErr(t, f.post("/api/materials/transfers", tr, f.sto), 410, "transfer_workflow")
 	g := f.historicalTransfer(t, "BTN-1", "BTN-2", "CEMENT", f.d2, 40)
 	var list struct {
 		Items []struct {
@@ -233,23 +235,23 @@ func TestBackdatedWithdrawalRespectsLaterMovements(t *testing.T) {
 	f := setup(t)
 	f.receipt(t, "BTN-3", "CEMENT", f.d3, 100)
 	// 70 used on d2 (after the receipt)
-	r := f.post("/api/materials/consumption", map[string]any{"plantId": f.plant["BTN-3"], "materialId": f.mat["CEMENT"], "date": f.d2, "quantity": 70, "note": "TEST usage"}, f.pm)
+	r := f.post("/api/materials/consumption", map[string]any{"plantId": f.plant["BTN-3"], "materialId": f.mat["CEMENT"], "date": f.d2, "quantity": 70, "note": "TEST usage"}, f.sto)
 	if r.StatusCode != 201 {
 		t.Fatalf("consumption %d %s", r.StatusCode, f.e.Text(r))
 	}
 	// 50 may not leave on d3: only 30 stays free until the later usage
 	use := map[string]any{"plantId": f.plant["BTN-3"], "date": f.d3, "materialId": f.mat["CEMENT"], "quantity": 50, "note": "TEST backdated"}
-	msg, fields := f.wantErr(t, f.post("/api/materials/consumption", use, f.pm), 409, "insufficient_stock")
+	msg, fields := f.wantErr(t, f.post("/api/materials/consumption", use, f.sto), 409, "insufficient_stock")
 	if !strings.Contains(msg, "only 30 BAG available") || !strings.Contains(msg, "leave only 30 BAG free") || fields["quantity"] != "Only 30 BAG available" {
 		t.Fatalf("msg %q %v", msg, fields)
 	}
-	rw := f.e.User(auth.RoleProductionManager, testutil.UserOpts{Language: "rw"})
+	rw := f.e.User(auth.RoleStockOfficer, testutil.UserOpts{Language: "rw"})
 	msg, _ = f.wantErr(t, f.post("/api/materials/consumption", use, rw), 409, "insufficient_stock")
 	if !strings.Contains(msg, "ntihagije") {
 		t.Fatalf("rw %q", msg)
 	}
 	use["quantity"] = 30
-	if r := f.post("/api/materials/consumption", use, f.pm); r.StatusCode != 201 {
+	if r := f.post("/api/materials/consumption", use, f.sto); r.StatusCode != 201 {
 		t.Fatalf("30: %d", r.StatusCode)
 	}
 }
@@ -263,7 +265,7 @@ func TestConcurrentWithdrawalsCannotOverdraw(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r := f.post("/api/materials/consumption", map[string]any{"plantId": f.plant["BTN-1"], "date": f.d1, "materialId": f.mat["CEMENT"], "quantity": 60, "note": "TEST run"}, f.pm)
+			r := f.post("/api/materials/consumption", map[string]any{"plantId": f.plant["BTN-1"], "date": f.d1, "materialId": f.mat["CEMENT"], "quantity": 60, "note": "TEST run"}, f.sto)
 			codes[i] = r.StatusCode
 			_, _ = io.Copy(io.Discard, r.Body)
 			r.Body.Close()
@@ -302,13 +304,13 @@ func TestConsumption(t *testing.T) {
 		t.Fatal("sourceType")
 	}
 	body["note"] = "ab"
-	_, fields := f.wantErr(t, f.post("/api/materials/consumption", body, f.pm), 400, "bad_request")
+	_, fields := f.wantErr(t, f.post("/api/materials/consumption", body, f.sto), 400, "bad_request")
 	if fields["note"] != "A note explaining the usage is required (at least 3 characters)" {
 		t.Fatalf("%v", fields)
 	}
 	body["note"] = "TEST again"
 	body["quantity"] = 16
-	_, fields = f.wantErr(t, f.post("/api/materials/consumption", body, f.pm), 409, "insufficient_stock")
+	_, fields = f.wantErr(t, f.post("/api/materials/consumption", body, f.sto), 409, "insufficient_stock")
 	if fields["quantity"] != "Only 15.25 LITER available" {
 		t.Fatalf("%v", fields)
 	}
@@ -328,7 +330,7 @@ func TestAdjustment(t *testing.T) {
 	if r := f.post("/api/materials/adjustments", adj, f.sup1); r.StatusCode != 403 {
 		t.Fatalf("supervisor %d", r.StatusCode)
 	}
-	r := f.post("/api/materials/adjustments", adj, f.gm)
+	r := f.post("/api/materials/adjustments", adj, f.pm)
 	if r.StatusCode != 201 {
 		t.Fatalf("%d %s", r.StatusCode, f.e.Text(r))
 	}
@@ -363,7 +365,7 @@ func TestOpening(t *testing.T) {
 	if r := f.post("/api/materials/opening", body, f.sup1); r.StatusCode != 403 {
 		t.Fatalf("supervisor %d", r.StatusCode)
 	}
-	r := f.post("/api/materials/opening", body, f.gm)
+	r := f.post("/api/materials/opening", body, f.pm)
 	if r.StatusCode != 201 {
 		t.Fatalf("%d %s", r.StatusCode, f.e.Text(r))
 	}
@@ -375,7 +377,7 @@ func TestOpening(t *testing.T) {
 		t.Fatalf("%+v", out)
 	}
 	// second submission: 409 with per-line fields
-	_, fields := f.wantErr(t, f.post("/api/materials/opening", body, f.gm), 409, "conflict")
+	_, fields := f.wantErr(t, f.post("/api/materials/opening", body, f.pm), 409, "conflict")
 	if fields["lines.0.quantity"] != "Opening already recorded on "+f.d2 {
 		t.Fatalf("%v", fields)
 	}
@@ -390,16 +392,16 @@ func TestOpening(t *testing.T) {
 	// duplicate line, empty lines, negative, missing plant
 	dup := map[string]any{"plantId": f.plant["BTN-1"], "date": f.d2, "lines": []any{
 		map[string]any{"materialId": f.mat["CEMENT"], "quantity": 1}, map[string]any{"materialId": f.mat["CEMENT"], "quantity": -1}}}
-	_, fields = f.wantErr(t, f.post("/api/materials/opening", dup, f.gm), 400, "bad_request")
+	_, fields = f.wantErr(t, f.post("/api/materials/opening", dup, f.pm), 400, "bad_request")
 	if fields["lines.1.quantity"] != "Cannot be negative" {
 		t.Fatalf("%v", fields)
 	}
 	dup["lines"].([]any)[1].(map[string]any)["quantity"] = 2
-	_, fields = f.wantErr(t, f.post("/api/materials/opening", dup, f.gm), 400, "bad_request")
+	_, fields = f.wantErr(t, f.post("/api/materials/opening", dup, f.pm), 400, "bad_request")
 	if fields["lines.1.materialId"] != "This material is listed twice" {
 		t.Fatalf("%v", fields)
 	}
-	_, fields = f.wantErr(t, f.post("/api/materials/opening", map[string]any{"plantId": f.plant["BTN-1"], "date": f.d2, "lines": []any{}}, f.gm), 400, "bad_request")
+	_, fields = f.wantErr(t, f.post("/api/materials/opening", map[string]any{"plantId": f.plant["BTN-1"], "date": f.d2, "lines": []any{}}, f.pm), 400, "bad_request")
 	if fields["lines"] != "Add at least one material" {
 		t.Fatalf("%v", fields)
 	}
@@ -418,7 +420,7 @@ func TestBalancesAlertsDailyMovementsAndScope(t *testing.T) {
 	f.receipt(t, "BTN-1", "CEMENT", f.d2, 400)
 	f.receipt(t, "BTN-2", "CEMENT", f.d2, 30) // below min 50
 	f.historicalTransfer(t, "BTN-1", "BTN-3", "CEMENT", f.d1, 100)
-	f.post("/api/materials/consumption", map[string]any{"plantId": f.plant["BTN-1"], "materialId": f.mat["CEMENT"], "date": f.d1, "quantity": 120, "note": "TEST usage"}, f.pm).Body.Close()
+	f.post("/api/materials/consumption", map[string]any{"plantId": f.plant["BTN-1"], "materialId": f.mat["CEMENT"], "date": f.d1, "quantity": 120, "note": "TEST usage"}, f.sto).Body.Close()
 
 	// balances (cache is invalidated by writes) + ETag/304
 	r := e.Do("GET", "/api/materials/balances", nil, f.pm)
@@ -574,7 +576,7 @@ func TestPDFs(t *testing.T) {
 	f := setup(t)
 	e := f.e
 	f.receipt(t, "BTN-1", "CEMENT", f.d2, 400)
-	f.post("/api/materials/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-2"], "date": f.d1, "materialId": f.mat["CEMENT"], "quantity": 10}, f.pm).Body.Close()
+	f.post("/api/materials/transfers", map[string]any{"fromPlantId": f.plant["BTN-1"], "toPlantId": f.plant["BTN-2"], "date": f.d1, "materialId": f.mat["CEMENT"], "quantity": 10}, f.sto).Body.Close()
 	check := func(path string, u *testutil.TestUser, wantName string) {
 		t.Helper()
 		r := e.Do("GET", path, nil, u)

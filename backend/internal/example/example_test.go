@@ -15,7 +15,7 @@ import (
 func TestExampleModuleFollowsConventions(t *testing.T) {
 	e := apptest.New(t, apptest.Options{Extra: func(api fiber.Router, d *deps.Deps) { example.Register(api.Group("/example"), d) }})
 	op := e.User(auth.RoleOperator)
-	gm := e.User(auth.RoleGeneralManager)
+	gm := e.User(auth.RoleSystemAdmin) // masterdata.manage (SRS §8: Admin)
 
 	if r := e.Do("GET", "/api/example/products", nil, nil); r.StatusCode != 401 {
 		t.Fatalf("anon: %d", r.StatusCode)
@@ -30,7 +30,7 @@ func TestExampleModuleFollowsConventions(t *testing.T) {
 	if page.Total != 6 || len(page.Items) != 2 || page.PageSize != 2 {
 		t.Fatalf("page: %+v", page)
 	}
-	// permission: operator cannot change prices, GM can; validation messages are zod-compatible
+	// permission: operator cannot change prices, the System Administrator can; validation messages are zod-compatible
 	id := page.Items[0]["id"].(string)
 	if r := e.Do("POST", "/api/example/products/"+id+"/price", map[string]any{"price": 10}, op); r.StatusCode != 403 {
 		t.Fatalf("operator: %d", r.StatusCode)

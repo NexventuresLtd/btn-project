@@ -19,7 +19,9 @@ type fx struct {
 	hb20, hb15     string
 	cust           string
 	sm, gm, fm     *testutil.TestUser
-	sup1, sup2, op *testutil.TestUser
+	pm, sup, adm   *testutil.TestUser // order approver (SRS §8 "R A"), site supervisor (orders "R"), system admin
+	disp1, disp2   *testutil.TestUser // dispatchers: stock officers at BTN-1 / BTN-2 (SRS §8 Delivery: Stock "C R U")
+	op             *testutil.TestUser
 	today          string
 }
 
@@ -41,8 +43,11 @@ func setup(t *testing.T) *fx {
 	f.sm = e.User(auth.RoleSalesManager)
 	f.gm = e.User(auth.RoleGeneralManager)
 	f.fm = e.User(auth.RoleFinanceManager)
-	f.sup1 = e.User(auth.RoleSupervisor)
-	f.sup2 = e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-2"})
+	f.pm = e.User(auth.RoleProductionManager)
+	f.sup = e.User(auth.RoleSupervisor)
+	f.adm = e.User(auth.RoleSystemAdmin)
+	f.disp1 = e.User(auth.RoleStockOfficer, testutil.UserOpts{Plant: "BTN-1"})
+	f.disp2 = e.User(auth.RoleStockOfficer, testutil.UserOpts{Plant: "BTN-2"})
 	f.op = e.User(auth.RoleOperator)
 	return f
 }
@@ -118,17 +123,23 @@ func TestPermissionsAndAuth(t *testing.T) {
 			t.Errorf("operator %s %s: %d", p[0], p[1], r.StatusCode)
 		}
 	}
-	// supervisor: dispatch permission only (no customers/receivables/create)
-	status(t, e, "GET", "/api/sales", nil, f.sup1, 200)
-	status(t, e, "GET", "/api/sales/deliveries", nil, f.sup1, 200)
-	status(t, e, "GET", "/api/sales/meta", nil, f.sup1, 200)
-	for _, p := range [][2]string{{"GET", "/api/sales/customers"}, {"GET", "/api/sales/receivables"}, {"GET", "/api/sales/pdf/report"}} {
-		if r := e.Do(p[0], p[1], nil, f.sup1); r.StatusCode != 403 {
-			t.Errorf("supervisor %s: %d", p[1], r.StatusCode)
+	// SRS §8: supervisor, stock officer and top management read clients & orders; only Sales creates
+	for _, u := range []*testutil.TestUser{f.sup, f.disp1, f.gm, f.adm} {
+		for _, p := range []string{"/api/sales", "/api/sales/deliveries", "/api/sales/meta", "/api/sales/customers", "/api/sales/receivables", "/api/sales/pdf/report"} {
+			if r := e.Do("GET", p, nil, u); r.StatusCode != 200 {
+				t.Errorf("%s GET %s: %d", u.Role, p, r.StatusCode)
+			}
+		}
+		if r := e.Do("POST", "/api/sales", f.saleBody(false, line(f.hb20, 10, 1500)), u); r.StatusCode != 403 {
+			t.Errorf("%s create: %d", u.Role, r.StatusCode)
+		}
+		if r := e.Do("POST", "/api/sales/customers", M{"name": "TEST x"}, u); r.StatusCode != 403 {
+			t.Errorf("%s create customer: %d", u.Role, r.StatusCode)
 		}
 	}
-	if r := e.Do("POST", "/api/sales", f.saleBody(false, line(f.hb20, 10, 1500)), f.sup1); r.StatusCode != 403 {
-		t.Errorf("supervisor create: %d", r.StatusCode)
+	// procurement has no access to clients & orders
+	if r := e.Do("GET", "/api/sales", nil, e.User(auth.RoleProcurementOfficer)); r.StatusCode != 403 {
+		t.Errorf("procurement reads orders: %d", r.StatusCode)
 	}
 	// finance manager records payments but may not create or cancel
 	if r := e.Do("POST", "/api/sales", f.saleBody(false, line(f.hb20, 10, 1500)), f.fm); r.StatusCode != 403 {
@@ -248,36 +259,84 @@ func TestSaleLifecycleAndDiscountRule(t *testing.T) {
 		t.Errorf("patch confirmed lines: %d", r.StatusCode)
 	}
 	status(t, e, "PATCH", "/api/sales/"+id, M{"notes": "TEST after confirm"}, f.sm, 200)
-	r := e.Do("POST", "/api/sales/"+id+"/confirm", M{}, f.gm)
+	r := e.Do("POST", "/api/sales/"+id+"/confirm", M{}, f.sm)
 	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || msg != "Only draft sales can be confirmed (this one is confirmed)" {
 		t.Errorf("reconfirm: %d %s", r.StatusCode, msg)
 	}
-	// GM confirms a below-limit sale
+	// a below-limit price is approved by the Production Manager (SRS §8 orders "R A"); the GM only reads
 	gmSale := f.create(f.sm, f.saleBody(false, line(f.hb20, 10, 1000)))
-	gc := status(t, e, "POST", "/api/sales/"+gmSale["id"].(string)+"/confirm", M{}, f.gm, 200)
-	if gc["sale"].(M)["confirmedBy"].(M)["name"] != f.gm.Name {
-		t.Errorf("confirmedBy: %v", gc["sale"].(M)["confirmedBy"])
+	if r := e.Do("POST", "/api/sales/"+gmSale["id"].(string)+"/confirm", M{}, f.gm); r.StatusCode != 403 {
+		t.Errorf("gm confirm: %d", r.StatusCode)
+	}
+	gp := status(t, e, "POST", "/api/sales/"+gmSale["id"].(string)+"/confirm", M{}, f.sm, 200)["sale"].(M)["pendingApproval"].(M)
+	if gp["nextLevel"].(M)["label"] != "Production manager approval (price below the discount limit)" {
+		t.Errorf("discount level: %v", gp["nextLevel"])
+	}
+	status(t, e, "POST", "/api/sales/approvals/"+gp["id"].(string)+"/approve", M{}, f.pm, 200)
+	if gc := status(t, e, "GET", "/api/sales/"+gmSale["id"].(string), nil, f.sm, 200)["sale"].(M); gc["status"] != "CONFIRMED" {
+		t.Errorf("confirmed after PM approval: %v", gc["status"])
 	}
 	// audit rows are written with the changes
 	if n := f.count(`SELECT count(*) FROM "AuditLog" WHERE action IN ('sales.create','sales.update','sales.confirm') AND "entityId"=$1`, id); n != 5 {
 		t.Errorf("audit rows: %d", n)
 	}
-	// a draft is cancelled with a reason; a cancelled sale is void; finance cannot cancel
+	// ORD-04 (Figure 3): a draft, too, is cancelled "with reason and approval": the request opens a CANCEL approval
+	// (sales.cancel level, held by Sales and the Production Manager, never the requester); finance cannot cancel
 	draft := f.create(f.sm, f.saleBody(false, line(f.hb20, 10, 1500)))
 	did := draft["id"].(string)
 	if r := e.Do("POST", "/api/sales/"+did+"/cancel", M{"reason": "x"}, f.fm); r.StatusCode != 403 {
 		t.Errorf("fm cancel: %d", r.StatusCode)
 	}
-	r = e.Do("POST", "/api/sales/"+did+"/cancel", M{}, f.gm)
+	r = e.Do("POST", "/api/sales/"+did+"/cancel", M{}, f.sm)
 	if _, _, fields := e.ErrorOf(r); r.StatusCode != 400 || fields["reason"] != "Give a reason" {
 		t.Errorf("cancel reason: %d %v", r.StatusCode, fields)
 	}
-	cs := status(t, e, "POST", "/api/sales/"+did+"/cancel", M{"reason": "TEST sales duplicate"}, f.gm, 200)["sale"].(M)
-	if cs["status"] != "CANCELLED" || cs["cancelReason"] != "TEST sales duplicate" || num(cs["totals"].(M)["balance"]) != 0 {
-		t.Errorf("cancelled: %v", cs)
+	cr := status(t, e, "POST", "/api/sales/"+did+"/cancel", M{"reason": "TEST sales duplicate"}, f.sm, 200)
+	cs := cr["sale"].(M)
+	if cr["pendingApproval"] != true || cs["status"] != "DRAFT" || cs["pendingApproval"].(M)["kind"] != "CANCEL" || cs["pendingApproval"].(M)["reason"] != "TEST sales duplicate" {
+		t.Fatalf("draft cancel waits for approval: %v %v", cr["pendingApproval"], cs["status"])
 	}
-	if r := e.Do("POST", "/api/sales/"+did+"/cancel", M{"reason": "again"}, f.gm); r.StatusCode != 409 {
+	caid := cs["pendingApproval"].(M)["id"].(string)
+	if n := f.count(`SELECT count(*) FROM notification WHERE event='sales.approval_pending' AND user_id=$1 AND link=$2`, f.pm.ID, "/sales/"+did); n != 1 {
+		t.Errorf("approver notified of the draft cancellation: %d", n)
+	}
+	if n := f.count(`SELECT count(*) FROM notification WHERE event='sales.approval_pending' AND user_id=$1 AND link=$2`, f.sm.ID, "/sales/"+did); n != 0 {
+		t.Errorf("requester notified of own request: %d", n)
+	}
+	if r := e.Do("POST", "/api/sales/"+did+"/cancel", M{"reason": "again"}, f.sm); r.StatusCode != 409 {
+		t.Errorf("second cancel request while pending: %d", r.StatusCode)
+	}
+	if r := e.Do("POST", "/api/sales/approvals/"+caid+"/approve", M{}, f.sm); r.StatusCode != 403 {
+		t.Errorf("requester approves own cancellation: %d", r.StatusCode)
+	}
+	if r := e.Do("POST", "/api/sales/approvals/"+caid+"/approve", M{}, f.gm); r.StatusCode != 403 {
+		t.Errorf("gm approves (SRS §8 Top Mgt R): %d", r.StatusCode)
+	}
+	if s := status(t, e, "GET", "/api/sales/"+did, nil, f.sm, 200)["sale"].(M); s["status"] != "DRAFT" {
+		t.Fatalf("not cancelled before approval: %v", s["status"])
+	}
+	status(t, e, "POST", "/api/sales/approvals/"+caid+"/approve", M{"note": "TEST agreed"}, f.pm, 200)
+	cs = status(t, e, "GET", "/api/sales/"+did, nil, f.sm, 200)["sale"].(M)
+	if cs["status"] != "CANCELLED" || cs["cancelReason"] != "TEST sales duplicate" || num(cs["totals"].(M)["balance"]) != 0 {
+		t.Errorf("cancelled: %v %v", cs["status"], cs["cancelReason"])
+	}
+	for _, a := range []string{"sales.approval.request", "sales.approval.approve", "sales.cancel"} {
+		if n := f.count(`SELECT count(*) FROM "AuditLog" WHERE action=$1 AND "entityId"=$2`, a, did); n != 1 {
+			t.Errorf("audit %s: %d", a, n)
+		}
+	}
+	if n := f.count(`SELECT count(*) FROM notification WHERE event='sales.approval_decided' AND user_id=$1 AND link=$2`, f.sm.ID, "/sales/"+did); n != 1 {
+		t.Errorf("requester told of the decision: %d", n)
+	}
+	if r := e.Do("POST", "/api/sales/"+did+"/cancel", M{"reason": "again"}, f.sm); r.StatusCode != 409 {
 		t.Errorf("double cancel: %d", r.StatusCode)
+	}
+	// a rejected cancellation leaves the draft as it was
+	d2 := f.create(f.sm, f.saleBody(false, line(f.hb20, 5, 1500)))
+	rq := status(t, e, "POST", "/api/sales/"+d2["id"].(string)+"/cancel", M{"reason": "TEST maybe"}, f.sm, 200)["sale"].(M)["pendingApproval"].(M)
+	status(t, e, "POST", "/api/sales/approvals/"+rq["id"].(string)+"/reject", M{"note": "TEST client still wants it"}, f.pm, 200)
+	if s := status(t, e, "GET", "/api/sales/"+d2["id"].(string), nil, f.sm, 200)["sale"].(M); s["status"] != "DRAFT" || s["pendingApproval"] != nil {
+		t.Errorf("rejected cancellation: %v", s["status"])
 	}
 }
 
@@ -288,10 +347,10 @@ func TestDispatchPaymentsReturnsFlow(t *testing.T) {
 	id := sale["id"].(string)
 	l0, l1 := sale["lines"].([]any)[0].(M)["id"].(string), sale["lines"].([]any)[1].(M)["id"].(string)
 	// Figure 3: a confirmed order is dispatched only once ready
-	if r := e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "dn-0", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 1}}}, f.sup1); r.StatusCode != 409 {
+	if r := e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "dn-0", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 1}}}, f.disp1); r.StatusCode != 409 {
 		t.Fatalf("dispatch before ready: %d", r.StatusCode)
 	}
-	if rd := status(t, e, "POST", "/api/sales/"+id+"/ready", M{}, f.sup1, 200)["sale"].(M); rd["status"] != "READY" {
+	if rd := status(t, e, "POST", "/api/sales/"+id+"/ready", M{}, f.disp1, 200)["sale"].(M); rd["status"] != "READY" {
 		t.Fatalf("ready: %v", rd["status"])
 	}
 	dispatch := func(u *testutil.TestUser, dn string, plant string, lines ...M) *M {
@@ -307,28 +366,28 @@ func TestDispatchPaymentsReturnsFlow(t *testing.T) {
 		return nil
 	}
 	// no stock yet: 409 with a localized business message, nothing written
-	r := e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "dn-1", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 400}}}, f.sup1)
+	r := e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "dn-1", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 400}}}, f.disp1)
 	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || !strings.Contains(msg, "Not enough finished goods at BTN-1") || !strings.Contains(msg, "need 400, available 0") {
 		t.Fatalf("no stock: %d %s", r.StatusCode, msg)
 	}
 	f.addStock(f.plant1, f.hb20, 600, f.today)
 	f.addStock(f.plant1, f.hb15, 50, f.today)
 	// validation: over-delivery, duplicate line, foreign line
-	r = e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "dn-1", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 1001}, {"saleLineId": l0, "quantity": 1}, {"saleLineId": "zzz", "quantity": 1}}}, f.sup1)
+	r = e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "dn-1", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 1001}, {"saleLineId": l0, "quantity": 1}, {"saleLineId": "zzz", "quantity": 1}}}, f.disp1)
 	_, msg, fields := e.ErrorOf(r)
 	if r.StatusCode != 400 || msg != "Please correct the highlighted lines" || fields["lines.0.quantity"] != "Only 1000 left to deliver" ||
 		fields["lines.1.saleLineId"] != "Line listed twice" || fields["lines.2.saleLineId"] != "This line is not part of the sale" {
 		t.Fatalf("issues: %d %s %v", r.StatusCode, msg, fields)
 	}
 	// plant scope: BTN-2 supervisor cannot dispatch from BTN-1, a BTN-1 supervisor can
-	if r := e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "dn-1", "date": f.today, "plantId": f.plant1, "lines": []M{{"saleLineId": l0, "quantity": 100}}}, f.sup2); r.StatusCode != 403 {
+	if r := e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "dn-1", "date": f.today, "plantId": f.plant1, "lines": []M{{"saleLineId": l0, "quantity": 100}}}, f.disp2); r.StatusCode != 403 {
 		t.Fatalf("plant scope dispatch: %d", r.StatusCode)
 	}
 	// the finance manager has no dispatch permission
 	if r := e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "dn-1", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 1}}}, f.fm); r.StatusCode != 403 {
 		t.Fatalf("fm dispatch: %d", r.StatusCode)
 	}
-	d1 := dispatch(f.sup1, " dn-1 ", "", M{"saleLineId": l0, "quantity": 400})
+	d1 := dispatch(f.disp1, " dn-1 ", "", M{"saleLineId": l0, "quantity": 400})
 	if d1 == nil {
 		t.Fatal("dispatch failed")
 	}
@@ -338,16 +397,16 @@ func TestDispatchPaymentsReturnsFlow(t *testing.T) {
 		t.Fatalf("after dispatch: %v stock=%d", s["deliveryStatus"], f.stock(f.plant1, f.hb20))
 	}
 	// duplicate DN number
-	r = e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "DN-1", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 1}}}, f.sup1)
+	r = e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "DN-1", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 1}}}, f.disp1)
 	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || msg != "Delivery note number DN-1 has already been used" {
 		t.Fatalf("dup dn: %d %s", r.StatusCode, msg)
 	}
 	// only 200 in stock for the rest of HB20 (600 - 400)
-	r = e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "DN-2", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 600}}}, f.sup1)
+	r = e.Do("POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "DN-2", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 600}}}, f.disp1)
 	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || !strings.Contains(msg, "need 600, available 200") {
 		t.Fatalf("short: %d %s", r.StatusCode, msg)
 	}
-	av := status(t, e, "GET", "/api/sales/"+id+"/availability?date="+f.today, nil, f.sup1, 200)
+	av := status(t, e, "GET", "/api/sales/"+id+"/availability?date="+f.today, nil, f.disp1, 200)
 	got := map[string]int{}
 	for _, it := range av["items"].([]any) {
 		got[it.(M)["productId"].(string)] = num(it.(M)["available"])
@@ -355,7 +414,7 @@ func TestDispatchPaymentsReturnsFlow(t *testing.T) {
 	if got[f.hb20] != 200 || got[f.hb15] != 50 || av["plantId"] != f.plant1 {
 		t.Errorf("availability: %v", av)
 	}
-	if r := e.Do("GET", "/api/sales/"+id+"/availability?plantId="+f.plant1, nil, f.sup2); r.StatusCode != 403 {
+	if r := e.Do("GET", "/api/sales/"+id+"/availability?plantId="+f.plant1, nil, f.disp2); r.StatusCode != 403 {
 		t.Errorf("availability scope: %d", r.StatusCode)
 	}
 	// delivery list: totals, status counts, plant scoping
@@ -367,51 +426,51 @@ func TestDispatchPaymentsReturnsFlow(t *testing.T) {
 	if it["dnNumber"] != "DN-1" || num(it["totalQty"]) != 400 || it["products"].([]any)[0].(M)["code"] != "HB20" || it["customer"].(M)["name"] != "TEST sales customer" {
 		t.Errorf("delivery row: %v", it)
 	}
-	if dl2 := status(t, e, "GET", "/api/sales/deliveries", nil, f.sup2, 200); num(dl2["total"]) != 0 {
+	if dl2 := status(t, e, "GET", "/api/sales/deliveries", nil, f.disp2, 200); num(dl2["total"]) != 0 {
 		t.Errorf("BTN-2 supervisor must not see BTN-1 deliveries: %v", dl2["total"])
 	}
 	// mark delivered: only deliveries.create; future time rejected
-	r = e.Do("POST", "/api/sales/deliveries/"+dn1+"/delivered", M{"receivedBy": "TEST receiver", "deliveredAt": "2999-01-01T10:00:00Z"}, f.sup1)
+	r = e.Do("POST", "/api/sales/deliveries/"+dn1+"/delivered", M{"receivedBy": "TEST receiver", "deliveredAt": "2999-01-01T10:00:00Z"}, f.disp1)
 	if _, _, fields := e.ErrorOf(r); r.StatusCode != 400 || fields["deliveredAt"] != "Cannot be in the future" {
 		t.Errorf("future delivered: %d %v", r.StatusCode, fields)
 	}
-	if r := e.Do("POST", "/api/sales/deliveries/"+dn1+"/delivered", M{"receivedBy": ""}, f.sup1); r.StatusCode != 400 {
+	if r := e.Do("POST", "/api/sales/deliveries/"+dn1+"/delivered", M{"receivedBy": ""}, f.disp1); r.StatusCode != 400 {
 		t.Errorf("receivedBy required: %d", r.StatusCode)
 	}
-	if r := e.Do("POST", "/api/sales/deliveries/"+dn1+"/delivered", M{"receivedBy": "TEST receiver"}, f.sup2); r.StatusCode != 403 {
+	if r := e.Do("POST", "/api/sales/deliveries/"+dn1+"/delivered", M{"receivedBy": "TEST receiver"}, f.disp2); r.StatusCode != 403 {
 		t.Errorf("delivered scope: %d", r.StatusCode)
 	}
-	status(t, e, "POST", "/api/sales/deliveries/"+dn1+"/delivered", M{"receivedBy": "TEST receiver"}, f.sup1, 200)
-	if r := e.Do("POST", "/api/sales/deliveries/"+dn1+"/delivered", M{"receivedBy": "TEST receiver"}, f.sup1); r.StatusCode != 409 {
+	status(t, e, "POST", "/api/sales/deliveries/"+dn1+"/delivered", M{"receivedBy": "TEST receiver"}, f.disp1, 200)
+	if r := e.Do("POST", "/api/sales/deliveries/"+dn1+"/delivered", M{"receivedBy": "TEST receiver"}, f.disp1); r.StatusCode != 409 {
 		t.Errorf("double delivered: %d", r.StatusCode)
 	}
 	// returns: more than delivered is rejected; 100 returns to BTN-1 stock
-	r = e.Do("POST", "/api/sales/"+id+"/returns", M{"date": f.today, "plantId": f.plant1, "reason": "TEST broken", "lines": []M{{"productId": f.hb20, "quantity": 401}, {"productId": f.hb15, "quantity": 1}}}, f.sup1)
+	r = e.Do("POST", "/api/sales/"+id+"/returns", M{"date": f.today, "plantId": f.plant1, "reason": "TEST broken", "lines": []M{{"productId": f.hb20, "quantity": 401}, {"productId": f.hb15, "quantity": 1}}}, f.disp1)
 	_, _, fields = e.ErrorOf(r)
 	if r.StatusCode != 400 || fields["lines.0.quantity"] != "At most 400 can be returned" || fields["lines.1.productId"] != "This product has not been delivered on this sale" {
 		t.Errorf("return validation: %d %v", r.StatusCode, fields)
 	}
-	if r := e.Do("POST", "/api/sales/"+id+"/returns", M{"date": f.today, "plantId": f.plant1, "reason": "x", "lines": []M{{"productId": f.hb20, "quantity": 1}}}, f.sup2); r.StatusCode != 403 {
+	if r := e.Do("POST", "/api/sales/"+id+"/returns", M{"date": f.today, "plantId": f.plant1, "reason": "x", "lines": []M{{"productId": f.hb20, "quantity": 1}}}, f.disp2); r.StatusCode != 403 {
 		t.Errorf("return scope: %d", r.StatusCode)
 	}
-	rs := status(t, e, "POST", "/api/sales/"+id+"/returns", M{"date": f.today, "plantId": f.plant1, "reason": "TEST broken", "lines": []M{{"productId": f.hb20, "quantity": 100}}}, f.sup1, 201)["sale"].(M)
+	rs := status(t, e, "POST", "/api/sales/"+id+"/returns", M{"date": f.today, "plantId": f.plant1, "reason": "TEST broken", "lines": []M{{"productId": f.hb20, "quantity": 100}}}, f.disp1, 201)["sale"].(M)
 	if f.stock(f.plant1, f.hb20) != 300 || num(rs["totals"].(M)["returned"]) != 100 || num(rs["returnable"].([]any)[0].(M)["returnable"]) != 300 {
 		t.Errorf("return: stock=%d %v", f.stock(f.plant1, f.hb20), rs["returnable"])
 	}
-	// cancelling DN-1 would leave 100 returned with only 0 delivered -> blocked; SM may not cancel delivery notes
-	if r := e.Do("POST", "/api/sales/deliveries/"+dn1+"/cancel", M{"reason": "x"}, f.sm); r.StatusCode != 403 {
-		t.Errorf("sm cancel dn: %d", r.StatusCode)
+	// cancelling DN-1 would leave 100 returned with only 0 delivered -> blocked; finance may not cancel delivery notes
+	if r := e.Do("POST", "/api/sales/deliveries/"+dn1+"/cancel", M{"reason": "x"}, f.fm); r.StatusCode != 403 {
+		t.Errorf("fm cancel dn: %d", r.StatusCode)
 	}
-	r = e.Do("POST", "/api/sales/deliveries/"+dn1+"/cancel", M{"reason": "TEST wrong customer"}, f.gm)
+	r = e.Do("POST", "/api/sales/deliveries/"+dn1+"/cancel", M{"reason": "TEST wrong customer"}, f.pm)
 	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || !strings.Contains(msg, "already been returned") {
 		t.Errorf("cancel dn with returns: %d %s", r.StatusCode, msg)
 	}
 	// a second delivery can be cancelled and its stock comes back
-	d2 := dispatch(f.sup1, "DN-3", "", M{"saleLineId": l1, "quantity": 30})
+	d2 := dispatch(f.disp1, "DN-3", "", M{"saleLineId": l1, "quantity": 30})
 	if d2 == nil || f.stock(f.plant1, f.hb15) != 20 {
 		t.Fatalf("dn3 stock %d", f.stock(f.plant1, f.hb15))
 	}
-	status(t, e, "POST", "/api/sales/deliveries/"+(*d2)["deliveryId"].(string)+"/cancel", M{"reason": "TEST wrong customer"}, f.gm, 200)
+	status(t, e, "POST", "/api/sales/deliveries/"+(*d2)["deliveryId"].(string)+"/cancel", M{"reason": "TEST wrong customer"}, f.pm, 200)
 	if f.stock(f.plant1, f.hb15) != 50 {
 		t.Errorf("reversal should restore stock: %d", f.stock(f.plant1, f.hb15))
 	}
@@ -433,7 +492,7 @@ func TestDispatchPaymentsReturnsFlow(t *testing.T) {
 		t.Errorf("partial: %v", ps["totals"])
 	}
 	// cancelling a sale with payments / deliveries is blocked
-	r = e.Do("POST", "/api/sales/"+id+"/cancel", M{"reason": "x"}, f.gm)
+	r = e.Do("POST", "/api/sales/"+id+"/cancel", M{"reason": "x"}, f.pm)
 	if _, msg, _ := e.ErrorOf(r); r.StatusCode != 409 || msg != "An order that is Dispatched cannot be cancelled" {
 		t.Errorf("cancel with dn: %d %s", r.StatusCode, msg)
 	}
@@ -494,20 +553,20 @@ func TestPlantScopeOnSales(t *testing.T) {
 	sale := f.create(f.sm, f.saleBody(true, line(f.hb20, 10, 1500)))
 	id := sale["id"].(string)
 	// BTN-2 supervisor: list excludes it, detail / availability / pdf are 403
-	if ls := status(t, e, "GET", "/api/sales", nil, f.sup2, 200); num(ls["total"]) != 0 {
+	if ls := status(t, e, "GET", "/api/sales", nil, f.disp2, 200); num(ls["total"]) != 0 {
 		t.Errorf("sup2 list: %v", ls["total"])
 	}
-	if ls := status(t, e, "GET", "/api/sales?plantId="+f.plant1, nil, f.sup2, 200); num(ls["total"]) != 0 {
+	if ls := status(t, e, "GET", "/api/sales?plantId="+f.plant1, nil, f.disp2, 200); num(ls["total"]) != 0 {
 		t.Errorf("sup2 list with other plant: %v", ls["total"])
 	}
-	if ls := status(t, e, "GET", "/api/sales", nil, f.sup1, 200); num(ls["total"]) != 1 {
+	if ls := status(t, e, "GET", "/api/sales", nil, f.disp1, 200); num(ls["total"]) != 1 {
 		t.Errorf("sup1 list: %v", ls["total"])
 	}
 	for _, p := range []string{"/api/sales/" + id, "/api/sales/" + id + "/availability", "/api/sales/pdf/order/" + id} {
-		if r := e.Do("GET", p, nil, f.sup2); r.StatusCode != 403 {
+		if r := e.Do("GET", p, nil, f.disp2); r.StatusCode != 403 {
 			t.Errorf("sup2 %s: %d", p, r.StatusCode)
 		}
-		if r := e.Do("GET", p, nil, f.sup1); r.StatusCode != 200 {
+		if r := e.Do("GET", p, nil, f.disp1); r.StatusCode != 200 {
 			t.Errorf("sup1 %s: %d", p, r.StatusCode)
 		}
 	}
@@ -521,7 +580,7 @@ func TestPDFs(t *testing.T) {
 	id := sale["id"].(string)
 	l0 := sale["lines"].([]any)[0].(M)["id"].(string)
 	status(t, e, "POST", "/api/sales/"+id+"/ready", M{}, f.sm, 200)
-	d := status(t, e, "POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "TEST-DN", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 20}}}, f.sup1, 201)
+	d := status(t, e, "POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "TEST-DN", "date": f.today, "lines": []M{{"saleLineId": l0, "quantity": 20}}}, f.disp1, 201)
 	dn := d["deliveryId"].(string)
 	status(t, e, "POST", "/api/sales/"+id+"/payments", M{"date": f.today, "amount": 1000, "method": "CASH"}, f.fm, 201)
 	paths := []string{
@@ -550,13 +609,13 @@ func TestPDFs(t *testing.T) {
 		t.Errorf("download header: %s", cd)
 	}
 	// permissions and scope
-	if r := e.Do("GET", "/api/sales/pdf/statement/"+f.cust, nil, f.sup1); r.StatusCode != 403 {
-		t.Errorf("sup statement: %d", r.StatusCode)
+	if r := e.Do("GET", "/api/sales/pdf/statement/"+f.cust, nil, f.op); r.StatusCode != 403 {
+		t.Errorf("operator statement: %d", r.StatusCode)
 	}
-	if r := e.Do("GET", "/api/sales/pdf/delivery-note/"+dn, nil, f.sup1); r.StatusCode != 200 {
+	if r := e.Do("GET", "/api/sales/pdf/delivery-note/"+dn, nil, f.disp1); r.StatusCode != 200 {
 		t.Errorf("sup1 dn pdf: %d", r.StatusCode)
 	}
-	if r := e.Do("GET", "/api/sales/pdf/delivery-note/"+dn, nil, f.sup2); r.StatusCode != 403 {
+	if r := e.Do("GET", "/api/sales/pdf/delivery-note/"+dn, nil, f.disp2); r.StatusCode != 403 {
 		t.Errorf("sup2 dn pdf: %d", r.StatusCode)
 	}
 	if r := e.Do("GET", "/api/sales/pdf/delivery-note/nope", nil, f.sm); r.StatusCode != 404 {

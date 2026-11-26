@@ -217,7 +217,7 @@ func TestDayCloseAndCorrections(t *testing.T) {
 	e := f.e
 	sup := e.User(auth.RoleSupervisor)
 	pm := e.User(auth.RoleProductionManager)
-	gm := e.User(auth.RoleGeneralManager)
+	gm := e.User(auth.RoleProductionManager) // a second PM decides (SRS §8 Production: PM "A", Top Mgt "R")
 	d := day(-1)
 	var draft, appr entry
 	e.Decode(e.Do("POST", "/api/production/reports", f.entry(f.plant1, d, "DAY", false, line(f.hb20, 100, nil)), sup), &draft)
@@ -365,7 +365,7 @@ func TestTargetsAndProgress(t *testing.T) {
 	e := f.e
 	pm := e.User(auth.RoleProductionManager)
 	sup := e.User(auth.RoleSupervisor)
-	gm := e.User(auth.RoleGeneralManager)
+	gm := e.User(auth.RoleProductionManager) // a second PM decides (SRS §8 Production: PM "A", Top Mgt "R")
 	// a Wednesday-based week
 	wed := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 	targets := map[string]any{"targets": []map[string]any{
@@ -438,8 +438,33 @@ func TestTargetsAndProgress(t *testing.T) {
 	if r := e.Do("DELETE", "/api/production/targets/"+list.Items[0].ID, nil, sup); r.StatusCode != 403 {
 		t.Fatalf("sup delete: %d", r.StatusCode)
 	}
-	if r := e.Do("DELETE", "/api/production/targets/"+list.Items[0].ID, nil, pm); r.StatusCode != 204 {
-		t.Fatalf("delete: %d", r.StatusCode)
+	// SRS §6.3: removed with a reason, kept, no longer counted; setting it again restores it
+	tid := list.Items[0].ID
+	if r := e.Do("DELETE", "/api/production/targets/"+tid, nil, pm); r.StatusCode != 400 {
+		t.Fatalf("remove without reason: %d", r.StatusCode)
+	}
+	if r := e.Do("DELETE", "/api/production/targets/"+tid, map[string]any{"reason": "TEST plan changed"}, pm); r.StatusCode != 204 {
+		t.Fatalf("remove: %d", r.StatusCode)
+	}
+	var after struct{ Items []struct{ ID string } }
+	e.Decode(e.Do("GET", "/api/production/targets?from=2026-11-01&to=2026-11-30", nil, pm), &after)
+	for _, it := range after.Items {
+		if it.ID == tid {
+			t.Fatal("removed target still listed")
+		}
+	}
+	var reason string
+	_ = e.Pool.QueryRow(t.Context(), `SELECT removed_reason FROM production_target WHERE id=$1 AND removed_at IS NOT NULL`, tid).Scan(&reason)
+	if reason != "TEST plan changed" {
+		t.Fatalf("removed target kept: %q", reason)
+	}
+	var audits int
+	_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM "AuditLog" WHERE action='production.target_remove' AND "entityId"=$1`, tid).Scan(&audits)
+	if audits != 1 {
+		t.Fatalf("remove audit: %d", audits)
+	}
+	if _, err := e.Pool.Exec(t.Context(), `DELETE FROM production_target WHERE id=$1`, tid); err == nil {
+		t.Fatal("raw delete must be refused")
 	}
 }
 
@@ -448,6 +473,7 @@ func TestRecipesAndVariance(t *testing.T) {
 	f := setup(t)
 	e := f.e
 	pm := e.User(auth.RoleProductionManager)
+	adm := e.User(auth.RoleSystemAdmin) // recipes are reference data (ADM-01, masterdata.manage)
 	sup := e.User(auth.RoleSupervisor)
 	var sand string
 	_ = e.Pool.QueryRow(context.Background(), `SELECT id FROM "Material" WHERE code <> 'CEMENT' ORDER BY "sortOrder" LIMIT 1`).Scan(&sand)
@@ -455,13 +481,16 @@ func TestRecipesAndVariance(t *testing.T) {
 	if r := e.Do("POST", "/api/production/recipes", recipe, sup); r.StatusCode != 403 {
 		t.Fatalf("sup recipe: %d", r.StatusCode)
 	}
-	if r := e.Do("POST", "/api/production/recipes", recipe, pm); r.StatusCode != 201 {
+	if r := e.Do("POST", "/api/production/recipes", recipe, pm); r.StatusCode != 403 {
+		t.Fatalf("pm recipe (masterdata.manage is the administrator's): %d", r.StatusCode)
+	}
+	if r := e.Do("POST", "/api/production/recipes", recipe, adm); r.StatusCode != 201 {
 		t.Fatalf("recipe: %d %s", r.StatusCode, e.Text(r))
 	}
 	// a newer version from 5 days ago: 0.05 bag per block
 	recipe["effectiveFrom"], recipe["items"] = day(-5), []map[string]any{{"materialId": f.cement, "qtyPerUnit": 0.05}}
-	e.Do("POST", "/api/production/recipes", recipe, pm)
-	if _, _, fl := e.ErrorOf(e.Do("POST", "/api/production/recipes", map[string]any{"productId": f.hb20, "effectiveFrom": day(0), "items": []any{}}, pm)); fl["items"] == "" {
+	e.Do("POST", "/api/production/recipes", recipe, adm)
+	if _, _, fl := e.ErrorOf(e.Do("POST", "/api/production/recipes", map[string]any{"productId": f.hb20, "effectiveFrom": day(0), "items": []any{}}, adm)); fl["items"] == "" {
 		t.Fatalf("items required: %v", fl)
 	}
 	var list struct {
@@ -509,9 +538,44 @@ func TestRecipesAndVariance(t *testing.T) {
 	}
 	// delete a version
 	var del struct{ ID string }
-	e.Decode(e.Do("POST", "/api/production/recipes", map[string]any{"productId": f.hb15, "effectiveFrom": day(0), "items": []map[string]any{{"materialId": sand, "qtyPerUnit": 0.2}}}, pm), &del)
-	if r := e.Do("DELETE", "/api/production/recipes/"+del.ID, nil, pm); r.StatusCode != 204 {
-		t.Fatalf("delete recipe: %d", r.StatusCode)
+	e.Decode(e.Do("POST", "/api/production/recipes", map[string]any{"productId": f.hb15, "effectiveFrom": day(0), "items": []map[string]any{{"materialId": sand, "qtyPerUnit": 0.2}}}, adm), &del)
+	if r := e.Do("DELETE", "/api/production/recipes/"+del.ID, nil, adm); r.StatusCode != 400 {
+		t.Fatalf("remove recipe without reason: %d", r.StatusCode)
+	}
+	if r := e.Do("DELETE", "/api/production/recipes/"+del.ID, map[string]any{"reason": "TEST wrong quantities"}, adm); r.StatusCode != 204 {
+		t.Fatalf("remove recipe: %d", r.StatusCode)
+	}
+	var rl struct {
+		Items []struct {
+			Product struct{ ID string }
+			Current *struct{ ID string }
+			Removed []struct {
+				ID            string
+				RemovedReason *string
+			}
+		}
+	}
+	e.Decode(e.Do("GET", "/api/production/recipes", nil, pm), &rl)
+	found := false
+	for _, it := range rl.Items {
+		if it.Current != nil && it.Current.ID == del.ID {
+			t.Fatal("removed recipe still current")
+		}
+		for _, r := range it.Removed {
+			if r.ID == del.ID && r.RemovedReason != nil && *r.RemovedReason == "TEST wrong quantities" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("removed recipe listed under removed")
+	}
+	// the same date can be used again
+	if r := e.Do("POST", "/api/production/recipes", map[string]any{"productId": f.hb15, "effectiveFrom": day(0), "items": []map[string]any{{"materialId": sand, "qtyPerUnit": 0.25}}}, adm); r.StatusCode != 201 {
+		t.Fatalf("recreate after removal: %d", r.StatusCode)
+	}
+	if _, err := e.Pool.Exec(t.Context(), `DELETE FROM production_recipe WHERE id=$1`, del.ID); err == nil {
+		t.Fatal("raw delete must be refused")
 	}
 }
 
@@ -561,7 +625,7 @@ func TestPeriodsExportsAndDenials(t *testing.T) {
 	f := setup(t)
 	e := f.e
 	pm := e.User(auth.RoleProductionManager)
-	gm := e.User(auth.RoleGeneralManager)
+	gm := e.User(auth.RoleProductionManager) // a second PM decides (SRS §8 Production: PM "A", Top Mgt "R")
 	var en entry
 	e.Decode(e.Do("POST", "/api/production/reports", f.entry(f.plant1, day(-1), "DAY", true, line(f.hb20, 100, nil)), pm), &en)
 	e.Do("POST", "/api/production/reports/"+en.ID+"/approve", nil, gm)

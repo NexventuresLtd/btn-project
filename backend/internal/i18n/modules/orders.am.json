@@ -36,7 +36,7 @@
  "sales.approval.kind.CONFIRM": "የትዕዛዝ ማረጋገጫ",
  "sales.approval.level_amend": "የማሻሻያ ማጽደቅ",
  "sales.approval.level_cancel": "የስረዛ ማጽደቅ",
- "sales.approval.level_discount": "የዋና ሥራ አስኪያጅ ማጽደቅ (ዋጋ ከቅናሽ ገደቡ በታች)",
+ "sales.approval.level_discount": "የምርት ሥራ አስኪያጅ ማጽደቅ (ዋጋ ከቅናሽ ገደቡ በታች)",
  "sales.approval.status.APPROVED": "ጸድቋል",
  "sales.approval.status.PENDING": "በመጠባበቅ ላይ",
  "sales.approval.status.REJECTED": "ውድቅ ተደርጓል",

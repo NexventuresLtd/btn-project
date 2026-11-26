@@ -44,16 +44,18 @@ func spend(floatID string, amount int64, ref any) map[string]any {
 // periodic reconciliation with differences recorded, reviewed and notified, float-low alerts, full history.
 func TestFloatsTopUpsAndReconciliation(t *testing.T) {
 	e := setup(t, 50_000)
-	sup := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-1"})
-	sup2 := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-2"})
+	// SRS §8 Finance: only Finance holds floats (supervisors have no Finance access); sup is the custodian, a
+	// finance officer other than e.fm, so the four-eyes rules below still involve two people.
+	sup := e.User(auth.RoleFinanceManager)
+	site := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-2"})
 	var b1 string
 	_ = e.Pool.QueryRow(t.Context(), `SELECT id FROM "Plant" WHERE code='BTN-1'`).Scan(&b1)
 
 	// float management is finance's job
 	body := map[string]any{"code": "btn1-sup", "name": "BTN-1 site float", "custodianId": sup.ID, "plantId": b1, "department": "PRODUCTION",
 		"imprestAmount": 200_000, "lowThreshold": 50_000, "reconcileEveryDays": 7}
-	if c, _ := e.json("POST", "/api/pettycash/floats", body, sup); c != 403 {
-		t.Errorf("custodian creates float: %d", c)
+	if c, _ := e.json("POST", "/api/pettycash/floats", body, site); c != 403 {
+		t.Errorf("supervisor creates float: %d", c)
 	}
 	if c, m := e.json("POST", "/api/pettycash/floats", map[string]any{"code": "x", "name": "ab", "custodianId": e.op.ID, "lowThreshold": 9, "imprestAmount": 5}, e.fm); c != 400 ||
 		len(sub(sub(m, "error"), "fields")) < 2 {
@@ -64,27 +66,32 @@ func TestFloatsTopUpsAndReconciliation(t *testing.T) {
 	if fl["code"] != "BTN1-SUP" || sub(fl, "custodian")["id"] != sup.ID || fl["reconcileDue"] != true {
 		t.Fatalf("float: %v", fl)
 	}
-	// a custodian sees only their own float(s)
+	// the custodian's own float is marked; Finance R roles (Top Mgt, PM, Sales, Proc., Admin) see every float
 	list := e.ok(200, "GET", "/api/pettycash/floats", nil, sup)
-	if items := list["items"].([]any); len(items) != 1 || items[0].(map[string]any)["isMine"] != true {
+	mine := 0
+	for _, it := range list["items"].([]any) {
+		if it.(map[string]any)["isMine"] == true {
+			mine++
+		}
+	}
+	if mine != 1 {
 		t.Fatalf("custodian floats: %v", list["items"])
 	}
-	if l := e.ok(200, "GET", "/api/pettycash/floats", nil, e.oa); len(l["items"].([]any)) != 2 {
-		t.Errorf("finance sees main + site float: %v", l["items"])
+	for _, u := range []*testutil.TestUser{e.oa, e.User(auth.RoleProductionManager), e.User(auth.RoleSalesManager), e.User(auth.RoleSystemAdmin)} {
+		if l := e.ok(200, "GET", "/api/pettycash/floats", nil, u); len(l["items"].([]any)) != 2 {
+			t.Errorf("%s sees main + site float: %v", u.Role, l["items"])
+		}
 	}
 	var main string
 	_ = e.Pool.QueryRow(t.Context(), `SELECT id FROM petty_cash_float WHERE is_default`).Scan(&main)
-	if c, _ := e.json("GET", "/api/pettycash/floats/"+main, nil, sup); c != 403 {
-		t.Errorf("custodian reads main float: %d", c)
+	// supervisors have no Finance access at all
+	for _, p := range []string{"/api/pettycash/floats", "/api/pettycash/floats/" + main, "/api/pettycash/entries?floatId=" + main} {
+		if c, _ := e.json("GET", p, nil, site); c != 403 {
+			t.Errorf("supervisor %s: %d", p, c)
+		}
 	}
-	if c, _ := e.json("GET", "/api/pettycash/floats", nil, sup2); c != 200 {
-		t.Errorf("custodian without float: %d", c)
-	}
-	if c, _ := e.json("POST", "/api/pettycash/entries", spend(fid, 1000, "R1"), sup2); c != 403 {
-		t.Errorf("other custodian records into the float: %d", c)
-	}
-	if c, _ := e.json("GET", "/api/pettycash/entries?floatId="+main, nil, sup); c != 403 {
-		t.Errorf("custodian lists main float: %d", c)
+	if c, _ := e.json("POST", "/api/pettycash/entries", spend(fid, 1000, "R1"), site); c != 403 {
+		t.Errorf("supervisor records into the float: %d", c)
 	}
 
 	// top-up request by the custodian; approver is neither the requester nor the custodian
@@ -152,7 +159,7 @@ func TestFloatsTopUpsAndReconciliation(t *testing.T) {
 		}
 	}
 	rid := rec["id"].(string)
-	if c, _ := e.json("POST", "/api/pettycash/reconciliations/"+rid+"/review", map[string]any{"comment": "ok"}, sup); c != 403 {
+	if c, _ := e.json("POST", "/api/pettycash/reconciliations/"+rid+"/review", map[string]any{"comment": "Looks right"}, sup); c != 403 {
 		t.Errorf("custodian reviews own count: %d", c)
 	}
 	rev := e.ok(200, "POST", "/api/pettycash/reconciliations/"+rid+"/review", map[string]any{"comment": "Accepted, posted as shortage", "postAdjustment": true}, e.fm)
@@ -185,8 +192,8 @@ func TestFloatsTopUpsAndReconciliation(t *testing.T) {
 			t.Errorf("%s: %d", p, r.StatusCode)
 		}
 	}
-	if c := e.Do("GET", "/api/pettycash/pdf/reconciliation/"+rid, nil, sup2).StatusCode; c != 403 {
-		t.Errorf("other custodian reads reconciliation: %d", c)
+	if c := e.Do("GET", "/api/pettycash/pdf/reconciliation/"+rid, nil, site).StatusCode; c != 403 {
+		t.Errorf("supervisor reads reconciliation: %d", c)
 	}
 	// the reminder job flags floats whose count is overdue
 	n, err := pettycash.RemindReconciliations(t.Context(), e.Pool)
@@ -202,7 +209,7 @@ func TestFloatsTopUpsAndReconciliation(t *testing.T) {
 // §5.2 offline: petty cash entries are created offline and queued; approval needs online.
 func TestPettyCashOfflineSync(t *testing.T) {
 	e := setup(t, 50_000)
-	sup := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-1"})
+	sup := e.User(auth.RoleFinanceManager) // §8: the custodian is a finance officer (site floats are held by finance)
 	var b1 string
 	_ = e.Pool.QueryRow(t.Context(), `SELECT id FROM "Plant" WHERE code='BTN-1'`).Scan(&b1)
 	fl := e.ok(201, "POST", "/api/pettycash/floats", map[string]any{"code": "S1", "name": "Site 1 float", "custodianId": sup.ID, "plantId": b1}, e.fm)
@@ -219,7 +226,7 @@ func TestPettyCashOfflineSync(t *testing.T) {
 	foreign := apptest.SyncRecord("petty_cash_entry", 0, spend(main, 1_000, "R-4"))
 	topReq := apptest.SyncRecord("petty_cash_entry", 0, map[string]any{"floatId": fid, "date": dates.TodayISO(), "type": "DEPOSIT", "description": "Top-up please", "amount": 15_000})
 	res := dc.Push(ok, noRef, tooMuch, foreign, topReq)
-	want := []struct{ status, code string }{{"accepted", ""}, {"rejected", "validation"}, {"rejected", "conflict"}, {"rejected", "permission_revoked"}, {"accepted", ""}}
+	want := []struct{ status, code string }{{"accepted", ""}, {"rejected", "validation"}, {"rejected", "conflict"}, {"rejected", "conflict"}, {"accepted", ""}} // finance may record into any float; the main box is empty
 	for i, w := range want {
 		if res.Results[i].Status != w.status || res.Results[i].ReasonCode != w.code {
 			t.Fatalf("result %d: %+v want %v", i, res.Results[i], w)
@@ -263,34 +270,36 @@ func TestPettyCashOfflineSync(t *testing.T) {
 			if c.Data["floatId"] != fid {
 				t.Errorf("foreign entry pulled: %v", c.Data)
 			}
-		case "petty_cash_floats":
+		case "petty_cash_floats": // a finance custodian pulls every float (main box + own site float)
 			floats++
-			if c.ID != fid || c.Data["balance"].(float64) != 10_000 {
+			if c.ID == fid && (c.Data["balance"].(float64) != 10_000 || c.Data["isMine"] != true) {
 				t.Errorf("float snapshot: %v", c.Data)
 			}
 		}
 	}
-	if entries != 4 || floats != 1 {
+	if entries != 4 || floats != 2 {
 		t.Fatalf("pull: entries=%d floats=%d %+v", entries, floats, pull.Changes)
 	}
 }
 
 func TestCustodianPicker(t *testing.T) {
 	e := setup(t, 50_000)
+	// SRS §8 Finance: supervisors hold no Finance permission, so only finance officers can hold a float
 	sup := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-1"})
+	fin := e.User(auth.RoleFinanceManager)
 	l := e.ok(200, "GET", "/api/pettycash/custodians", nil, e.fm)
 	found := false
 	for _, it := range l["items"].([]any) {
 		m := it.(map[string]any)
-		if m["id"] == sup.ID && m["plantCode"] == "BTN-1" {
+		if m["id"] == fin.ID {
 			found = true
 		}
-		if m["id"] == e.gm.ID || m["id"] == e.op.ID {
+		if m["id"] == e.gm.ID || m["id"] == e.op.ID || m["id"] == sup.ID {
 			t.Errorf("not a custodian role: %v", m)
 		}
 	}
 	if !found {
-		t.Errorf("supervisor missing: %v", l["items"])
+		t.Errorf("finance officer missing: %v", l["items"])
 	}
 	if c, _ := e.json("GET", "/api/pettycash/custodians", nil, sup); c != 403 {
 		t.Errorf("custodian lists custodians: %d", c)

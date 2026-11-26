@@ -155,7 +155,7 @@ func TestWorkflowApprovePostsLedgersAtomically(t *testing.T) {
 	f := setup(t)
 	e := f.e
 	pm := e.User(auth.RoleProductionManager)
-	gm := e.User(auth.RoleGeneralManager)
+	gm := e.User(auth.RoleProductionManager) // a second PM decides (SRS §8 Production: PM "A", Top Mgt "R")
 	d := day(-1)
 
 	r := e.Do("POST", "/api/production/reports", f.payload(f.plant1, d, "DAY", false), pm)
@@ -374,7 +374,7 @@ func TestPDFs(t *testing.T) {
 	f := setup(t)
 	e := f.e
 	pm := e.User(auth.RoleProductionManager)
-	gm := e.User(auth.RoleGeneralManager)
+	gm := e.User(auth.RoleProductionManager) // a second PM decides (SRS §8 Production: PM "A", Top Mgt "R")
 	var rep struct{ ID string }
 	e.Decode(e.Do("POST", "/api/production/reports", f.payload(f.plant1, day(-1), "DAY", true), pm), &rep)
 	e.Do("POST", "/api/production/reports/"+rep.ID+"/approve", nil, gm)

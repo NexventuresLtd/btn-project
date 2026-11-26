@@ -185,45 +185,54 @@ func TestRequestApprovalWorkflow(t *testing.T) {
 
 func TestSelfApprovalEscalationRejectRevise(t *testing.T) {
 	e := setup(t)
-	// PM's own 100 000 request: level 1 (PM) is escalated to FM; the PM cannot approve their own request
+	// SRS §8: requesters (Sup. C R, Proc. C R U) never hold procurement.approve, so escalation of a level the
+	// requester would approve themself only arises for a Super Administrator (RouteLevels is unit-tested in
+	// TestRouteLevelsByRequester). A supervisor's 100 000 request needs the Production Manager (level 1).
 	r := e.call("POST", "/api/procurement/requests", map[string]any{"plantId": e.btn1, "requiredDate": future(5), "justification": "Spare parts for the mixer",
-		"lines": []any{map[string]any{"itemType": "OTHER", "description": "Mixer bearings", "unit": "pcs", "quantity": 2, "estimatedUnitCost": 50000}}, "submit": true}, e.pm, 201)
+		"lines": []any{map[string]any{"itemType": "OTHER", "description": "Mixer bearings", "unit": "pcs", "quantity": 2, "estimatedUnitCost": 50000}}, "submit": true}, e.sup, 201)
 	id := r["id"].(string)
 	steps := r["approvalSteps"].([]any)
-	if r["status"] != "SUBMITTED" || len(steps) != 1 || steps[0].(map[string]any)["level"].(float64) != 2 || steps[0].(map[string]any)["escalated"] != true {
-		t.Fatalf("escalated chain: %v", steps)
+	if r["status"] != "SUBMITTED" || len(steps) != 1 || steps[0].(map[string]any)["level"].(float64) != 1 || steps[0].(map[string]any)["escalated"] == true {
+		t.Fatalf("chain: %v", steps)
 	}
-	resp := e.Do("POST", "/api/procurement/requests/"+id+"/approve", nil, e.pm)
+	if resp := e.Do("POST", "/api/procurement/requests/"+id+"/approve", nil, e.sup); resp.StatusCode != 403 {
+		t.Fatalf("requester approval: %d", resp.StatusCode)
+	}
+	// a Super Administrator's own request: never approved by himself
+	sa := e.User(auth.RoleSuperAdmin)
+	own := e.call("POST", "/api/procurement/requests", map[string]any{"plantId": e.btn1, "requiredDate": future(5), "justification": "Own request check",
+		"lines": []any{map[string]any{"itemType": "OTHER", "description": "Bolts", "unit": "pcs", "quantity": 2, "estimatedUnitCost": 50000}}, "submit": true}, sa, 201)
+	resp := e.Do("POST", "/api/procurement/requests/"+own["id"].(string)+"/approve", nil, sa)
 	if resp.StatusCode != 403 {
 		t.Fatalf("self approval: %d", resp.StatusCode)
 	}
 	if _, msg, _ := e.ErrorOf(resp); !strings.Contains(msg, "own request") {
 		t.Fatalf("self approval message: %q", msg)
 	}
-	// FM rejects with a reason, the PM revises and resubmits
-	r = e.call("POST", "/api/procurement/requests/"+id+"/reject", map[string]any{"reason": "Get a second quotation first"}, e.fm, 200)
+	// the PM rejects with a reason, the supervisor revises and resubmits
+	r = e.call("POST", "/api/procurement/requests/"+id+"/reject", map[string]any{"reason": "Get a second quotation first"}, e.pm, 200)
 	if r["status"] != "REJECTED" || r["rejectionReason"] != "Get a second quotation first" {
 		t.Fatalf("rejected: %v", r)
 	}
-	if e.count(`SELECT count(*) FROM notification WHERE user_id = $1 AND event = 'procurement.request_rejected'`, e.pm.ID) != 1 {
+	if e.count(`SELECT count(*) FROM notification WHERE user_id = $1 AND event = 'procurement.request_rejected'`, e.sup.ID) != 1 {
 		t.Fatal("rejection notification")
 	}
 	e.fails("POST", "/api/procurement/requests/"+id+"/revise", nil, e.fm, 403, "")
-	r = e.call("POST", "/api/procurement/requests/"+id+"/revise", nil, e.pm, 200)
+	r = e.call("POST", "/api/procurement/requests/"+id+"/revise", nil, e.sup, 200)
 	if r["status"] != "DRAFT" {
 		t.Fatal(r["status"])
 	}
-	r = e.call("POST", "/api/procurement/requests/"+id+"/submit", nil, e.pm, 200)
+	r = e.call("POST", "/api/procurement/requests/"+id+"/submit", nil, e.sup, 200)
 	if r["cycle"].(float64) != 2 || r["status"] != "SUBMITTED" {
 		t.Fatalf("resubmitted: %v", r)
 	}
 	// recall before any decision → draft; close draft needs a reason
-	r = e.call("POST", "/api/procurement/requests/"+id+"/recall", nil, e.pm, 200)
+	r = e.call("POST", "/api/procurement/requests/"+id+"/recall", nil, e.sup, 200)
 	if r["status"] != "DRAFT" {
 		t.Fatal(r["status"])
 	}
-	e.fails("POST", "/api/procurement/requests/"+id+"/close", map[string]any{}, e.pm, 400, "reason")
-	r = e.call("POST", "/api/procurement/requests/"+id+"/close", map[string]any{"reason": "No longer needed"}, e.pm, 200)
+	e.fails("POST", "/api/procurement/requests/"+id+"/close", map[string]any{}, e.sup, 400, "reason")
+	r = e.call("POST", "/api/procurement/requests/"+id+"/close", map[string]any{"reason": "No longer needed"}, e.sup, 200)
 	if r["status"] != "CLOSED" {
 		t.Fatal(r["status"])
 	}
@@ -286,7 +295,8 @@ func TestSupplierDirectory(t *testing.T) {
 	if s["code"] != "SUP-0001" || s["paymentTermName"] != "30 days" || len(s["contacts"].([]any)) != 1 || s["categoryNames"].([]any)[0] != "Cement" {
 		t.Fatalf("supplier: %v", s)
 	}
-	s = e.call("PATCH", "/api/procurement/suppliers/"+id, map[string]any{"status": "ON_HOLD", "notes": "Late deliveries"}, e.fm, 200)
+	e.fails("PATCH", "/api/procurement/suppliers/"+id, map[string]any{"status": "ON_HOLD"}, e.fm, 403, "") // SRS §8: finance reads procurement
+	s = e.call("PATCH", "/api/procurement/suppliers/"+id, map[string]any{"status": "ON_HOLD", "notes": "Late deliveries"}, e.po, 200)
 	if s["status"] != "ON_HOLD" || s["name"] != "Cimerwa Ltd" {
 		t.Fatalf("patched: %v", s)
 	}
@@ -294,7 +304,8 @@ func TestSupplierDirectory(t *testing.T) {
 	if l["total"].(float64) != 1 {
 		t.Fatal(l)
 	}
-	e.fails("GET", "/api/procurement/suppliers", nil, e.sup, 403, "")
+	e.call("GET", "/api/procurement/suppliers", nil, e.sup, 200) // SRS §8 Procurement: Sup. "C R"
+	e.fails("GET", "/api/procurement/suppliers", nil, e.sales, 403, "")
 	o := e.call("GET", "/api/procurement/suppliers/options", nil, e.sup, 200)
 	if len(o["items"].([]any)) != 1 {
 		t.Fatal(o)
@@ -408,7 +419,8 @@ func TestOrderReceiveInvoiceTrace(t *testing.T) {
 		t.Fatalf("trace: %v %v", kinds, tr["expenses"])
 	}
 	e.fails("GET", "/api/procurement/trace", nil, e.fm, 400, "requestId")
-	e.fails("GET", "/api/procurement/trace?requestId="+reqID, nil, e.sales, 403, "")
+	e.fails("GET", "/api/procurement/trace?requestId="+reqID, nil, e.op, 403, "") // SRS §8: Sales has no procurement access
+	e.call("GET", "/api/procurement/trace?requestId="+reqID, nil, e.sales, 200)   // FIN-05 trace through Finance "R" (expenses.view)
 	// finance's own trace view receives the procurement steps through the registered tracer
 	ft := e.call("GET", "/api/expenses/trace?purchaseOrderId="+poID, nil, e.fm, 200)
 	if !strings.Contains(e.toJSON(ft), "purchase_order") {
@@ -492,7 +504,8 @@ func TestOrderReceiveInvoiceTrace(t *testing.T) {
 	if !cement || catOrdered != tot["ordered"].(float64) || catInvoiced < 1_274_990 || catInvoiced > 1_275_000 {
 		t.Fatalf("by category must add up to the totals: %v", rep["byCategory"])
 	}
-	e.fails("GET", "/api/procurement/reports/spend", nil, e.sup, 403, "")
+	e.call("GET", "/api/procurement/reports/spend", nil, e.sup, 200) // SRS §8 Procurement: Sup. "C R"
+	e.fails("GET", "/api/procurement/reports/spend", nil, e.sales, 403, "")
 	e.fails("GET", "/api/procurement/reports/spend?groupBy=nope", nil, e.fm, 400, "groupBy")
 	resp = e.Do("GET", "/api/procurement/pdf/spend?groupBy=month&lang=fr", nil, e.fm)
 	if resp.StatusCode != 200 {
@@ -570,8 +583,10 @@ func TestUnderReceiptShortCloseAndCancel(t *testing.T) {
 	if o["status"] != "CLOSED" {
 		t.Fatal(o["status"])
 	}
-	if e.count(`SELECT count(*) FROM notification WHERE event = 'procurement.exception' AND user_id = $1`, e.fm.ID) != 2 {
-		t.Fatal("under-receipt + short-close exceptions to procurement managers")
+	// procurement.manage holders (the Procurement Officer, SRS §8) get the receipt exceptions; the officer who
+	// short-closed is not told about his own action
+	if n := e.count(`SELECT count(*) FROM notification WHERE event = 'procurement.exception' AND user_id = $1`, e.po.ID); n != 1 {
+		t.Fatalf("under-receipt exception to the procurement officer: %d", n)
 	}
 }
 

@@ -242,7 +242,7 @@ func TestValidationErrors(t *testing.T) {
 
 func TestDryRunCommitIdempotent(t *testing.T) {
 	e := apptest.New(t)
-	gm := e.User(auth.RoleGeneralManager)
+	gm := e.User(auth.RoleSystemAdmin) // masterdata.manage (SRS §8: Admin)
 	products := count(t, e, `SELECT count(*) FROM "Product"`)
 	csv := "Code,Name,Unit,Default Price,Sort Order\n" +
 		"HB25,Hollow Block 25,Pcs,\"1,800\",70\n" + // new (quoted thousands)
@@ -385,17 +385,21 @@ func TestSitesAndWorkers(t *testing.T) {
 		t.Fatalf("bad kind: %+v", rep.Items)
 	}
 
-	sup := e.User(auth.RoleSupervisor) // pinned to BTN-1
+	// workers.manage: the Finance Manager (SRS §8 Attendance & wages "Fin. R U"; supervisors record attendance only)
+	sup := e.User(auth.RoleFinanceManager)
+	if r := sendCSV(e, e.User(auth.RoleSupervisor), "workers", "validate", "nationalId\n1\n"); r.StatusCode != 403 {
+		t.Fatalf("supervisor workers import: %d", r.StatusCode)
+	}
 	start := daysAgo(30).Format("02/01/2006")
 	wcsv := "nationalId,firstName,lastName,site,dailyWage,momoNumber,momoName,startDate\n" +
 		"1199080012345678,jean,mugisha,BTN-1,3500,+250788123456,JEAN MUGISHA," + start + "\n" +
-		"1199080012345679,ALICE,UWASE,BTN-2,3000,0788123457,,\n" + // other site → scope error
+		"1199080012345679,ALICE,UWASE,BTN-2,3000,0788123457,,\n" + // another site: fine for a cross-site role
 		"1199080012345680,ERIC,NKURU,BTN-1,0,0788,,\n" // wage 0 + bad momo
 	rep = decodeReport(t, e, sendCSV(e, sup, "workers", "validate", wcsv), 200)
-	if rep.Summary.Create != 1 || rep.Summary.Errors != 2 {
+	if rep.Summary.Create != 2 || rep.Summary.Errors != 1 {
 		t.Fatalf("workers: %+v", rep.Items)
 	}
-	if rep.Items[1].Errors[0].Field != "site" || len(rep.Items[2].Errors) != 2 {
+	if len(rep.Items[1].Errors) != 0 || len(rep.Items[2].Errors) != 2 {
 		t.Fatalf("worker errors: %+v", rep.Items)
 	}
 	rep = decodeReport(t, e, sendCSV(e, sup, "workers", "commit", strings.Join(strings.Split(wcsv, "\n")[:2], "\n")+"\n"), 201)
@@ -412,7 +416,7 @@ func TestSitesAndWorkers(t *testing.T) {
 	if rep.Summary.Unchanged != 1 {
 		t.Fatalf("worker re-run: %+v", rep.Items)
 	}
-	// a supervisor only sees their own imports; the GM (no workers.manage) cannot import workers
+	// the GM (no workers.manage) cannot import workers
 	if r := sendCSV(e, e.User(auth.RoleGeneralManager), "workers", "validate", upd); r.StatusCode != 403 {
 		t.Fatalf("gm workers: %d", r.StatusCode)
 	}

@@ -63,13 +63,14 @@ func getUser(ctx context.Context, q db.DBTX, id string) (*PublicUser, error) {
 // Register mounts /api/users on r (already behind RequireAuth).
 func Register(r fiber.Router, d *deps.Deps) {
 	h := &handler{d: d}
-	g := r.Group("/users", auth.RequirePermission("users.manage"))
-	g.Get("/", h.list)
-	g.Post("/", h.create)
-	g.Patch("/:id", h.update)
-	g.Post("/:id/reset-password", h.resetPassword)
-	g.Post("/:id/unlock", h.unlock)
-	g.Post("/:id/revoke-sessions", h.revokeSessions)
+	g := r.Group("/users")
+	manage := auth.RequirePermission("users.manage")
+	g.Get("/", auth.RequirePermission("users.manage", "users.view"), h.list) // SRS §8: Top Mgt R, Admin C R U
+	g.Post("/", manage, h.create)
+	g.Patch("/:id", manage, h.update)
+	g.Post("/:id/reset-password", manage, h.resetPassword)
+	g.Post("/:id/unlock", manage, h.unlock)
+	g.Post("/:id/revoke-sessions", manage, h.revokeSessions)
 }
 
 type handler struct{ d *deps.Deps }

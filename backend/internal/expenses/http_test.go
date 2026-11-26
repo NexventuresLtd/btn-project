@@ -29,6 +29,7 @@ func TestMain(m *testing.M) { testutil.Main(m) }
 type env struct {
 	*apptest.Env
 	fm, fm2, gm, gm2, md, sup, sup2, op, oa, pm, pro, su *testutil.TestUser
+	rec, rec2, sm, sys                                   *testutil.TestUser // rec, rec2: finance recorders (§8: only Finance records)
 	b1, b2                                               string
 }
 
@@ -41,6 +42,8 @@ func setup(t *testing.T) *env {
 	e.sup2 = e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-2"})
 	e.op, e.oa, e.pm = e.User(auth.RoleOperator), e.User(auth.RoleOperationsAdvisor), e.User(auth.RoleProductionManager)
 	e.pro, e.su = e.User(auth.RoleProcurementOfficer), e.User(auth.RoleSuperAdmin)
+	e.rec, e.rec2 = e.User(auth.RoleFinanceManager), e.User(auth.RoleFinanceManager)
+	e.sm, e.sys = e.User(auth.RoleSalesManager), e.User(auth.RoleSystemAdmin)
 	e.b1, e.b2 = e.plant("BTN-1"), e.plant("BTN-2")
 	a := settings.DefaultApprovals
 	a.PettyCashApprovalLimit = 50_000
@@ -143,25 +146,26 @@ func TestExpensePermissionsAndScope(t *testing.T) {
 	if c, _ := e.call("POST", "/api/budgets", map[string]any{}, e.gm); c != 403 {
 		t.Errorf("gm manage budgets: %d", c)
 	}
-	// site scope on create
-	if c, _ := e.call("POST", "/api/expenses", expense(e.b2, 1000), e.sup); c != 403 {
-		t.Errorf("sup other site: %d", c)
+	// SRS §8 Finance: supervisors and stock officers hold nothing; only Finance records
+	if c, _ := e.call("POST", "/api/expenses", expense(e.b1, 1000), e.sup); c != 403 {
+		t.Errorf("sup create: %d", c)
 	}
-	mine := e.must(201, "POST", "/api/expenses", expense("", 1000), e.sup) // plant defaults to the supervisor's site
+	if c, _ := e.call("GET", "/api/expenses", nil, e.sup); c != 403 {
+		t.Errorf("sup list: %d", c)
+	}
+	mine := e.must(201, "POST", "/api/expenses", expense(e.b1, 1000), e.rec)
 	if obj(mine, "plant")["code"] != "BTN-1" || s(mine, "status") != "SUBMITTED" {
-		t.Fatalf("sup expense: %v", mine)
+		t.Fatalf("finance expense: %v", mine)
 	}
-	other := e.must(201, "POST", "/api/expenses", expense(e.b2, 2000), e.sup2)
-	// recorders see only their own
-	list := e.must(200, "GET", "/api/expenses", nil, e.sup)
-	if n(list, "total") != 1 {
-		t.Errorf("sup sees %d", n(list, "total"))
-	}
-	if c, _ := e.call("GET", "/api/expenses/"+s(other, "id"), nil, e.sup); c != 403 {
-		t.Errorf("sup reads other site's expense: %d", c)
-	}
-	if c, _ := e.call("GET", "/api/expenses/"+s(other, "id"), nil, e.oa); c != 200 {
-		t.Errorf("oa reads: %d", c)
+	other := e.must(201, "POST", "/api/expenses", expense(e.b2, 2000), e.rec2)
+	// Finance R for PM, Sales, Procurement, Top Mgt and Admin (§8): they read every expense
+	for _, u := range []*testutil.TestUser{e.oa, e.pm, e.sm, e.pro, e.sys} {
+		if c, _ := e.call("GET", "/api/expenses/"+s(other, "id"), nil, u); c != 200 {
+			t.Errorf("%s reads: %d", u.Role, c)
+		}
+		if c, _ := e.call("POST", "/api/expenses", expense(e.b1, 1000), u); c != 403 {
+			t.Errorf("%s create: %d", u.Role, c)
+		}
 	}
 	if l := e.must(200, "GET", "/api/expenses", nil, e.fm); n(l, "total") != 2 {
 		t.Errorf("fm sees %d", n(l, "total"))
@@ -196,7 +200,7 @@ func TestExpensePermissionsAndScope(t *testing.T) {
 
 func TestExpenseApprovalPaymentAndReceipts(t *testing.T) {
 	e := setup(t)
-	ex := e.must(201, "POST", "/api/expenses", expense("", 600_000), e.sup)
+	ex := e.must(201, "POST", "/api/expenses", expense("", 600_000), e.rec)
 	id := s(ex, "id")
 	if lv, _ := ex["levels"].([]any); len(lv) != 2 {
 		t.Fatalf("600 000 needs finance + GM: %v", ex["levels"])
@@ -205,19 +209,19 @@ func TestExpenseApprovalPaymentAndReceipts(t *testing.T) {
 		t.Fatalf("approve without receipt: %d %v", c, m)
 	}
 	// receipts: sniffed, limited, permission-checked
-	if r := e.upload("/api/expenses/"+id+"/attachments", "invoice.pdf", []byte("<html><script>x</script>"), e.sup); r.StatusCode != 400 {
+	if r := e.upload("/api/expenses/"+id+"/attachments", "invoice.pdf", []byte("<html><script>x</script>"), e.rec); r.StatusCode != 400 {
 		t.Errorf("html as pdf: %d", r.StatusCode)
 	}
-	if r := e.upload("/api/expenses/"+id+"/attachments", "evil.pdf", []byte("%PDF-1.7 << /OpenAction << /S /JavaScript >> >>"), e.sup); r.StatusCode != 400 {
+	if r := e.upload("/api/expenses/"+id+"/attachments", "evil.pdf", []byte("%PDF-1.7 << /OpenAction << /S /JavaScript >> >>"), e.rec); r.StatusCode != 400 {
 		t.Errorf("active pdf: %d", r.StatusCode)
 	}
-	if r := e.upload("/api/expenses/"+id+"/attachments", "big.pdf", append([]byte("%PDF-"), make([]byte, 10<<20)...), e.sup); r.StatusCode != 413 {
+	if r := e.upload("/api/expenses/"+id+"/attachments", "big.pdf", append([]byte("%PDF-"), make([]byte, 10<<20)...), e.rec); r.StatusCode != 413 {
 		t.Errorf("11 MB: %d", r.StatusCode)
 	}
 	if r := e.upload("/api/expenses/"+id+"/attachments", "x.pdf", pdfBytes, e.sup2); r.StatusCode != 403 {
 		t.Errorf("other site uploads: %d", r.StatusCode)
 	}
-	r := e.upload("/api/expenses/"+id+"/attachments", "../Facture Total.PDF", pdfBytes, e.sup)
+	r := e.upload("/api/expenses/"+id+"/attachments", "../Facture Total.PDF", pdfBytes, e.rec)
 	var att map[string]any
 	e.Decode(r, &att)
 	if r.StatusCode != 201 || s(att, "contentType") != "application/pdf" || s(att, "fileName") != "Facture Total.PDF" {
@@ -231,6 +235,37 @@ func TestExpenseApprovalPaymentAndReceipts(t *testing.T) {
 	}
 	if c := e.Do("GET", "/api/expenses/"+id+"/attachments/"+s(att, "id"), nil, e.sup2).StatusCode; c != 403 {
 		t.Errorf("other site downloads: %d", c)
+	}
+	// SRS §6.3: a wrong receipt is marked removed with a reason (kept, still downloadable), never deleted
+	{
+		wr := e.upload("/api/expenses/"+id+"/attachments", "wrong.pdf", pdfBytes, e.rec)
+		var wa map[string]any
+		e.Decode(wr, &wa)
+		path := "/api/expenses/" + id + "/attachments/" + s(wa, "id")
+		if c := e.Do("DELETE", path, nil, e.rec).StatusCode; c != 400 {
+			t.Errorf("remove without reason: %d", c)
+		}
+		if c := e.Do("DELETE", path, map[string]any{"reason": "TEST wrong file"}, e.rec).StatusCode; c != 200 {
+			t.Errorf("remove: %d", c)
+		}
+		d := e.must(200, "GET", "/api/expenses/"+id, nil, e.rec)
+		if n := len(arr(d, "attachments")); n != 1 {
+			t.Errorf("active receipts: %d", n)
+		}
+		if rem := arr(d, "removedAttachments"); len(rem) != 1 || s(rem[0], "removedReason") != "TEST wrong file" {
+			t.Errorf("removed receipts: %v", rem)
+		}
+		if c := e.Do("GET", path+"?download=1", nil, e.oa).StatusCode; c != 200 {
+			t.Errorf("removed receipt kept for audit: %d", c)
+		}
+		var n int
+		_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM "AuditLog" WHERE action='expenses.detach' AND "entityId"=$1 AND "after"->>'reason'='TEST wrong file'`, id).Scan(&n)
+		if n != 1 {
+			t.Errorf("detach audit: %d", n)
+		}
+		if _, err := e.Pool.Exec(t.Context(), `DELETE FROM expense_attachment WHERE id=$1`, s(wa, "id")); err == nil {
+			t.Error("raw delete must be refused")
+		}
 	}
 	// approvals: level 1 finance, level 2 GM, distinct people, never the creator
 	if c, _ := e.call("POST", "/api/expenses/"+id+"/approve", map[string]any{}, e.gm); c != 200 {
@@ -247,12 +282,12 @@ func TestExpenseApprovalPaymentAndReceipts(t *testing.T) {
 		t.Fatalf("approved: %v", done)
 	}
 	var notes int
-	_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM notification WHERE user_id=$1 AND event='expenses.decided'`, e.sup.ID).Scan(&notes)
+	_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM notification WHERE user_id=$1 AND event='expenses.decided'`, e.rec.ID).Scan(&notes)
 	if notes != 1 {
 		t.Errorf("creator notified: %d", notes)
 	}
 	// attachments cannot be removed after approval
-	if c := e.Do("DELETE", "/api/expenses/"+id+"/attachments/"+s(att, "id"), nil, e.sup).StatusCode; c != 409 {
+	if c := e.Do("DELETE", "/api/expenses/"+id+"/attachments/"+s(att, "id"), map[string]any{"reason": "TEST late"}, e.rec).StatusCode; c != 409 {
 		t.Errorf("delete after approval: %d", c)
 	}
 	// payment
@@ -338,26 +373,26 @@ func (e *env) budget(dept string, lines map[string]int64) string {
 func TestBudgetOverrunControl(t *testing.T) {
 	e := setup(t)
 	bid := e.budget("PRODUCTION", map[string]int64{"FUEL": 100_000, "MAINTENANCE": 50_000})
-	chk := e.must(200, "POST", "/api/expenses/budget-check", map[string]any{"category": "FUEL", "department": "PRODUCTION", "date": today(), "amount": 60_000}, e.sup)
+	chk := e.must(200, "POST", "/api/expenses/budget-check", map[string]any{"category": "FUEL", "department": "PRODUCTION", "date": today(), "amount": 60_000}, e.rec)
 	if chk["hasBudget"] != true || obj(chk, "check")["wouldExceed"] != false || n(obj(chk, "check"), "remaining") != 100_000 {
 		t.Fatalf("check: %v", chk)
 	}
-	first := e.must(201, "POST", "/api/expenses", expense(e.b1, 60_000), e.sup)
+	first := e.must(201, "POST", "/api/expenses", expense(e.b1, 60_000), e.rec)
 	if n(obj(first, "budget"), "remaining") != 100_000 || s(obj(first, "budget"), "overrunStatus") != "NONE" {
 		t.Fatalf("first: %v", first["budget"])
 	}
 	// the pending 60 000 is committed: 50 000 more exceeds by 10 000
-	chk = e.must(200, "POST", "/api/expenses/budget-check", map[string]any{"category": "FUEL", "department": "PRODUCTION", "date": today(), "amount": 50_000}, e.sup)
+	chk = e.must(200, "POST", "/api/expenses/budget-check", map[string]any{"category": "FUEL", "department": "PRODUCTION", "date": today(), "amount": 50_000}, e.rec)
 	if c := obj(chk, "check"); c["wouldExceed"] != true || n(c, "overrunAmount") != 10_000 || n(c, "pending") != 60_000 {
 		t.Fatalf("overrun check: %v", chk)
 	}
 	if lv, _ := chk["levels"].([]any); len(lv) != 1 {
 		t.Fatalf("overrun levels: %v", chk["levels"])
 	}
-	if c, m := e.call("POST", "/api/expenses", expense(e.b1, 50_000), e.sup); c != 409 || obj(m, "error")["code"] != "budget_overrun" {
+	if c, m := e.call("POST", "/api/expenses", expense(e.b1, 50_000), e.rec); c != 409 || obj(m, "error")["code"] != "budget_overrun" {
 		t.Fatalf("unconfirmed overrun: %d %v", c, m)
 	}
-	over := e.must(201, "POST", "/api/expenses", expense(e.b1, 50_000, "confirmOverrun", true, "overrunReason", "Generator breakdown"), e.sup)
+	over := e.must(201, "POST", "/api/expenses", expense(e.b1, 50_000, "confirmOverrun", true, "overrunReason", "Generator breakdown"), e.rec)
 	oid := s(over, "id")
 	if b := obj(over, "budget"); s(b, "overrunStatus") != "PENDING" || n(b, "overrunAmount") != 10_000 {
 		t.Fatalf("overrun pending: %v", b)
@@ -367,7 +402,7 @@ func TestBudgetOverrunControl(t *testing.T) {
 	if notes != 1 {
 		t.Errorf("overrun request notified to GM: %d", notes)
 	}
-	e.upload("/api/expenses/"+oid+"/attachments", "r.pdf", pdfBytes, e.sup)
+	e.upload("/api/expenses/"+oid+"/attachments", "r.pdf", pdfBytes, e.rec)
 	if c, m := e.call("POST", "/api/expenses/"+oid+"/approve", map[string]any{}, e.fm); c != 409 || obj(m, "error")["code"] != "overrun_pending" {
 		t.Fatalf("approve before overrun: %d %v", c, m)
 	}
@@ -385,7 +420,7 @@ func TestBudgetOverrunControl(t *testing.T) {
 		t.Fatalf("approved after overrun: %v", ok)
 	}
 	// overrun rejection rejects the expense
-	o2 := e.must(201, "POST", "/api/expenses", expense(e.b1, 5_000, "confirmOverrun", true), e.sup)
+	o2 := e.must(201, "POST", "/api/expenses", expense(e.b1, 5_000, "confirmOverrun", true), e.rec)
 	rej := e.must(200, "POST", "/api/expenses/"+s(o2, "id")+"/overrun/reject", map[string]any{"comment": "Not this month"}, e.gm)
 	if s(rej, "status") != "REJECTED" || s(obj(rej, "budget"), "overrunStatus") != "REJECTED" {
 		t.Fatalf("overrun rejected: %v", rej)
@@ -464,13 +499,14 @@ func TestBudgetOverrunControl(t *testing.T) {
 func TestExpenseOfflineSync(t *testing.T) {
 	e := setup(t)
 	e.budget("PRODUCTION", map[string]int64{"FUEL": 10_000})
-	dc := e.SignInDevice(e.sup, "")
+	dc := e.SignInDevice(e.rec, "")
 	ok := apptest.SyncRecord("expense", 0, expense("", 4_000))
 	bad := apptest.SyncRecord("expense", 0, expense("", 4_000, "category", "NOPE"))
 	scope := apptest.SyncRecord("expense", 0, expense(e.b2, 4_000))
 	over := apptest.SyncRecord("expense", 0, expense("", 9_000))
 	res := dc.Push(ok, bad, scope, over)
-	want := []struct{ status, code string }{{"accepted", ""}, {"rejected", "validation"}, {"rejected", "site_scope"}, {"accepted", ""}}
+	// Finance is an HQ role (SRS §8: only Finance records expenses), so it records for any site
+	want := []struct{ status, code string }{{"accepted", ""}, {"rejected", "validation"}, {"accepted", ""}, {"accepted", ""}}
 	for i, w := range want {
 		if res.Results[i].Status != w.status || res.Results[i].ReasonCode != w.code {
 			t.Fatalf("result %d: %+v", i, res.Results[i])
@@ -494,7 +530,7 @@ func TestExpenseOfflineSync(t *testing.T) {
 	if r := dc.Push(bad); r.Results[0].Status != "accepted" {
 		t.Fatalf("resubmit: %+v", r.Results[0])
 	}
-	got := e.must(200, "GET", "/api/expenses/"+bad["uuid"].(string), nil, e.sup)
+	got := e.must(200, "GET", "/api/expenses/"+bad["uuid"].(string), nil, e.rec)
 	if s(got, "status") != "SUBMITTED" || n(got, "amount") != 3_500 || got["capturedOffline"] != true {
 		t.Fatalf("after resubmit: %v", got)
 	}
@@ -503,7 +539,7 @@ func TestExpenseOfflineSync(t *testing.T) {
 	if r := dc.Push(ok); r.Results[0].Status != "duplicate" || r.Results[0].ReasonCode != "already_accepted" {
 		t.Fatalf("later revision: %+v", r.Results[0])
 	}
-	// pull: own expenses
+	// pull: own expenses (the four accepted ones)
 	resp := dc.Do("GET", "/api/sync/pull?entities=expenses", nil)
 	var pull struct {
 		Changes []struct {
@@ -512,13 +548,15 @@ func TestExpenseOfflineSync(t *testing.T) {
 		} `json:"changes"`
 	}
 	e.Decode(resp, &pull)
-	if len(pull.Changes) != 3 {
+	if len(pull.Changes) != 4 {
 		t.Fatalf("pull: %+v", pull.Changes)
 	}
-	// a stock officer without expenses.record... operators cannot push expenses at all
-	opDev := e.SignInDevice(e.op, "")
-	if r := opDev.Push(apptest.SyncRecord("expense", 0, expense("", 1_000))); r.Results[0].ReasonCode != "permission_denied" {
-		t.Errorf("operator push: %+v", r.Results[0])
+	// supervisors (SRS §8: no Finance access) and operators cannot push expenses at all
+	for _, u := range []*testutil.TestUser{e.op, e.sup} {
+		d := e.SignInDevice(u, "")
+		if r := d.Push(apptest.SyncRecord("expense", 0, expense("", 1_000))); r.Results[0].ReasonCode != "permission_denied" {
+			t.Errorf("%s push: %+v", u.Role, r.Results[0])
+		}
 	}
 }
 
@@ -636,14 +674,12 @@ func TestFinanceDashboard(t *testing.T) {
 	if floats := obj(d, "pettyCash")["floats"].([]any); len(floats) != 1 {
 		t.Errorf("floats: %v", floats)
 	}
-	// FIN-09: production manager (budgets + sales view) sees no expense or petty cash detail
-	pm := e.must(200, "GET", "/api/finance/dashboard", nil, e.pm)
-	if pm["expenses"] != nil || pm["pettyCash"] != nil || pm["budgets"] == nil || obj(pm, "sections")["expenses"] != false {
-		t.Fatalf("pm dashboard: %v", obj(pm, "sections"))
-	}
-	pro := e.must(200, "GET", "/api/finance/dashboard", nil, e.pro) // expenses.view only
-	if pro["expenses"] == nil || pro["revenue"] != nil || pro["pettyCash"] != nil || pro["budgets"] != nil {
-		t.Errorf("procurement officer sections: %v", obj(pro, "sections"))
+	// SRS §8 Finance R: production manager, sales, procurement and the administrator read the whole dashboard
+	for _, u := range []*testutil.TestUser{e.pm, e.sm, e.pro, e.sys} {
+		d := e.must(200, "GET", "/api/finance/dashboard", nil, u)
+		if sec := obj(d, "sections"); sec["expenses"] != true || sec["pettyCash"] != true || sec["budgets"] != true || sec["income"] != true {
+			t.Errorf("%s sections: %v", u.Role, sec)
+		}
 	}
 	for _, u := range []*testutil.TestUser{e.sup, e.op} {
 		if c := e.Do("GET", "/api/finance/dashboard", nil, u).StatusCode; c != 403 {
@@ -658,4 +694,15 @@ func TestFinanceDashboard(t *testing.T) {
 	if r.StatusCode != 200 || !bytes.HasPrefix(b, []byte("%PDF")) {
 		t.Errorf("pdf: %d", r.StatusCode)
 	}
+}
+
+func arr(m map[string]any, k string) []map[string]any {
+	xs, _ := m[k].([]any)
+	out := make([]map[string]any, 0, len(xs))
+	for _, x := range xs {
+		if o, ok := x.(map[string]any); ok {
+			out = append(out, o)
+		}
+	}
+	return out
 }

@@ -95,8 +95,8 @@ func TestSuperAdminRules(t *testing.T) {
 		t.Fatal("welcome email not sent")
 	}
 
-	// normal user creation by GM; plant-scoped roles need a plant
-	r = e.Do("POST", "/api/users", map[string]any{"email": "sup@x.test", "name": "Sup", "role": "SUPERVISOR"}, gm)
+	// normal user creation by the System Administrator (SRS §8: only Admin C R U on users); plant-scoped roles need a plant
+	r = e.Do("POST", "/api/users", map[string]any{"email": "sup@x.test", "name": "Sup", "role": "SUPERVISOR"}, sysadmin)
 	_, _, f := e.ErrorOf(r)
 	if r.StatusCode != 400 || f["plantId"] != "Supervisors must be assigned to a plant" {
 		t.Fatalf("plant rule: %d %v", r.StatusCode, f)
@@ -333,7 +333,8 @@ func TestI18nOverrides(t *testing.T) {
 func TestMasterdataLookupsSettingsAudit(t *testing.T) {
 	e := apptest.New(t)
 	gm := e.User(auth.RoleGeneralManager)
-	sup := e.User(auth.RoleSupervisor) // BTN-1
+	sys := e.User(auth.RoleSystemAdmin) // SRS §8: master data and settings are Admin C R U
+	sup := e.User(auth.RoleSupervisor)  // BTN-1
 	op := e.User(auth.RoleOperator)
 
 	// lookups: shape, plant scoping, ETag/304, no SUPER_ADMIN role for non-supers
@@ -361,18 +362,18 @@ func TestMasterdataLookupsSettingsAudit(t *testing.T) {
 		t.Fatalf("operator write: %d", r.StatusCode)
 	}
 	// create product, normalisation + validation
-	r = e.Do("POST", "/api/masterdata/products", map[string]any{"code": " tst1 ", "name": " Test Block ", "defaultPrice": "1750"}, gm)
+	r = e.Do("POST", "/api/masterdata/products", map[string]any{"code": " tst1 ", "name": " Test Block ", "defaultPrice": "1750"}, sys)
 	p := e.Map(r)
 	if r.StatusCode != 201 || p["code"] != "TST1" || p["name"] != "Test Block" || p["unit"] != "Pcs" || p["defaultPrice"].(float64) != 1750 || p["isActive"] != true {
 		t.Fatalf("create product: %d %v", r.StatusCode, p)
 	}
-	r = e.Do("POST", "/api/masterdata/products", map[string]any{"code": "", "name": "", "defaultPrice": 1.5}, gm)
+	r = e.Do("POST", "/api/masterdata/products", map[string]any{"code": "", "name": "", "defaultPrice": 1.5}, sys)
 	_, _, f := e.ErrorOf(r)
 	if r.StatusCode != 400 || f["code"] != "Required" || f["name"] != "Required" || f["defaultPrice"] != "Whole francs only" {
 		t.Fatalf("validation: %d %v", r.StatusCode, f)
 	}
 	// duplicate -> 409 with the Prisma-compatible message
-	r = e.Do("POST", "/api/masterdata/products", map[string]any{"code": "TST1", "name": "Dup", "defaultPrice": 1}, gm)
+	r = e.Do("POST", "/api/masterdata/products", map[string]any{"code": "TST1", "name": "Dup", "defaultPrice": 1}, sys)
 	code, msg, _ := e.ErrorOf(r)
 	if r.StatusCode != 409 || code != "conflict" || msg != "A record with the same code already exists" {
 		t.Fatalf("dup: %d %s %s", r.StatusCode, code, msg)
@@ -382,11 +383,11 @@ func TestMasterdataLookupsSettingsAudit(t *testing.T) {
 		t.Fatalf("lookups stale after write: %d products", n)
 	}
 	// patch + material decimal as string + customer normalisation
-	r = e.Do("PATCH", "/api/masterdata/products/"+p["id"].(string), map[string]any{"defaultPrice": 1800}, gm)
+	r = e.Do("PATCH", "/api/masterdata/products/"+p["id"].(string), map[string]any{"defaultPrice": 1800}, sys)
 	if p2 := e.Map(r); r.StatusCode != 200 || p2["defaultPrice"].(float64) != 1800 || p2["name"] != "Test Block" {
 		t.Fatalf("patch: %d %v", r.StatusCode, p2)
 	}
-	if r := e.Do("PATCH", "/api/masterdata/products/nope", map[string]any{"name": "x"}, gm); r.StatusCode != 404 {
+	if r := e.Do("PATCH", "/api/masterdata/products/nope", map[string]any{"name": "x"}, sys); r.StatusCode != 404 {
 		t.Fatalf("patch 404: %d", r.StatusCode)
 	}
 	mats := e.Map(e.Do("GET", "/api/masterdata/materials", nil, gm))["items"].([]any)
@@ -408,7 +409,10 @@ func TestMasterdataLookupsSettingsAudit(t *testing.T) {
 		t.Fatalf("GM cannot manage settings: %d", r.StatusCode)
 	}
 	md := e.User(auth.RoleManagingDirector)
-	r = e.Do("PUT", "/api/settings", map[string]any{"company": map[string]any{"tin": "123456789"}, "approvals": map[string]any{"pettyCashApprovalLimit": "50000"}}, md)
+	if r := e.Do("PUT", "/api/settings", map[string]any{"company": map[string]any{"name": "X"}}, md); r.StatusCode != 403 {
+		t.Fatalf("MD reads settings only (SRS §8 Top Mgt R): %d", r.StatusCode)
+	}
+	r = e.Do("PUT", "/api/settings", map[string]any{"company": map[string]any{"tin": "123456789"}, "approvals": map[string]any{"pettyCashApprovalLimit": "50000"}}, sys)
 	s = e.Map(r)
 	if r.StatusCode != 200 || s["company"].(map[string]any)["tin"] != "123456789" || s["approvals"].(map[string]any)["pettyCashApprovalLimit"].(float64) != 50000 || s["company"].(map[string]any)["name"] != "BTN Manufacturing" {
 		t.Fatalf("settings update: %d %v", r.StatusCode, s)
@@ -416,7 +420,7 @@ func TestMasterdataLookupsSettingsAudit(t *testing.T) {
 	if s2 := e.Map(e.Do("GET", "/api/settings", nil, op)); s2["company"].(map[string]any)["tin"] != "123456789" {
 		t.Fatalf("settings cache not invalidated: %v", s2)
 	}
-	r = e.Do("PUT", "/api/settings", map[string]any{"approvals": map[string]any{"maxDiscountPercent": 101}}, md)
+	r = e.Do("PUT", "/api/settings", map[string]any{"approvals": map[string]any{"maxDiscountPercent": 101}}, sys)
 	if _, _, f := e.ErrorOf(r); r.StatusCode != 400 || f["approvals.maxDiscountPercent"] == "" {
 		t.Fatalf("settings validation: %d %v", r.StatusCode, f)
 	}
@@ -451,7 +455,7 @@ func TestMasterdataLookupsSettingsAudit(t *testing.T) {
 
 func TestUsersCRUD(t *testing.T) {
 	e := apptest.New(t)
-	gm := e.User(auth.RoleGeneralManager, testutil.UserOpts{Name: "Alpha GM"})
+	gm := e.User(auth.RoleSystemAdmin, testutil.UserOpts{Name: "Alpha GM"}) // SRS §8: users are managed by the System Administrator
 	var plant string
 	_ = e.Pool.QueryRow(t.Context(), `SELECT id FROM "Plant" WHERE code='BTN-2'`).Scan(&plant)
 	r := e.Do("POST", "/api/users", map[string]any{"email": " New.User@X.test ", "name": "New User", "role": "SUPERVISOR", "plantId": plant, "phone": "+250 700"}, gm)

@@ -134,7 +134,7 @@ func TestOpenAPIDocumentCoversEveryRoute(t *testing.T) {
 func TestAuditImmutableAndDevice(t *testing.T) {
 	e := apptest.New(t)
 	ctx := context.Background()
-	gm := e.User(auth.RoleManagingDirector)
+	gm := e.User(auth.RoleSystemAdmin) // settings.manage: System Administrator only (SRS §8)
 	r := e.Do("PUT", "/api/v1/settings", map[string]any{"company": map[string]any{"phone": "0788000000"}}, gm,
 		"X-Device-Id", "dev-test-123", "User-Agent", "BTN-Test/1.0")
 	if r.StatusCode != 200 {

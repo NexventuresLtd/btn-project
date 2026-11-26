@@ -55,43 +55,43 @@ New roles: `STOCK_OFFICER` ("Stock / Warehouse Officer"), `PROCUREMENT_OFFICER` 
 SUPER_ADMIN keeps all permissions. Existing permissions stay. New permission → roles (per SRS §8, PM = Production
 Manager, GM/MD = top management, FM = Finance Manager, SA = System Admin, SUP/LEAD = site-scoped):
 
-| Permission | Roles |
-|---|---|
-| `admin.monitor` (jobs, health, errors, sync monitor, devices) | SA |
-| `data.export` (bulk CSV/JSON export, ADM-05) | SA, MD, GM, OPERATIONS_ADVISOR, FM |
-| `devices.manage` (revoke any user's devices) | SA, GM, MD |
-| `reports.schedule` (scheduled report recipients) | SA, GM, MD |
-| `sync.resolve` (resolve conflicts / negative-stock flags) | PM, SUP (own site), GM |
-| `production.targets` | PM, GM |
-| `production.close` (close a day; approve late corrections) | PM, GM |
-| `stock.record` (receipts/issues/adjust requests at a location) | STOCK_OFFICER, SUP, PM |
-| `transfers.view` | PM, STOCK_OFFICER, SUP, LEAD, GM, MD, OPERATIONS_ADVISOR, FM, SALES_MANAGER, PROCUREMENT_OFFICER |
-| `transfers.request` | SUP, STOCK_OFFICER, PM |
-| `transfers.approve` | PM, GM |
-| `transfers.dispatch`, `transfers.receive` | STOCK_OFFICER, SUP, PM |
-| `stockcount.record` | STOCK_OFFICER, SUP, PM |
-| `stockcount.approve` | PM, GM |
-| `sales.approve` (value-based order approval, amendments) | SALES_MANAGER, GM, MD |
-| `attendance.approve` (lock attendance, approve corrections) | PM, GM |
-| `wages.view` (per-worker payment history) | FM, PM, GM, MD, OPERATIONS_ADVISOR |
-| `expenses.view` | FM, GM, MD, OPERATIONS_ADVISOR, PROCUREMENT_OFFICER |
-| `expenses.record` | FM, PM, SUP (own site), STOCK_OFFICER |
-| `expenses.approve` | FM, GM, MD |
-| `income.view` (income records, money in — FIN-04/FIN-09) | FM, GM, MD, OPERATIONS_ADVISOR |
-| `income.record` (record income; SALES_MANAGER records the payments customers made on orders) | FM, SALES_MANAGER |
-| `income.verify` (verify / void income records) | FM |
-| `payroll.pay` — label **"Record wage payments"** (records payments made outside the system; never pays) | FM |
-| `pettycash.custodian` (hold a float, request top-ups, reconcile) | FM, SUP, PM |
-| `budgets.view` | FM, GM, MD, OPERATIONS_ADVISOR, PM |
-| `budgets.manage` | FM |
-| `budgets.approve` (overrun approval) | GM, MD |
-| `procurement.view` | PM, FM, PROCUREMENT_OFFICER, GM, MD, OPERATIONS_ADVISOR, STOCK_OFFICER |
-| `procurement.request` | SUP, PM, STOCK_OFFICER, PROCUREMENT_OFFICER, FM |
-| `procurement.approve` | PM, FM, GM, MD (level decided by approval thresholds) |
-| `procurement.manage` (suppliers, purchase orders) | PROCUREMENT_OFFICER, FM |
-| `procurement.receive` | STOCK_OFFICER, PROCUREMENT_OFFICER, SUP, PM |
-Also grant existing view permissions to the two new roles where §8 gives them R (stock.view, materials.view,
-production.view, sales.view for STOCK_OFFICER; reports.view for both).
+**Aligned cell by cell with SRS §8 (audit 9941a63 fix).** `auth.TestSRSRoleMatrix` encodes the §8 table and maps every
+permission to the §8 cell letters that grant it; it fails on any over-grant and on any §8 letter no permission backs.
+Read access: SYSTEM_ADMIN reads every business module; Top management (MD, GM, OA) reads everything incl. users
+(`users.view`); OPERATIONS_ADVISOR never approves.
+
+| Permission | Roles | §8 cell |
+|---|---|---|
+| `production.view` | MD, GM, OA, PM, FM, SUP, LEAD, OP, STO, SA | Production R (Sales, Proc. none) |
+| `production.record` / `.approve` / `.targets` / `.close` | PM, SUP, LEAD / PM / PM / PM | Sup. C U, PM U A |
+| `stock.view`, `materials.view`, `transfers.view` | MD, GM, OA, PM, SM, FM, SUP, LEAD, STO, PRO, SA | Stock R |
+| `stock.record`, `materials.record`, `transfers.request/dispatch/receive`, `stockcount.record` | STO, SUP | Stock C U, Sup. C |
+| `stock.adjust`, `materials.adjust`, `transfers.approve`, `stockcount.approve` | PM | PM A |
+| `sales.view` (orders and deliveries) | MD, GM, OA, PM, SM, FM, SUP, STO, SA | Orders R, Delivery R |
+| `sales.create`, `sales.confirm`, `customers.manage` | SM | Sales C R U A |
+| `sales.approve`, `sales.cancel` (approve a cancellation, never the requester) | SM, PM | Orders A |
+| `deliveries.create` | SM, STO | Delivery C R U |
+| `payments.record` | FM | Finance C |
+| `expenses.view`, `income.view`, `budgets.view`, `pettycash.view` | FM, PM, SM, PRO, MD, GM, OA, SA | Finance R |
+| `expenses.record`, `pettycash.record`, `pettycash.custodian`, `budgets.manage`, `income.verify` | FM | Finance C R U A |
+| `income.record` | FM, SM (order payments, ORD-06) | Finance C; Orders C |
+| `expenses.approve` / `budgets.approve`, `pettycash.approve` | FM, GM, MD / GM, MD | Finance A, Top Mgt A |
+| `procurement.view` | PM, FM, PRO, MD, GM, OA, STO, SUP, SA | Procurement R |
+| `procurement.request` / `.manage` / `.receive` | SUP, PRO / PRO / STO, PRO, SUP | Sup. C, Proc. C U; receipts are stock C |
+| `procurement.approve` | PM, FM, GM, MD | Procurement A |
+| `attendance.view` / `.record` / `.approve` | MD, GM, OA, PM, FM, SUP, LEAD, SA / SUP, LEAD / PM | Sup. C R U (att.), PM A |
+| `payroll.view`, `wages.view` | MD, GM, OA, PM, FM, SA | Wages R |
+| `payroll.prepare`, `payroll.verify`, `payroll.pay`, `workers.manage` | FM | Fin. R U |
+| `payroll.check` (§7.4 review) | PM only | PM A |
+| `payroll.authorize` | GM, MD | wages are PAYROLL expenses: Finance "Top Mgt A" (stated deviation from the wages row) |
+| `reports.view` | every role except LEAD/OP | Reports R |
+| `users.view`, `audit.view` | SA, MD, GM, OA | Top Mgt R |
+| `users.manage`, `settings.manage`, `masterdata.manage`, `devices.manage`, `reports.schedule`, `admin.monitor` | SA | Admin C R U |
+| `data.export` | SA, MD, GM, OA, FM | ADM-05 authorised users (FM for FIN-07 accounting) |
+| `sync.resolve` | PM, SUP (own site) | §5.5 |
+
+Default approval thresholds follow the same matrix: order level 2 (≥ 20 M RWF) is the Production Manager, stock
+adjustments are approved by the Production Manager only (migration 03200 updates the shipped rows).
 
 ## Shared frameworks (phase 1 builds; phase 2 uses). Document final signatures in `backend/README.md` § "Shared services".
 
@@ -286,7 +286,7 @@ changed and the pull restarted from zero — clear local copies of those entitie
 **Roles** (migration 01300): `STOCK_OFFICER` (Stock / Warehouse Officer — optionally site-scoped: pinned when a
 plant is assigned, all locations otherwise), `PROCUREMENT_OFFICER` (HQ, never scoped). Labels in en/am/rw/fr
 (backend `role.*`, frontend `enums.role.*`); Users admin offers both (site optional for the stock officer).
-**Permissions added to `auth.Matrix`** (grants exactly as the table above; pinned by `auth.TestNewRoleMatrix`):
+**Permissions added to `auth.Matrix`** (grants exactly as the table above; pinned by `auth.TestSRSRoleMatrix`):
 `admin.monitor, data.export, devices.manage, reports.schedule, sync.resolve, production.targets, production.close,
 stock.record, transfers.view, transfers.request, transfers.approve, transfers.dispatch, transfers.receive,
 stockcount.record, stockcount.approve, sales.approve, attendance.approve, wages.view, expenses.view,

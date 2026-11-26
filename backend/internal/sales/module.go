@@ -221,9 +221,10 @@ func (h *handler) meta(c *fiber.Ctx) error {
 		"statuses": OrderStatuses, "paymentTerms": terms, "deliveryZones": zones, "clientTypes": types, "transportModes": []string{TransportClient, TransportBTN}})
 }
 
-// canApproveDiscount: the General Manager (and the Super Administrator, who holds every permission) confirms below-limit prices.
+// canApproveDiscount: the Production Manager (order approver under SRS §8, besides Sales) and the Super Administrator
+// confirm below-limit prices.
 func canApproveDiscount(u *auth.User) bool {
-	return u.Role == auth.RoleGeneralManager || u.IsSuperAdmin()
+	return u.Role == auth.RoleProductionManager || u.IsSuperAdmin()
 }
 
 // ───────────────────────────── customers & receivables ─────────────────────────────

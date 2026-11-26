@@ -2,6 +2,7 @@ package refdata_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"btn-ops/internal/app/apptest"
@@ -47,7 +48,7 @@ func TestSeededKindsAndPublicRead(t *testing.T) {
 
 func TestCRUDCachingETagAndPermissions(t *testing.T) {
 	e := apptest.New(t)
-	pm := e.User(auth.RoleProductionManager) // masterdata.manage
+	pm := e.User(auth.RoleSystemAdmin) // masterdata.manage (SRS §8: Admin)
 	sup := e.User(auth.RoleSupervisor)
 
 	r := e.Do("GET", "/api/refdata/defect_reason", nil, sup)
@@ -147,7 +148,7 @@ func TestCRUDCachingETagAndPermissions(t *testing.T) {
 
 func TestApprovalThresholdsAPIAndLevels(t *testing.T) {
 	e := apptest.New(t)
-	md := e.User(auth.RoleManagingDirector) // settings.manage
+	md := e.User(auth.RoleSystemAdmin) // settings.manage (SRS §8: Admin)
 	gm := e.User(auth.RoleGeneralManager)
 	ctx := context.Background()
 
@@ -195,8 +196,45 @@ func TestApprovalThresholdsAPIAndLevels(t *testing.T) {
 	if lv, _ := approvals.Levels(ctx, approvals.Transfer, 5_000_000); len(lv) != 1 {
 		t.Fatalf("inactive threshold must not apply: %+v", lv)
 	}
-	if r := e.Do("DELETE", "/api/approval-thresholds/"+th["id"].(string), nil, md); r.StatusCode != 200 {
-		t.Fatalf("delete: %d", r.StatusCode)
+	// SRS §6.3: a threshold is retired with a reason, never deleted
+	if r := e.Do("DELETE", "/api/approval-thresholds/"+th["id"].(string), nil, md); r.StatusCode != 400 {
+		t.Fatalf("retire without reason: %d", r.StatusCode)
+	}
+	if r := e.Do("DELETE", "/api/approval-thresholds/"+th["id"].(string), map[string]any{"reason": "TEST replaced by a new rule"}, md); r.StatusCode != 200 {
+		t.Fatalf("retire: %d", r.StatusCode)
+	}
+	if r := e.Do("DELETE", "/api/approval-thresholds/"+th["id"].(string), map[string]any{"reason": "again"}, md); r.StatusCode != 404 {
+		t.Fatalf("retire twice: %d", r.StatusCode)
+	}
+	var retired int
+	_ = e.Pool.QueryRow(ctx, `SELECT count(*) FROM approval_threshold WHERE id=$1 AND removed_at IS NOT NULL AND removed_reason='TEST replaced by a new rule' AND NOT is_active`, th["id"]).Scan(&retired)
+	if retired != 1 {
+		t.Fatal("retired row kept with its reason")
+	}
+	if lv, _ := approvals.Levels(ctx, approvals.Transfer, 5_000_000); len(lv) != 1 {
+		t.Fatalf("retired threshold must not apply: %+v", lv)
+	}
+	listed := func(q string) bool {
+		var out struct{ Items []approvals.Threshold }
+		r := e.Do("GET", "/api/approval-thresholds"+q, nil, md)
+		_ = json.NewDecoder(r.Body).Decode(&out)
+		for _, x := range out.Items {
+			if x.ID == th["id"].(string) {
+				return x.RetiredAt != nil && x.RetiredReason != nil
+			}
+		}
+		return false
+	}
+	if listed("") || !listed("?retired=1") {
+		t.Fatal("retired rows only in the history list")
+	}
+	var audits int
+	_ = e.Pool.QueryRow(ctx, `SELECT count(*) FROM "AuditLog" WHERE action='approvals.threshold.retire' AND "entityId"=$1`, th["id"]).Scan(&audits)
+	if audits != 1 {
+		t.Fatalf("retire audit: %d", audits)
+	}
+	if _, err := e.Pool.Exec(ctx, `DELETE FROM approval_threshold WHERE id=$1`, th["id"]); err == nil {
+		t.Fatal("raw delete must be refused by the database")
 	}
 	if r := e.Do("GET", "/api/approvals/levels?domain=bogus&amount=1", nil, gm); r.StatusCode != 400 {
 		t.Fatalf("bad domain: %d", r.StatusCode)
@@ -268,7 +306,7 @@ func TestHQSeedIdempotent(t *testing.T) {
 
 func TestLocationsKindAndSiteOnlyModules(t *testing.T) {
 	e := apptest.New(t)
-	pm := e.User(auth.RoleProductionManager)
+	pm := e.User(auth.RoleSystemAdmin) // masterdata.manage
 	r := e.Do("POST", "/api/masterdata/plants", map[string]any{"code": "wh-1", "name": "Central warehouse", "kind": "WAREHOUSE"}, pm)
 	wh := e.Map(r)
 	if r.StatusCode != 201 || wh["kind"] != "WAREHOUSE" {
@@ -292,11 +330,12 @@ func TestLocationsKindAndSiteOnlyModules(t *testing.T) {
 	if kinds["HQ"] != "HQ" || kinds["WH-1"] != "WAREHOUSE" || kinds["BTN-1"] != "SITE" {
 		t.Fatalf("stats kinds %v", kinds)
 	}
-	// production reports cannot be recorded at a warehouse; summary lists only sites
+	// production reports cannot be recorded at a warehouse (recorded by the Production Manager); summary lists only sites
+	prod := e.User(auth.RoleProductionManager)
 	var hb20 string
 	_ = e.Pool.QueryRow(context.Background(), `SELECT id FROM "Product" WHERE code='HB20'`).Scan(&hb20)
 	r = e.Do("POST", "/api/production/reports", map[string]any{"plantId": wh["id"], "date": "2026-11-20", "shift": "DAY",
-		"lines": []map[string]any{{"productId": hb20, "targetQty": 100, "producedQty": 90}}}, pm)
+		"lines": []map[string]any{{"productId": hb20, "targetQty": 100, "producedQty": 90}}}, prod)
 	if _, _, f := e.ErrorOf(r); r.StatusCode != 400 || f["plantId"] == "" {
 		t.Fatalf("production at warehouse: %d %v", r.StatusCode, f)
 	}

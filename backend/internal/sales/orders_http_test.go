@@ -27,7 +27,7 @@ func TestClientDatabaseDuplicatesAndHistory(t *testing.T) {
 		"address": "KK 15 Ave, Kigali", "notes": "TEST key account", "paymentTerm": "NET30",
 		"contacts": []M{{"name": "Jean Uwimana", "role": "Site engineer", "phone": "0788000111", "isPrimary": true}, {"name": "Aline", "email": "aline@kagame.rw"}}}
 	// permission: a supervisor cannot manage clients
-	if r := e.Do("POST", "/api/sales/customers", body, f.sup1); r.StatusCode != 403 {
+	if r := e.Do("POST", "/api/sales/customers", body, f.disp1); r.StatusCode != 403 {
 		t.Fatalf("supervisor create client: %d", r.StatusCode)
 	}
 	// validation
@@ -121,7 +121,7 @@ func TestClientDatabaseDuplicatesAndHistory(t *testing.T) {
 	if cm["kind"] != "CALL" || cm["by"].(M)["name"] != f.sm.Name || cm["saleNumber"] != s1["number"] {
 		t.Errorf("comm: %v", cm)
 	}
-	status(t, e, "POST", "/api/sales/customers/"+cid+"/communications", M{"kind": "MEETING", "subject": "TEST site visit"}, f.gm, 201)
+	status(t, e, "POST", "/api/sales/customers/"+cid+"/communications", M{"kind": "MEETING", "subject": "TEST site visit"}, f.sm, 201)
 	cl := status(t, e, "GET", "/api/sales/customers/"+cid+"/communications?q=price", nil, f.sm, 200)
 	if len(cl["items"].([]any)) != 1 {
 		t.Errorf("comm search: %v", cl)
@@ -140,8 +140,9 @@ func TestClientDatabaseDuplicatesAndHistory(t *testing.T) {
 	if num(prof["summary"].(M)["orders"]) != 2 || num(prof["summary"].(M)["communications"]) != 2 {
 		t.Errorf("profile summary: %v", prof["summary"])
 	}
-	if r := e.Do("GET", "/api/sales/customers/"+cid+"/profile", nil, f.sup1); r.StatusCode != 403 {
-		t.Errorf("supervisor profile: %d", r.StatusCode)
+	status(t, e, "GET", "/api/sales/customers/"+cid+"/profile", nil, f.disp1, 200) // SRS §8: Stock reads clients & orders
+	if r := e.Do("GET", "/api/sales/customers/"+cid+"/profile", nil, f.op); r.StatusCode != 403 {
+		t.Errorf("operator profile: %d", r.StatusCode)
 	}
 	if f.count(`SELECT count(*) FROM "AuditLog" WHERE action IN ('sales.customer.create','sales.customer.update','sales.customer.communication')`) < 6 {
 		t.Error("client audit rows")
@@ -187,16 +188,16 @@ func TestOrderLifecycleChargesDeliveryAndPayments(t *testing.T) {
 	if r := e.Do("POST", "/api/sales/delivery-charges", M{"name": "x", "method": "FIXED", "amount": 1}, f.sm); r.StatusCode != 403 {
 		t.Fatalf("sm creates rule: %d", r.StatusCode)
 	}
-	if r := e.Do("POST", "/api/sales/delivery-charges", M{"name": "Zone", "method": "ZONE", "amount": 1}, f.gm); r.StatusCode != 400 {
+	if r := e.Do("POST", "/api/sales/delivery-charges", M{"name": "Zone", "method": "ZONE", "amount": 1}, f.adm); r.StatusCode != 400 {
 		t.Fatalf("zone rule without zone: %d", r.StatusCode)
 	}
-	if r := e.Do("POST", "/api/sales/delivery-charges", M{"name": "Band", "method": "DISTANCE", "minKm": 20, "maxKm": 10, "amount": 1}, f.gm); r.StatusCode != 400 {
+	if r := e.Do("POST", "/api/sales/delivery-charges", M{"name": "Band", "method": "DISTANCE", "minKm": 20, "maxKm": 10, "amount": 1}, f.adm); r.StatusCode != 400 {
 		t.Fatalf("decreasing band: %d", r.StatusCode)
 	}
-	fixed := status(t, e, "POST", "/api/sales/delivery-charges", M{"name": "Standard delivery", "method": "FIXED", "amount": 30000}, f.gm, 201)["rule"].(M)
-	status(t, e, "POST", "/api/sales/delivery-charges", M{"name": "Kigali", "method": "ZONE", "zone": "KIGALI", "amount": 20000}, f.gm, 201)
-	band := status(t, e, "POST", "/api/sales/delivery-charges", M{"name": "Far", "method": "DISTANCE", "minKm": 50, "amount": 90000}, f.gm, 201)["rule"].(M)
-	status(t, e, "PATCH", "/api/sales/delivery-charges/"+band["id"].(string), M{"amount": 95000}, f.gm, 200)
+	fixed := status(t, e, "POST", "/api/sales/delivery-charges", M{"name": "Standard delivery", "method": "FIXED", "amount": 30000}, f.adm, 201)["rule"].(M)
+	status(t, e, "POST", "/api/sales/delivery-charges", M{"name": "Kigali", "method": "ZONE", "zone": "KIGALI", "amount": 20000}, f.adm, 201)
+	band := status(t, e, "POST", "/api/sales/delivery-charges", M{"name": "Far", "method": "DISTANCE", "minKm": 50, "amount": 90000}, f.adm, 201)["rule"].(M)
+	status(t, e, "PATCH", "/api/sales/delivery-charges/"+band["id"].(string), M{"amount": 95000}, f.adm, 200)
 	if q := status(t, e, "GET", "/api/sales/delivery-charges/quote?zone=OUTSIDE_KIGALI&km=60", nil, f.sm, 200); num(q["amount"]) != 95000 {
 		t.Errorf("quote: %v", q)
 	}
@@ -277,7 +278,7 @@ func TestOrderLifecycleChargesDeliveryAndPayments(t *testing.T) {
 	// ORD-05: mark one line in production → IN_PRODUCTION; ready; dispatch only when ready
 	lines := cs["lines"].([]any)
 	la, lb := lines[0].(M)["id"].(string), lines[1].(M)["id"].(string)
-	if r := e.Do("POST", "/api/sales/"+id+"/fulfilment", M{"lines": []M{{"saleLineId": la, "fulfilment": "PRODUCTION"}}}, f.sup1); r.StatusCode != 403 {
+	if r := e.Do("POST", "/api/sales/"+id+"/fulfilment", M{"lines": []M{{"saleLineId": la, "fulfilment": "PRODUCTION"}}}, f.disp1); r.StatusCode != 403 {
 		t.Errorf("supervisor fulfilment: %d", r.StatusCode)
 	}
 	if r := e.Do("POST", "/api/sales/"+id+"/fulfilment", M{"lines": []M{{"saleLineId": "zzz", "fulfilment": "PRODUCTION"}}}, f.sm); r.StatusCode != 400 {
@@ -289,31 +290,31 @@ func TestOrderLifecycleChargesDeliveryAndPayments(t *testing.T) {
 	}
 	f.addStock(f.plant1, f.hb20, 100, f.today)
 	f.addStock(f.plant1, f.hb15, 50, f.today)
-	rd := status(t, e, "POST", "/api/sales/"+id+"/ready", M{}, f.sup1, 200)["sale"].(M)
+	rd := status(t, e, "POST", "/api/sales/"+id+"/ready", M{}, f.disp1, 200)["sale"].(M)
 	if rd["status"] != "READY" {
 		t.Fatalf("ready: %v", rd["status"])
 	}
 	// DEL-03/04 partial dispatch with destination; stock reduced at the dispatching location
 	d1 := status(t, e, "POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "TEST-DN-1", "date": f.today, "vehicle": "RAD 1", "driver": "TEST d",
-		"lines": []M{{"saleLineId": la, "quantity": 60}}}, f.sup1, 201)
+		"lines": []M{{"saleLineId": la, "quantity": 60}}}, f.disp1, 201)
 	s1 := d1["sale"].(M)
 	if s1["status"] != "DISPATCHED" || f.stock(f.plant1, f.hb20) != 40 || s1["deliveries"].([]any)[0].(M)["destination"] != "Kicukiro site, KK 500 St" ||
 		s1["deliveries"].([]any)[0].(M)["transportMode"] != "BTN" {
 		t.Fatalf("dispatch 1: %v %d %v", s1["status"], f.stock(f.plant1, f.hb20), s1["deliveries"])
 	}
 	d2 := status(t, e, "POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "TEST-DN-2", "date": f.today, "destination": "Gate B",
-		"lines": []M{{"saleLineId": la, "quantity": 40}, {"saleLineId": lb, "quantity": 50}}}, f.sup1, 201)
+		"lines": []M{{"saleLineId": la, "quantity": 40}, {"saleLineId": lb, "quantity": 50}}}, f.disp1, 201)
 	dn1, dn2 := d1["deliveryId"].(string), d2["deliveryId"].(string)
 	if d2["sale"].(M)["status"] != "DISPATCHED" {
 		t.Fatal("all shipped but not received: still dispatched")
 	}
 	// DEL-05: delivery confirmation with photo (multipart) — type sniffed, ≤ 5 MB
 	mb, ct := multipartBody(t, map[string]string{"receivedBy": "TEST site foreman", "note": "2 broken"}, []byte("<html>not an image</html>"), "x.jpg")
-	if r := e.Do("POST", "/api/sales/deliveries/"+dn1+"/delivered", mb, f.sup1, "Content-Type", ct); r.StatusCode != 400 {
+	if r := e.Do("POST", "/api/sales/deliveries/"+dn1+"/delivered", mb, f.disp1, "Content-Type", ct); r.StatusCode != 400 {
 		t.Errorf("fake image: %d", r.StatusCode)
 	}
 	mb, ct = multipartBody(t, map[string]string{"receivedBy": "TEST site foreman", "note": "2 broken"}, pngBytes(t), "pod.png")
-	if r := e.Do("POST", "/api/sales/deliveries/"+dn1+"/delivered", mb, f.sup1, "Content-Type", ct); r.StatusCode != 200 {
+	if r := e.Do("POST", "/api/sales/deliveries/"+dn1+"/delivered", mb, f.disp1, "Content-Type", ct); r.StatusCode != 200 {
 		t.Fatalf("delivered with photo: %d %s", r.StatusCode, e.Text(r))
 	}
 	ph := e.Do("GET", "/api/sales/deliveries/"+dn1+"/photo", nil, f.sm)
@@ -321,16 +322,16 @@ func TestOrderLifecycleChargesDeliveryAndPayments(t *testing.T) {
 	if ph.StatusCode != 200 || ph.Header.Get("Content-Type") != "image/png" || ph.Header.Get("X-Content-Type-Options") != "nosniff" || len(pb) < 100 {
 		t.Errorf("photo: %d %s", ph.StatusCode, ph.Header.Get("Content-Type"))
 	}
-	if th := e.Do("GET", "/api/sales/deliveries/"+dn1+"/photo/thumb", nil, f.sup1); th.StatusCode != 200 || th.Header.Get("Content-Type") != "image/jpeg" {
+	if th := e.Do("GET", "/api/sales/deliveries/"+dn1+"/photo/thumb", nil, f.disp1); th.StatusCode != 200 || th.Header.Get("Content-Type") != "image/jpeg" {
 		t.Errorf("thumb: %d", th.StatusCode)
 	}
-	if th := e.Do("GET", "/api/sales/deliveries/"+dn1+"/photo", nil, f.sup2); th.StatusCode != 403 {
+	if th := e.Do("GET", "/api/sales/deliveries/"+dn1+"/photo", nil, f.disp2); th.StatusCode != 403 {
 		t.Errorf("photo scope: %d", th.StatusCode)
 	}
 	if th := e.Do("GET", "/api/sales/deliveries/"+dn2+"/photo", nil, f.sm); th.StatusCode != 404 {
 		t.Errorf("no photo: %d", th.StatusCode)
 	}
-	dv := status(t, e, "POST", "/api/sales/deliveries/"+dn2+"/delivered", M{"receivedBy": "TEST foreman"}, f.sup1, 200)
+	dv := status(t, e, "POST", "/api/sales/deliveries/"+dn2+"/delivered", M{"receivedBy": "TEST foreman"}, f.disp1, 200)
 	_ = dv
 	g := status(t, e, "GET", "/api/sales/"+id, nil, f.sm, 200)["sale"].(M)
 	if g["status"] != "DELIVERED" || g["deliveries"].([]any)[0].(M)["hasPhoto"] != true || g["deliveries"].([]any)[0].(M)["deliveryNote"] != "2 broken" || g["dueDate"] != f.today {
@@ -347,7 +348,7 @@ func TestOrderLifecycleChargesDeliveryAndPayments(t *testing.T) {
 	if fin["status"] != "CLOSED" || fin["payments"].([]any)[1].(M)["kind"] != "BALANCE" || fin["closedAt"] == nil {
 		t.Fatalf("closed: %v", fin["status"])
 	}
-	if r := e.Do("POST", "/api/sales/deliveries/"+dn2+"/cancel", M{"reason": "x"}, f.gm); r.StatusCode != 409 {
+	if r := e.Do("POST", "/api/sales/deliveries/"+dn2+"/cancel", M{"reason": "x"}, f.pm); r.StatusCode != 409 {
 		t.Errorf("closed order DN cancel: %d", r.StatusCode)
 	}
 	hist := fin["history"].([]any)
@@ -378,13 +379,14 @@ func TestOrderLifecycleChargesDeliveryAndPayments(t *testing.T) {
 func TestValueApprovalsAndCancellation(t *testing.T) {
 	f := setup(t)
 	e := f.e
-	md := e.User(auth.RoleManagingDirector)
+	md := e.User(auth.RoleSalesManager) // a second sales manager (SRS §8: order approvers are Sales and the PM)
+	top := e.User(auth.RoleManagingDirector)
 	// 6 000 000 RWF: level 1 (sales.approve) — the sales manager's own authority covers it
 	mid := f.create(f.sm, f.saleBody(true, line(f.hb20, 4000, 1500)))
 	if mid["status"] != "CONFIRMED" || mid["approvals"].([]any)[0].(M)["steps"].([]any)[0].(M)["auto"] != true {
 		t.Fatalf("level 1 auto: %v", mid["status"])
 	}
-	// 25 500 000 RWF: level 2 = General Manager role
+	// 25 500 000 RWF: level 2 = Production Manager role
 	big := status(t, e, "POST", "/api/sales", f.saleBody(true, line(f.hb20, 17000, 1500)), f.sm, 201)
 	if big["pendingApproval"] != true {
 		t.Fatalf("big order must wait: %v", big["sale"].(M)["status"])
@@ -395,17 +397,20 @@ func TestValueApprovalsAndCancellation(t *testing.T) {
 	if num(appr["nextLevel"].(M)["level"]) != 2 || appr["canDecide"] != false {
 		t.Errorf("pending: %v", appr)
 	}
-	if f.count(`SELECT count(*) FROM notification WHERE event='sales.approval_pending' AND user_id=$1`, f.gm.ID) != 1 {
-		t.Error("GM notified of the pending approval")
+	if f.count(`SELECT count(*) FROM notification WHERE event='sales.approval_pending' AND user_id=$1`, f.pm.ID) != 1 {
+		t.Error("PM notified of the pending approval")
 	}
-	if ls := status(t, e, "GET", "/api/sales/approvals?mine=1", nil, f.gm, 200); len(ls["items"].([]any)) != 1 {
-		t.Errorf("gm queue: %v", ls)
+	if ls := status(t, e, "GET", "/api/sales/approvals?mine=1", nil, f.pm, 200); len(ls["items"].([]any)) != 1 {
+		t.Errorf("pm queue: %v", ls)
 	}
 	if ls := status(t, e, "GET", "/api/sales/approvals?mine=1", nil, md, 200); len(ls["items"].([]any)) != 0 {
-		t.Errorf("md cannot decide a GM level: %v", ls)
+		t.Errorf("another sales manager cannot decide the PM level: %v", ls)
 	}
 	if r := e.Do("POST", "/api/sales/approvals/"+aid+"/approve", M{}, md); r.StatusCode != 403 {
-		t.Errorf("md approves GM level: %d", r.StatusCode)
+		t.Errorf("sm2 approves PM level: %d", r.StatusCode)
+	}
+	if r := e.Do("POST", "/api/sales/approvals/"+aid+"/approve", M{}, top); r.StatusCode != 403 {
+		t.Errorf("top management approves orders (SRS §8 R): %d", r.StatusCode)
 	}
 	if r := e.Do("POST", "/api/sales/approvals/"+aid+"/approve", M{}, f.sm); r.StatusCode != 403 {
 		t.Errorf("own request: %d", r.StatusCode)
@@ -413,32 +418,32 @@ func TestValueApprovalsAndCancellation(t *testing.T) {
 	if r := e.Do("POST", "/api/sales/approvals/"+aid+"/approve", M{}, f.fm); r.StatusCode != 403 {
 		t.Errorf("finance: %d", r.StatusCode)
 	}
-	if r := e.Do("POST", "/api/sales/approvals/"+aid+"/reject", M{}, f.gm); r.StatusCode != 400 {
+	if r := e.Do("POST", "/api/sales/approvals/"+aid+"/reject", M{}, f.pm); r.StatusCode != 400 {
 		t.Errorf("reject needs a reason: %d", r.StatusCode)
 	}
 	if r := e.Do("POST", "/api/sales/"+bid+"/confirm", M{}, f.sm); r.StatusCode != 409 {
 		t.Errorf("second pending approval: %d", r.StatusCode)
 	}
-	ok := status(t, e, "POST", "/api/sales/approvals/"+aid+"/approve", M{"note": "TEST ok"}, f.gm, 200)
+	ok := status(t, e, "POST", "/api/sales/approvals/"+aid+"/approve", M{"note": "TEST ok"}, f.pm, 200)
 	if ok["approval"].(M)["status"] != "APPROVED" {
 		t.Fatalf("approved: %v", ok)
 	}
-	if s := status(t, e, "GET", "/api/sales/"+bid, nil, f.sm, 200)["sale"].(M); s["status"] != "CONFIRMED" || s["confirmedBy"].(M)["name"] != f.gm.Name {
+	if s := status(t, e, "GET", "/api/sales/"+bid, nil, f.sm, 200)["sale"].(M); s["status"] != "CONFIRMED" || s["confirmedBy"].(M)["name"] != f.pm.Name {
 		t.Fatalf("confirmed after approval: %v", s["status"])
 	}
 	if f.count(`SELECT count(*) FROM notification WHERE event='sales.approval_decided' AND user_id=$1`, f.sm.ID) != 1 {
 		t.Error("requester told of the decision")
 	}
-	if r := e.Do("POST", "/api/sales/approvals/"+aid+"/approve", M{}, f.gm); r.StatusCode != 409 {
+	if r := e.Do("POST", "/api/sales/approvals/"+aid+"/approve", M{}, f.pm); r.StatusCode != 409 {
 		t.Errorf("decided twice: %d", r.StatusCode)
 	}
 	// rejection keeps the order as it was
 	rej := status(t, e, "POST", "/api/sales", f.saleBody(true, line(f.hb20, 17000, 1500)), f.sm, 201)["sale"].(M)
-	status(t, e, "POST", "/api/sales/approvals/"+rej["pendingApproval"].(M)["id"].(string)+"/reject", M{"note": "TEST too big"}, f.gm, 200)
+	status(t, e, "POST", "/api/sales/approvals/"+rej["pendingApproval"].(M)["id"].(string)+"/reject", M{"note": "TEST too big"}, f.pm, 200)
 	if s := status(t, e, "GET", "/api/sales/"+rej["id"].(string), nil, f.sm, 200)["sale"].(M); s["status"] != "DRAFT" || s["pendingApproval"] != nil {
 		t.Errorf("rejected confirm: %v", s["status"])
 	}
-	// cancellation: draft immediately; quoted / confirmed through approval (four eyes, sales.cancel level)
+	// cancellation (draft, quoted or confirmed) always through approval (four eyes, sales.cancel level)
 	q := f.create(f.sm, M{"plantId": f.plant1, "customerId": f.cust, "date": f.today, "lines": []M{line(f.hb20, 10, 1500)}, "quote": true})
 	if q["status"] != "QUOTED" {
 		t.Fatalf("quote on create: %v", q["status"])
@@ -449,35 +454,35 @@ func TestValueApprovalsAndCancellation(t *testing.T) {
 	}
 	ca := status(t, e, "POST", "/api/sales/approvals/"+cq["sale"].(M)["pendingApproval"].(M)["id"].(string)+"/approve", M{}, md, 200)
 	if ca["approval"].(M)["status"] != "APPROVED" {
-		t.Fatal("md approves the cancellation")
+		t.Fatal("another sales manager approves the cancellation")
 	}
 	if s := status(t, e, "GET", "/api/sales/"+q["id"].(string), nil, f.sm, 200)["sale"].(M); s["status"] != "CANCELLED" || s["cancelReason"] != "TEST client declined" {
 		t.Fatalf("cancelled: %v", s["status"])
 	}
-	// the GM's own cancellation of a confirmed order still needs someone else
-	gc := status(t, e, "POST", "/api/sales/"+mid["id"].(string)+"/cancel", M{"reason": "TEST duplicate"}, f.gm, 200)
+	// the PM's own cancellation of a confirmed order still needs someone else
+	gc := status(t, e, "POST", "/api/sales/"+mid["id"].(string)+"/cancel", M{"reason": "TEST duplicate"}, f.pm, 200)
 	gaid := gc["sale"].(M)["pendingApproval"].(M)["id"].(string)
-	if r := e.Do("POST", "/api/sales/approvals/"+gaid+"/approve", M{}, f.gm); r.StatusCode != 403 {
+	if r := e.Do("POST", "/api/sales/approvals/"+gaid+"/approve", M{}, f.pm); r.StatusCode != 403 {
 		t.Errorf("own cancellation: %d", r.StatusCode)
 	}
-	// level 1 (sales.approve) by the MD, level 2 (sales.cancel) needs yet another person
+	// level 1 (sales.approve) by a second sales manager, level 2 (sales.cancel) needs yet another person
 	status(t, e, "POST", "/api/sales/approvals/"+gaid+"/approve", M{}, md, 200)
 	if r := e.Do("POST", "/api/sales/approvals/"+gaid+"/approve", M{}, md); r.StatusCode != 403 {
 		t.Errorf("same approver twice: %d", r.StatusCode)
 	}
-	md2 := e.User(auth.RoleManagingDirector)
+	md2 := e.User(auth.RoleProductionManager)
 	status(t, e, "POST", "/api/sales/approvals/"+gaid+"/approve", M{}, md2, 200)
 	if s := status(t, e, "GET", "/api/sales/"+mid["id"].(string), nil, f.sm, 200)["sale"].(M); s["status"] != "CANCELLED" {
 		t.Fatalf("confirmed → cancelled: %v", s["status"])
 	}
 	// not cancellable once in fulfilment
-	o := f.create(f.gm, f.saleBody(true, line(f.hb20, 10, 1500)))
+	o := f.create(f.sm, f.saleBody(true, line(f.hb20, 10, 1500)))
 	status(t, e, "POST", "/api/sales/"+o["id"].(string)+"/ready", M{}, f.sm, 200)
-	if r := e.Do("POST", "/api/sales/"+o["id"].(string)+"/cancel", M{"reason": "x"}, f.gm); r.StatusCode != 409 {
+	if r := e.Do("POST", "/api/sales/"+o["id"].(string)+"/cancel", M{"reason": "x"}, f.pm); r.StatusCode != 409 {
 		t.Errorf("cancel a ready order: %d", r.StatusCode)
 	}
-	if r := e.Do("POST", "/api/sales/"+o["id"].(string)+"/cancel", M{"reason": "x"}, f.sup1); r.StatusCode != 403 {
-		t.Errorf("supervisor cancel: %d", r.StatusCode)
+	if r := e.Do("POST", "/api/sales/"+o["id"].(string)+"/cancel", M{"reason": "x"}, f.disp1); r.StatusCode != 403 {
+		t.Errorf("stock officer cancel: %d", r.StatusCode)
 	}
 	for _, a := range []string{"sales.approval.request", "sales.approval.approve", "sales.approval.reject", "sales.cancel", "sales.status"} {
 		if f.count(`SELECT count(*) FROM "AuditLog" WHERE action=$1`, a) == 0 {
@@ -496,7 +501,7 @@ func TestAmendmentsVersionHistory(t *testing.T) {
 	id := s["id"].(string)
 	la, lb := s["lines"].([]any)[0].(M)["id"].(string), s["lines"].([]any)[1].(M)["id"].(string)
 	status(t, e, "POST", "/api/sales/"+id+"/ready", M{}, f.sm, 200)
-	status(t, e, "POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "TEST-AM-1", "date": f.today, "lines": []M{{"saleLineId": la, "quantity": 30}}}, f.sup1, 201)
+	status(t, e, "POST", "/api/sales/"+id+"/deliveries", M{"dnNumber": "TEST-AM-1", "date": f.today, "lines": []M{{"saleLineId": la, "quantity": 30}}}, f.disp1, 201)
 	if r := e.Do("PATCH", "/api/sales/"+id, M{"lines": []M{line(f.hb20, 1, 1)}}, f.sm); r.StatusCode != 409 {
 		t.Fatalf("direct edit of a confirmed order: %d", r.StatusCode)
 	}
@@ -525,7 +530,7 @@ func TestAmendmentsVersionHistory(t *testing.T) {
 	if r := e.Do("POST", "/api/sales/approvals/"+aid+"/approve", M{}, f.sm); r.StatusCode != 403 {
 		t.Errorf("own amendment: %d", r.StatusCode)
 	}
-	status(t, e, "POST", "/api/sales/approvals/"+aid+"/approve", M{}, f.gm, 200)
+	status(t, e, "POST", "/api/sales/approvals/"+aid+"/approve", M{}, f.pm, 200)
 	g := status(t, e, "GET", "/api/sales/"+id, nil, f.sm, 200)["sale"].(M)
 	if num(g["version"]) != 2 || num(g["totals"].(M)["amount"]) != 80*1350+10*1250 || len(g["lines"].([]any)) != 2 || g["paymentTerm"] != "NET14" ||
 		len(g["versions"].([]any)) != 2 || g["amendments"].([]any)[0].(M)["status"] != "APPLIED" || g["lines"].([]any)[0].(M)["id"] != la {
@@ -545,7 +550,7 @@ func TestAmendmentsVersionHistory(t *testing.T) {
 	}
 	// a rejected amendment changes nothing
 	am2 := status(t, e, "POST", "/api/sales/"+id+"/amendments", M{"reason": "TEST more", "lines": []M{{"saleLineId": la, "productId": f.hb20, "quantity": 500, "unitPrice": 1500}}}, f.sm, 201)
-	status(t, e, "POST", "/api/sales/approvals/"+am2["sale"].(M)["pendingApproval"].(M)["id"].(string)+"/reject", M{"note": "TEST no"}, f.gm, 200)
+	status(t, e, "POST", "/api/sales/approvals/"+am2["sale"].(M)["pendingApproval"].(M)["id"].(string)+"/reject", M{"note": "TEST no"}, f.pm, 200)
 	if g := status(t, e, "GET", "/api/sales/"+id, nil, f.sm, 200)["sale"].(M); num(g["version"]) != 2 || g["amendments"].([]any)[0].(M)["status"] != "REJECTED" {
 		t.Errorf("rejected amendment: %v", g["version"])
 	}
@@ -565,7 +570,7 @@ func TestReportsExportsAndOverdue(t *testing.T) {
 	a := f.create(f.sm, f.saleBody(true, line(f.hb20, 10, 1500), line(f.hb15, 5, 1300)))
 	f.create(f.sm, f.saleBody(false, line(f.hb20, 3, 1500)))
 	status(t, e, "POST", "/api/sales/"+a["id"].(string)+"/ready", M{}, f.sm, 200)
-	status(t, e, "POST", "/api/sales/"+a["id"].(string)+"/deliveries", M{"dnNumber": "TEST-R-1", "date": f.today, "lines": []M{{"saleLineId": a["lines"].([]any)[0].(M)["id"], "quantity": 4}}}, f.sup1, 201)
+	status(t, e, "POST", "/api/sales/"+a["id"].(string)+"/deliveries", M{"dnNumber": "TEST-R-1", "date": f.today, "lines": []M{{"saleLineId": a["lines"].([]any)[0].(M)["id"], "quantity": 4}}}, f.disp1, 201)
 	for _, g := range []string{"client", "product", "status", "period"} {
 		rep := status(t, e, "GET", "/api/sales/reports/orders?groupBy="+g, nil, f.sm, 200)
 		if len(rep["rows"].([]any)) == 0 || num(rep["totals"].(M)["orders"]) != 2 || num(rep["totals"].(M)["amount"]) != 15000+6500+4500 {
@@ -579,8 +584,9 @@ func TestReportsExportsAndOverdue(t *testing.T) {
 	if r := e.Do("GET", "/api/sales/reports/orders?groupBy=weather", nil, f.sm); r.StatusCode != 400 {
 		t.Errorf("bad groupBy: %d", r.StatusCode)
 	}
-	if r := e.Do("GET", "/api/sales/reports/orders", nil, f.sup1); r.StatusCode != 403 {
-		t.Errorf("supervisor report: %d", r.StatusCode)
+	status(t, e, "GET", "/api/sales/reports/orders", nil, f.sup, 200) // SRS §8 Reports: supervisor "R (site)"
+	if r := e.Do("GET", "/api/sales/reports/orders", nil, f.op); r.StatusCode != 403 {
+		t.Errorf("operator report: %d", r.StatusCode)
 	}
 	for _, p := range []string{"/api/sales/reports/orders?groupBy=product&format=csv", "/api/sales/deliveries/pending?format=xlsx", "/api/sales/deliveries?format=csv", "/api/v1/sales/reports/orders?format=json"} {
 		r := e.Do("GET", p, nil, f.sm)
@@ -588,12 +594,12 @@ func TestReportsExportsAndOverdue(t *testing.T) {
 			t.Errorf("export %s: %d %s", p, r.StatusCode, r.Header.Get("Content-Type"))
 		}
 	}
-	pd := status(t, e, "GET", "/api/sales/deliveries/pending", nil, f.sup1, 200)
+	pd := status(t, e, "GET", "/api/sales/deliveries/pending", nil, f.disp1, 200)
 	it := pd["items"].([]any)
 	if len(it) != 1 || num(it[0].(M)["remaining"]) != 11 || num(it[0].(M)["openNotes"]) != 1 {
 		t.Errorf("pending: %v", pd)
 	}
-	if pd := status(t, e, "GET", "/api/sales/deliveries/pending", nil, f.sup2, 200); len(pd["items"].([]any)) != 0 {
+	if pd := status(t, e, "GET", "/api/sales/deliveries/pending", nil, f.disp2, 200); len(pd["items"].([]any)) != 0 {
 		t.Errorf("pending scope: %v", pd)
 	}
 	// overdue scan: a confirmed order whose balance is past due (dedup per due date)
@@ -667,7 +673,7 @@ func TestOfflineOrderDraftAndDispatchNote(t *testing.T) {
 	// dispatch_note on a confirmed (not ready) order → conflict; on a ready order → accepted, stock reduced (negative flagged)
 	o := f.create(f.sm, f.saleBody(true, line(f.hb20, 50, 1500)))
 	ol := o["lines"].([]any)[0].(M)["id"].(string)
-	dsup := e.SignInDevice(f.sup1, "")
+	dsup := e.SignInDevice(f.disp1, "")
 	dn := M{"saleId": o["id"], "dnNumber": "OFF-1", "date": f.today, "vehicle": "RAE 9", "destination": "Bugesera", "lines": []M{{"saleLineId": ol, "quantity": 20}}}
 	if res := dsup.Push(apptest.SyncRecord(sales.SyncDispatchNote, 0, dn)); res.Results[0].Status != "conflict" {
 		t.Fatalf("dispatch before ready: %+v", res.Results)
@@ -687,7 +693,7 @@ func TestOfflineOrderDraftAndDispatchNote(t *testing.T) {
 		t.Errorf("offline dispatch: %v", g["status"])
 	}
 	// BTN-2 supervisor: site scope
-	dsup2 := e.SignInDevice(f.sup2, "")
+	dsup2 := e.SignInDevice(f.disp2, "")
 	dn["dnNumber"] = "OFF-3"
 	if res := dsup2.Push(apptest.SyncRecord(sales.SyncDispatchNote, 0, dn)); res.Results[0].Status != "rejected" || res.Results[0].ReasonCode != "site_scope" {
 		t.Errorf("scope: %+v", res.Results)

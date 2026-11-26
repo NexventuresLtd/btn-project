@@ -114,7 +114,7 @@ func TestRateRulesAndWageCalculation(t *testing.T) {
 		t.Fatalf("rule %v", r1)
 	}
 	// from 05/11 a worker-specific rule with a higher daily rate (rate change in the middle of the period)
-	must(t, e, "POST", "/api/workforce/rate-rules", M{"name": "Aline raise", "workerId": w, "dailyRate": 6000, "effectiveFrom": "2026-11-05"}, tm.pm, 201)
+	must(t, e, "POST", "/api/workforce/rate-rules", M{"name": "Aline raise", "workerId": w, "dailyRate": 6000, "effectiveFrom": "2026-11-05"}, tm.sys, 201) // §7.4: rules configured by an administrator
 	list := must(t, e, "GET", "/api/workforce/rate-rules", nil, tm.fm1, 200)
 	if len(list["items"].([]any)) != 2 {
 		t.Fatalf("rules %v", list)
@@ -236,6 +236,24 @@ func TestPieceWork(t *testing.T) {
 	must(t, e, "POST", "/api/workforce/piece-work", M{"plantId": tm.b1, "date": "2026-11-03", "entries": []M{{"workerId": piece, "productId": prod, "quantity": 10}}}, tm.sup, 409)
 	must(t, e, "POST", "/api/workforce/piece-work", M{"plantId": tm.b1, "date": "2026-11-03", "entries": []M{{"workerId": piece, "productId": prod, "quantity": 410}}}, tm.pm, 400)
 	must(t, e, "POST", "/api/workforce/piece-work", M{"plantId": tm.b1, "date": "2026-11-03", "reason": "recount of the stack", "entries": []M{{"workerId": piece, "productId": prod, "quantity": 410}}}, tm.pm, 200)
+	// SRS §6.3: clearing an entry (quantity 0) marks it removed and keeps it; entering it again restores it
+	must(t, e, "POST", "/api/workforce/piece-work", M{"plantId": tm.b1, "date": "2026-11-05", "entries": []M{{"workerId": piece, "productId": prod, "quantity": 50}}}, tm.sup, 200)
+	cl := must(t, e, "POST", "/api/workforce/piece-work", M{"plantId": tm.b1, "date": "2026-11-05", "entries": []M{{"workerId": piece, "productId": prod, "quantity": 0}}}, tm.sup, 200)
+	if es := cl["entries"].([]any); len(es) != 0 {
+		t.Fatalf("cleared entry still listed: %v", es)
+	}
+	var kept, removed int
+	var eid string
+	if err := e.Pool.QueryRow(t.Context(), `SELECT id, quantity, (removed_at IS NOT NULL)::int FROM piece_work_entry WHERE worker_id=$1 AND date='2026-11-05'`, piece).Scan(&eid, &kept, &removed); err != nil || kept != 50 || removed != 1 {
+		t.Fatalf("cleared entry kept: %v %d %d", err, kept, removed)
+	}
+	if _, err := e.Pool.Exec(t.Context(), `DELETE FROM piece_work_entry WHERE id=$1`, eid); err == nil {
+		t.Fatal("raw delete must be refused")
+	}
+	back := must(t, e, "POST", "/api/workforce/piece-work", M{"plantId": tm.b1, "date": "2026-11-05", "entries": []M{{"workerId": piece, "productId": prod, "quantity": 60}}}, tm.sup, 200)
+	if es := back["entries"].([]any); len(es) != 1 || num(es[0].(M)["quantity"]) != 60 {
+		t.Fatalf("restored entry: %v", es)
+	}
 }
 
 // WRK-05 + §7.4: approved attendance is locked; corrections need a manager; a paid period is locked and a later
@@ -284,10 +302,14 @@ func TestLockCorrectionPaymentAndAdjustment(t *testing.T) {
 	}
 	must(t, e, "POST", "/api/attendance/corrections", M{"plantId": tm.b1, "date": "2026-11-03", "workerId": w, "status": "ABSENT", "reason": "again"}, tm.sup, 409)
 	must(t, e, "POST", "/api/attendance/corrections/"+cr["id"].(string)+"/approve", M{}, tm.sup, 403)
-	pmCr := must(t, e, "POST", "/api/attendance/corrections", M{"plantId": tm.b1, "date": "2026-11-02", "workerId": w2, "status": "LEAVE", "reason": "sick note"}, tm.pm, 201)
-	must(t, e, "POST", "/api/attendance/corrections/"+pmCr["id"].(string)+"/approve", M{}, tm.pm, 403) // own request
-	must(t, e, "POST", "/api/attendance/corrections/"+pmCr["id"].(string)+"/reject", M{}, tm.gm, 400)  // reason required
-	must(t, e, "POST", "/api/attendance/corrections/"+pmCr["id"].(string)+"/reject", M{"note": "no sick note on file"}, tm.gm, 200)
+	// SRS §8 Attendance & wages: supervisors request corrections, only the Production Manager (A) decides
+	supB := e.User(auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-1"})
+	pmCr := must(t, e, "POST", "/api/attendance/corrections", M{"plantId": tm.b1, "date": "2026-11-02", "workerId": w2, "status": "LEAVE", "reason": "sick note"}, supB, 201)
+	must(t, e, "POST", "/api/attendance/corrections", M{"plantId": tm.b1, "date": "2026-11-02", "workerId": w2, "status": "LEAVE", "reason": "sick note"}, tm.pm, 403)
+	must(t, e, "POST", "/api/attendance/corrections/"+pmCr["id"].(string)+"/approve", M{}, supB, 403)
+	must(t, e, "POST", "/api/attendance/corrections/"+pmCr["id"].(string)+"/reject", M{"note": "no sick note on file"}, tm.gm, 403) // Top Mgt R
+	must(t, e, "POST", "/api/attendance/corrections/"+pmCr["id"].(string)+"/reject", M{}, tm.pm, 400)                               // reason required
+	must(t, e, "POST", "/api/attendance/corrections/"+pmCr["id"].(string)+"/reject", M{"note": "no sick note on file"}, tm.pm, 200)
 	ok := must(t, e, "POST", "/api/attendance/corrections/"+cr["id"].(string)+"/approve", M{"note": "confirmed"}, tm.pm, 200)
 	if ok["status"] != "APPROVED" || ok["adjustmentId"] != nil {
 		t.Fatalf("approved %v", ok)
@@ -363,7 +385,7 @@ func TestLockCorrectionPaymentAndAdjustment(t *testing.T) {
 	// paid period: sheet locked, days locked; a correction becomes an adjustment for the next period
 	must(t, e, "PUT", "/api/payroll/periods/"+id+"/lines", M{"lines": []M{}}, tm.fm1, 409)
 	cr = must(t, e, "POST", "/api/attendance/corrections", M{"plantId": tm.b1, "date": "2026-11-03", "workerId": w, "status": "PRESENT", "overtimeHours": 2, "reason": "stayed after all"}, tm.sup, 201)
-	ok = must(t, e, "POST", "/api/attendance/corrections/"+cr["id"].(string)+"/approve", M{}, tm.gm, 200)
+	ok = must(t, e, "POST", "/api/attendance/corrections/"+cr["id"].(string)+"/approve", M{}, tm.pm, 200)
 	// HALF_DAY → PRESENT + 2 h: +2500 + 2 × 938 (5000 × 1.5 / 8 = 937.5 → 938)
 	if ok["adjustmentId"] == nil || num(ok["adjustmentAmount"]) != 2500+1876 {
 		t.Fatalf("adjustment %v", ok)
@@ -479,9 +501,7 @@ func TestWorkerRecordAndReports(t *testing.T) {
 	}
 	must(t, e, "GET", "/api/workforce/reports/headcount?from=2026-01-01&to=2026-11-10", nil, tm.gm, 400)
 	must(t, e, "GET", "/api/workforce/reports/summary?from=2026-11-01&to=2026-11-30", nil, e.User(auth.RoleOperator), 403)
-	if sc := must(t, e, "GET", "/api/workforce/reports/summary?from=2026-11-01&to=2026-11-30", nil, tm.sup2, 200); len(sc["sites"].([]any)) != 1 {
-		t.Fatalf("site scope %v", sc["sites"])
-	}
+	must(t, e, "GET", "/api/workforce/reports/summary?from=2026-11-01&to=2026-11-30", nil, tm.sup2, 403) // §8: no wage access for supervisors
 	s := must(t, e, "GET", "/api/workforce/reports/summary?from=2026-11-01&to=2026-11-30", nil, tm.gm, 200)
 	tot := s["totals"].(M)
 	if num(tot["attendance"].(M)["personDays"]) != 1.5 || num(tot["attendance"].(M)["overtimeHours"]) != 1.5 || num(tot["wages"].(M)["gross"]) != 5000+1.5*938 {

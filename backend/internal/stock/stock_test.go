@@ -212,7 +212,7 @@ func TestAdjustmentRules(t *testing.T) {
 
 func TestOpeningBalances(t *testing.T) {
 	e := apptest.New(t)
-	gm := e.User(auth.RoleGeneralManager)
+	gm := e.User(auth.RoleProductionManager) // opening balances: stock.adjust (SRS §8 Stock "R A" = PM)
 	op := e.User(auth.RoleOperator)
 	plant1 := id(t, e, "Plant", "BTN-1")
 	hb20, sb20 := id(t, e, "Product", "HB20"), id(t, e, "Product", "SB20")

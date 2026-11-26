@@ -102,85 +102,147 @@ func TestPermissions(t *testing.T) {
 }
 
 // TestNewRoleMatrix pins the SRS §8 grants of docs/SRS_BUILD_PLAN.md "Roles and permissions" exactly.
-func TestNewRoleMatrix(t *testing.T) {
-	want := map[Permission][]Role{
-		"admin.monitor":       {SYS},
-		"data.export":         {SYS, MD, GM, OA, FM},
-		"devices.manage":      {SYS, GM, MD},
-		"reports.schedule":    {SYS, GM, MD},
-		"sync.resolve":        {PM, SUP, GM},
-		"production.targets":  {PM, GM},
-		"production.close":    {PM, GM},
-		"stock.record":        {STO, SUP, PM},
-		"transfers.view":      {PM, STO, SUP, LEAD, GM, MD, OA, FM, SM, PRO},
-		"transfers.request":   {SUP, STO, PM},
-		"transfers.approve":   {PM, GM},
-		"transfers.dispatch":  {STO, SUP, PM},
-		"transfers.receive":   {STO, SUP, PM},
-		"stockcount.record":   {STO, SUP, PM},
-		"stockcount.approve":  {PM, GM},
-		"sales.approve":       {SM, GM, MD},
-		"attendance.approve":  {PM, GM},
-		"wages.view":          {FM, PM, GM, MD, OA},
-		"expenses.view":       {FM, GM, MD, OA, PRO},
-		"expenses.record":     {FM, PM, SUP, STO},
-		"expenses.approve":    {FM, GM, MD},
-		"income.view":         {FM, GM, MD, OA},
-		"income.record":       {FM, SM},
-		"income.verify":       {FM},
-		"payroll.pay":         {FM},
-		"pettycash.custodian": {FM, SUP, PM},
-		"budgets.view":        {FM, GM, MD, OA, PM},
-		"budgets.manage":      {FM},
-		"budgets.approve":     {GM, MD},
-		"procurement.view":    {PM, FM, PRO, GM, MD, OA, STO},
-		"procurement.request": {SUP, PM, STO, PRO, FM},
-		"procurement.approve": {PM, FM, GM, MD},
-		"procurement.manage":  {PRO, FM},
-		"procurement.receive": {STO, PRO, SUP, PM},
+// srsMatrix is the SRS §8 table (C create, R read, U update, A approve; supervisors limited to their own site).
+// "Attendance & wages" is split in its attendance and wages halves because the supervisor's C R U is "(att.)".
+var srsMatrix = map[string]map[string]string{
+	//          Sup.      Prod. Mgr  Stock    Sales    Fin.     Proc.    Top Mgt  Admin
+	"production":  {"SUP": "CRU", "PM": "RUA", "STO": "R", "SM": "", "FM": "R", "PRO": "", "TOP": "R", "SYS": "R"},
+	"stock":       {"SUP": "CR", "PM": "RA", "STO": "CRU", "SM": "R", "FM": "R", "PRO": "R", "TOP": "R", "SYS": "R"},
+	"orders":      {"SUP": "R", "PM": "RA", "STO": "R", "SM": "CRUA", "FM": "R", "PRO": "", "TOP": "R", "SYS": "R"},
+	"delivery":    {"SUP": "R", "PM": "R", "STO": "CRU", "SM": "CRU", "FM": "R", "PRO": "", "TOP": "R", "SYS": "R"},
+	"attendance":  {"SUP": "CRU", "PM": "RA", "STO": "", "SM": "", "FM": "R", "PRO": "", "TOP": "R", "SYS": "R"},
+	"wages":       {"SUP": "", "PM": "RA", "STO": "", "SM": "", "FM": "RU", "PRO": "", "TOP": "R", "SYS": "R"},
+	"finance":     {"SUP": "", "PM": "R", "STO": "", "SM": "R", "FM": "CRUA", "PRO": "R", "TOP": "RA", "SYS": "R"},
+	"procurement": {"SUP": "CR", "PM": "RA", "STO": "R", "SM": "", "FM": "RA", "PRO": "CRU", "TOP": "RA", "SYS": "R"},
+	"reports":     {"SUP": "R", "PM": "R", "STO": "R", "SM": "R", "FM": "R", "PRO": "R", "TOP": "R", "SYS": "R"},
+	"admin":       {"SUP": "", "PM": "", "STO": "", "SM": "", "FM": "", "PRO": "", "TOP": "R", "SYS": "CRU"},
+}
+
+// srsColumn maps a role to its §8 column. LEAD_OPERATOR / OPERATOR are not §8 roles (checked against SUP below).
+var srsColumn = map[Role]string{SUP: "SUP", PM: "PM", STO: "STO", SM: "SM", FM: "FM", PRO: "PRO", MD: "TOP", GM: "TOP", OA: "TOP", SYS: "SYS"}
+
+// grant is one way to earn a permission: a §8 module and the letters of that cell that grant it.
+type grant struct{ module, letters string }
+
+// permGrants maps every permission to the §8 cells that justify it (any one is enough).
+var permGrants = map[Permission][]grant{
+	"production.view": {{"production", "R"}}, "production.record": {{"production", "CU"}}, "production.approve": {{"production", "A"}},
+	"production.targets": {{"production", "A"}}, "production.close": {{"production", "A"}},
+	"stock.view": {{"stock", "R"}}, "stock.adjust": {{"stock", "A"}}, "stock.record": {{"stock", "CU"}},
+	"transfers.view": {{"stock", "R"}}, "transfers.request": {{"stock", "C"}}, "transfers.approve": {{"stock", "A"}},
+	"transfers.dispatch": {{"stock", "CU"}}, "transfers.receive": {{"stock", "CU"}},
+	"stockcount.record": {{"stock", "C"}}, "stockcount.approve": {{"stock", "A"}},
+	"materials.view": {{"stock", "R"}}, "materials.record": {{"stock", "C"}}, "materials.adjust": {{"stock", "A"}},
+	"sales.view": {{"orders", "R"}, {"delivery", "R"}}, "sales.create": {{"orders", "C"}}, "sales.confirm": {{"orders", "U"}},
+	"sales.cancel": {{"orders", "A"}}, "sales.approve": {{"orders", "A"}}, "customers.manage": {{"orders", "CU"}},
+	"deliveries.create": {{"delivery", "CU"}}, "payments.record": {{"finance", "C"}},
+	"pettycash.view": {{"finance", "R"}}, "pettycash.record": {{"finance", "C"}}, "pettycash.approve": {{"finance", "A"}},
+	"pettycash.custodian": {{"finance", "CU"}},
+	"expenses.view":       {{"finance", "R"}}, "expenses.record": {{"finance", "C"}}, "expenses.approve": {{"finance", "A"}},
+	// order payments are income records: Finance C, or Clients & orders C for Sales (ORD-06)
+	"income.view": {{"finance", "R"}}, "income.record": {{"finance", "C"}, {"orders", "C"}}, "income.verify": {{"finance", "A"}},
+	"budgets.view": {{"finance", "R"}}, "budgets.manage": {{"finance", "CU"}}, "budgets.approve": {{"finance", "A"}},
+	"procurement.view": {{"procurement", "R"}}, "procurement.request": {{"procurement", "C"}},
+	"procurement.approve": {{"procurement", "A"}}, "procurement.manage": {{"procurement", "CU"}},
+	"procurement.receive": {{"stock", "C"}, {"procurement", "U"}}, // a goods receipt is a stock receipt
+	"attendance.view":     {{"attendance", "R"}}, "attendance.record": {{"attendance", "C"}}, "attendance.approve": {{"attendance", "A"}},
+	"payroll.view": {{"wages", "R"}}, "payroll.prepare": {{"wages", "U"}}, "payroll.check": {{"wages", "A"}},
+	"payroll.verify": {{"wages", "U"}}, "payroll.authorize": {{"wages", "A"}, {"finance", "A"}}, // wages are PAYROLL expenses
+	"payroll.pay": {{"wages", "U"}}, "workers.manage": {{"wages", "U"}}, "wages.view": {{"wages", "R"}},
+	"reports.view": {{"reports", "R"}}, "reports.schedule": {{"admin", "CU"}},
+	"sync.resolve": {{"production", "U"}, {"attendance", "U"}, {"stock", "A"}},
+	"users.view":   {{"admin", "R"}}, "users.manage": {{"admin", "CU"}}, "masterdata.manage": {{"admin", "CU"}},
+	"audit.view": {{"admin", "R"}}, "settings.manage": {{"admin", "CU"}}, "admin.monitor": {{"admin", "R"}},
+	"data.export":    {{"admin", "R"}, {"finance", "A"}}, // ADM-05 "authorised users": administration + finance (FIN-07)
+	"devices.manage": {{"admin", "CU"}},
+}
+
+func srsAllows(role Role, p Permission) bool {
+	col := srsColumn[role]
+	for _, g := range permGrants[p] {
+		if strings.ContainsAny(srsMatrix[g.module][col], g.letters) {
+			return true
+		}
 	}
-	for p, roles := range want {
-		if !Known(p) {
-			t.Errorf("%s missing from Matrix", p)
+	return false
+}
+
+// TestSRSRoleMatrix encodes SRS §8 cell by cell: (1) no role holds a permission its cells do not give it, and
+// (2) every letter of every cell is backed by at least one permission. SUPER_ADMIN holds everything.
+func TestSRSRoleMatrix(t *testing.T) {
+	for _, r := range Matrix {
+		if r.P == "dashboard.view" || r.P == "branding.manage" || r.P == "i18n.manage" {
 			continue
 		}
-		set := map[Role]bool{}
-		for _, r := range roles {
-			set[r] = true
+		if _, ok := permGrants[r.P]; !ok {
+			t.Errorf("%s has no §8 mapping in permGrants", r.P)
 		}
-		for _, r := range AllRoles {
-			if r == RoleSuperAdmin {
-				if !Can(r, p) {
-					t.Errorf("super admin lacks %s", p)
-				}
+	}
+	for role := range srsColumn {
+		for _, r := range Matrix {
+			if _, mapped := permGrants[r.P]; !mapped {
 				continue
 			}
-			if Can(r, p) != set[r] {
-				t.Errorf("%s for %s: got %v want %v", p, r, Can(r, p), set[r])
+			// Operations Advisor: Top Mgt column, read-only (spec §4) — never approves.
+			want := srsAllows(role, r.P) && !(role == OA && !strings.HasSuffix(string(r.P), ".view") && r.P != "data.export" && r.P != "reports.view" && r.P != "audit.view")
+			if Can(role, r.P) && !want {
+				t.Errorf("over-grant: %s holds %s, not given by SRS §8", role, r.P)
+			}
+		}
+		col := srsColumn[role]
+		for module, cells := range srsMatrix {
+			for _, letter := range cells[col] {
+				if role == OA && letter == 'A' {
+					continue
+				}
+				backed := false
+				for p, gs := range permGrants {
+					for _, g := range gs {
+						if g.module == module && strings.ContainsRune(g.letters, letter) && Can(role, p) {
+							backed = true
+						}
+					}
+				}
+				if !backed {
+					t.Errorf("SRS §8 %s/%s has %c but %s holds no permission for it", module, col, letter, role)
+				}
 			}
 		}
 	}
-	// New roles: exact permission sets (view grants per §8 + the table above).
-	sto := []string{"dashboard.view", "production.view", "stock.view", "stock.record", "transfers.view", "transfers.request",
-		"transfers.dispatch", "transfers.receive", "stockcount.record", "materials.view", "sales.view", "expenses.record",
-		"procurement.view", "procurement.request", "procurement.receive", "reports.view"}
-	pro := []string{"dashboard.view", "transfers.view", "expenses.view", "procurement.view", "procurement.request",
-		"procurement.manage", "procurement.receive", "reports.view"}
-	for role, exp := range map[Role][]string{RoleStockOfficer: sto, RoleProcurementOfficer: pro} {
-		got := PermissionsFor(role)
-		if strings.Join(got, ",") != strings.Join(exp, ",") {
-			t.Errorf("%s permissions\n got %v\nwant %v", role, got, exp)
+	// Legacy site roles never exceed the supervisor.
+	for _, role := range []Role{RoleLeadOperator, RoleOperator} {
+		for _, p := range PermissionsFor(role) {
+			if !Can(SUP, Permission(p)) {
+				t.Errorf("%s holds %s which the supervisor does not", role, p)
+			}
 		}
+	}
+	// The cells the audit (9941a63) found different, now fixed.
+	for _, c := range []struct {
+		r    Role
+		p    Permission
+		want bool
+	}{
+		{SYS, "production.view", true}, {SM, "production.view", false}, {PRO, "stock.view", true}, {SYS, "stock.view", true},
+		{PM, "sales.approve", true}, {GM, "sales.approve", false}, {SYS, "sales.view", true}, {SYS, "customers.manage", false},
+		{STO, "deliveries.create", true}, {SUP, "deliveries.create", false}, {PM, "deliveries.create", false},
+		{SUP, "payroll.prepare", false}, {SUP, "payroll.check", false}, {PM, "payroll.check", true}, {SUP, "workers.manage", false},
+		{SYS, "attendance.view", true}, {PM, "expenses.view", true}, {SM, "expenses.view", true}, {SM, "income.view", true},
+		{PRO, "income.view", true}, {SUP, "expenses.record", false}, {STO, "expenses.record", false}, {SUP, "pettycash.custodian", false},
+		{SYS, "expenses.view", true}, {SYS, "procurement.view", true}, {SYS, "reports.view", true},
+		{GM, "users.manage", false}, {GM, "users.view", true}, {MD, "settings.manage", false}, {GM, "devices.manage", false},
+		{PM, "masterdata.manage", false},
+	} {
+		if Can(c.r, c.p) != c.want {
+			t.Errorf("%s / %s: got %v want %v", c.r, c.p, Can(c.r, c.p), c.want)
+		}
+	}
+}
+
+func TestNewRoleMatrix(t *testing.T) {
+	for _, role := range []Role{RoleStockOfficer, RoleProcurementOfficer} {
 		if !role.Valid() || RoleLabels[role] == "" {
 			t.Errorf("%s not registered", role)
-		}
-	}
-	// Neither new role may touch administration or approvals of money.
-	for _, r := range []Role{RoleStockOfficer, RoleProcurementOfficer} {
-		for _, p := range []Permission{"users.manage", "settings.manage", "masterdata.manage", "payroll.authorize", "pettycash.approve", "expenses.approve", "income.record", "income.verify", "income.view", "procurement.approve", "transfers.approve", "stockcount.approve", "admin.monitor"} {
-			if Can(r, p) {
-				t.Errorf("%s must not hold %s", r, p)
-			}
 		}
 	}
 	// Scoping: stock officer is pinned only when assigned a plant; procurement officer never.

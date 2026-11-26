@@ -234,13 +234,12 @@ func TestExpenseLinksAndRecordPayment(t *testing.T) {
 	if c, _ := e.call("DELETE", "/api/expenses/"+id+"/links/"+refID, nil, e.fm); c != 404 {
 		t.Errorf("remove twice: %d", c)
 	}
-	// site scope: a BTN-1 supervisor's expense cannot point at a BTN-2 record; operator cannot link at all
-	var pr2 string
-	_ = e.Pool.QueryRow(t.Context(), `INSERT INTO "ProductionReport" (number, "plantId", date, shift, status, "createdById") VALUES ('PR-T-2',$1,$2,'DAY','DRAFT',$3) RETURNING id`,
-		e.b2, e.today, e.sup2.ID).Scan(&pr2)
-	sx := e.must(201, "POST", "/api/expenses", expenseBody(e, 5000, map[string]any{"category": "WAGES"}), e.sup)
-	if c, _ := e.call("POST", "/api/expenses/"+sx["id"].(string)+"/links", map[string]any{"entityType": "production_report", "entityId": pr2}, e.sup); c != 403 {
-		t.Errorf("other-site link: %d", c)
+	// SRS §8: supervisors have no Finance access (cannot record or link expenses); operator cannot link at all
+	if c, _ := e.call("POST", "/api/expenses", expenseBody(e, 5000, map[string]any{"category": "WAGES"}), e.sup); c != 403 {
+		t.Errorf("supervisor records an expense: %d", c)
+	}
+	if c, _ := e.call("POST", "/api/expenses/"+id+"/links", map[string]any{"entityType": "sale", "entityId": e.saleID}, e.sup); c != 403 {
+		t.Errorf("supervisor link: %d", c)
 	}
 	if c, _ := e.call("POST", "/api/expenses/"+id+"/links", map[string]any{"entityType": "sale", "entityId": e.saleID}, e.op); c != 403 {
 		t.Errorf("operator link: %d", c)
@@ -324,9 +323,9 @@ func TestFinanceRecordEndpoints(t *testing.T) {
 	if inc := m["income"].([]any)[0].(map[string]any); inc["via"] != "order" || inc["source"] != "ORDER_PAYMENT" {
 		t.Errorf("income item: %v", inc)
 	}
-	// sales manager (income.record) sees the income half only; operator and supervisor nothing
+	// sales manager (SRS §8 Finance R) sees both halves; operator and supervisor nothing
 	sm := e.must(200, "GET", "/api/finance/money?entityType=sale&entityId="+e.saleID, nil, e.sm)
-	if sm["showExpenses"] != false || len(sm["expenses"].([]any)) != 0 || sm["incomeTotal"].(float64) != 30000 {
+	if sm["showExpenses"] != true || len(sm["expenses"].([]any)) != 1 || sm["incomeTotal"].(float64) != 30000 {
 		t.Errorf("sales manager money: %v", sm)
 	}
 	for _, u := range []*testutil.TestUser{e.op, e.sup} {
@@ -355,8 +354,11 @@ func TestFinanceRecordEndpoints(t *testing.T) {
 	if cf["income"].(float64) != 30000 || cf["expense"].(float64) != 40000 || cf["net"].(float64) != -10000 || len(cf["sites"].([]any)) != 1 {
 		t.Fatalf("cash flow: %v", cf)
 	}
-	if c, _ := e.call("GET", "/api/finance/cash-flow", nil, e.sm); c != 403 {
-		t.Errorf("sales manager cash flow: %d", c)
+	if c, _ := e.call("GET", "/api/finance/cash-flow", nil, e.sm); c != 200 {
+		t.Errorf("sales manager cash flow (Finance R): %d", c)
+	}
+	if c, _ := e.call("GET", "/api/finance/cash-flow", nil, e.sup); c != 403 {
+		t.Errorf("supervisor cash flow: %d", c)
 	}
 	if c, _ := e.call("GET", "/api/finance/cash-flow?granularity=year", nil, e.fm); c != 400 {
 		t.Errorf("bad granularity: %d", c)
@@ -366,15 +368,18 @@ func TestFinanceRecordEndpoints(t *testing.T) {
 	if inc := d["income"].(map[string]any); inc["total"].(float64) != 30000 || inc["orderPayments"].(float64) != 30000 || d["net"].(float64) != -10000 {
 		t.Errorf("dashboard: %v / net %v", d["income"], d["net"])
 	}
-	// link search: records of the user's sites only
+	// link search: finance recorders search every site; supervisors (no Finance access) cannot search
 	var pr1, pr2 string
 	_ = e.Pool.QueryRow(t.Context(), `INSERT INTO "ProductionReport" (number, "plantId", date, shift, status, "createdById") VALUES ('PR-T-1',$1,$2,'DAY','DRAFT',$3) RETURNING id`,
 		e.b1, e.today, e.sup.ID).Scan(&pr1)
 	_ = e.Pool.QueryRow(t.Context(), `INSERT INTO "ProductionReport" (number, "plantId", date, shift, status, "createdById") VALUES ('PR-T-2',$1,$2,'DAY','DRAFT',$3) RETURNING id`,
 		e.b2, e.today, e.sup2.ID).Scan(&pr2)
-	s := e.must(200, "GET", "/api/finance/link-targets?type=production_report&q=PR-T", nil, e.sup)
-	if items := s["items"].([]any); len(items) != 1 || items[0].(map[string]any)["id"] != pr1 {
-		t.Errorf("supervisor search: %v", s["items"])
+	if c, _ := e.call("GET", "/api/finance/link-targets?type=production_report&q=PR-T", nil, e.sup); c != 403 {
+		t.Errorf("supervisor search: %d", c)
+	}
+	s := e.must(200, "GET", "/api/finance/link-targets?type=production_report&q=PR-T", nil, e.fm)
+	if items := s["items"].([]any); len(items) != 2 || (items[0].(map[string]any)["id"] != pr1 && items[1].(map[string]any)["id"] != pr1) || pr2 == "" {
+		t.Errorf("finance search: %v", s["items"])
 	}
 	s = e.must(200, "GET", "/api/finance/link-targets?type=sale&q=SO-T", nil, e.fm)
 	if items := s["items"].([]any); len(items) != 1 || !strings.HasPrefix(items[0].(map[string]any)["link"].(string), "/sales/") {

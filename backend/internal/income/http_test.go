@@ -165,14 +165,11 @@ func TestIncomePermissionsScopeAndValidation(t *testing.T) {
 		}
 	}
 	other := e.must(201, "POST", "/api/income", incomeBody(e.b2, 8_000, "method", "CASH", "reference", nil), e.sm2)
-	// recorders see only their own; finance viewers see everything
-	if l := e.must(200, "GET", "/api/income", nil, e.sm); n(l, "total") != 1 || n(l, "totalAmount") != 12_000 {
-		t.Errorf("sm sees %v", l["total"])
+	// SRS §8 Finance R (Sales, Top Mgt, PM, Proc., Admin) and Finance: everyone with finance read sees everything
+	if c, m := e.call("GET", "/api/income/"+s(other, "id"), nil, e.sm); c != 200 || obj(m, "actions")["edit"] != false {
+		t.Errorf("sm reads another recorder's income read-only: %d %v", c, obj(m, "actions"))
 	}
-	if c, m := e.call("GET", "/api/income/"+s(other, "id"), nil, e.sm); c != 403 || !strings.Contains(errMsg(m), "recorded") {
-		t.Errorf("sm reads another recorder's income: %d %v", c, m)
-	}
-	for _, u := range []*testutil.TestUser{e.gm, e.oa, e.fm} {
+	for _, u := range []*testutil.TestUser{e.sm, e.gm, e.oa, e.fm} {
 		if l := e.must(200, "GET", "/api/income", nil, u); n(l, "total") != 2 || n(l, "totalAmount") != 20_000 {
 			t.Errorf("%s sees %v", u.Role, l["total"])
 		}
@@ -312,7 +309,34 @@ func TestIncomeVerifyVoidAttachmentsLinks(t *testing.T) {
 	if c := e.Do("DELETE", base+"/attachments/"+s(att2, "id"), nil, e.gm).StatusCode; c != 403 {
 		t.Errorf("viewer deletes attachment: %d", c)
 	}
-	e.must(200, "DELETE", base+"/attachments/"+s(att2, "id"), nil, e.sm)
+	// SRS §6.3: the receipt is marked removed with a reason, never deleted
+	if c, _ := e.call("DELETE", base+"/attachments/"+s(att2, "id"), nil, e.sm); c != 400 {
+		t.Errorf("remove without reason: %d", c)
+	}
+	e.must(200, "DELETE", base+"/attachments/"+s(att2, "id"), map[string]any{"reason": "TEST wrong slip"}, e.sm)
+	if c, _ := e.call("DELETE", base+"/attachments/"+s(att2, "id"), map[string]any{"reason": "TEST again"}, e.sm); c != 404 {
+		t.Errorf("remove twice: %d", c)
+	}
+	{
+		d := e.must(200, "GET", base, nil, e.sm)
+		for _, a := range arr(d, "attachments") {
+			if s(a, "id") == s(att2, "id") {
+				t.Error("removed receipt still listed")
+			}
+		}
+		rem := arr(d, "removedAttachments")
+		if len(rem) != 1 || s(rem[0], "id") != s(att2, "id") || s(rem[0], "removedReason") != "TEST wrong slip" {
+			t.Errorf("removed receipts: %v", rem)
+		}
+		var n int
+		_ = e.Pool.QueryRow(t.Context(), `SELECT count(*) FROM "AuditLog" WHERE action='income.detach' AND "entityId"=$1 AND "after"->>'reason' = 'TEST wrong slip'`, s(d, "id")).Scan(&n)
+		if n != 1 {
+			t.Errorf("detach audit: %d", n)
+		}
+		if _, err := e.Pool.Exec(t.Context(), `DELETE FROM income_attachment WHERE id=$1`, s(att2, "id")); err == nil {
+			t.Error("raw delete must be refused")
+		}
+	}
 	// links: add, duplicate, list, remove (stamped, never deleted)
 	lk := e.must(201, "POST", base+"/links", map[string]any{"entityType": "site", "entityId": e.b1, "note": "Yard of BTN-1"}, e.sm)
 	if items := arr(lk, "items"); len(items) != 1 || s(items[0], "entityType") != "site" || s(items[0], "link") == "" {
@@ -462,8 +486,8 @@ func TestIncomeSummaryExportsAndPDFs(t *testing.T) {
 	if p := arr(sum, "byCustomer"); len(p) != 1 || s(p[0], "name") != "Habimana Jean" || n(p[0], "count") != 2 {
 		t.Errorf("byCustomer: %v", sum["byCustomer"])
 	}
-	if own := e.must(200, "GET", "/api/income/summary", nil, e.sm); n(own, "total") != 10_000 {
-		t.Errorf("sm summary is own: %v", own["total"])
+	if all := e.must(200, "GET", "/api/income/summary", nil, e.sm); n(all, "total") != 30_000 {
+		t.Errorf("sm summary (Finance R) is everything: %v", all["total"])
 	}
 	if site := e.must(200, "GET", "/api/income/summary?plantId="+e.b2, nil, e.gm); n(site, "total") != 20_000 {
 		t.Errorf("site summary: %v", site["total"])
@@ -510,8 +534,8 @@ func TestIncomeSummaryExportsAndPDFs(t *testing.T) {
 	if r := e.Do("GET", "/api/income/pdf/report", nil, e.sm); r.StatusCode != 200 {
 		t.Errorf("sm report pdf: %d", r.StatusCode)
 	}
-	if r := e.Do("GET", "/api/income/pdf/"+s(b, "id"), nil, e.sm); r.StatusCode != 403 {
-		t.Errorf("sm prints another recorder's record: %d", r.StatusCode)
+	if r := e.Do("GET", "/api/income/pdf/"+s(b, "id"), nil, e.sm); r.StatusCode != 200 {
+		t.Errorf("sm prints another recorder's record (Finance R): %d", r.StatusCode)
 	}
 	if r := e.Do("GET", "/api/income/pdf/nope", nil, e.fm); r.StatusCode != 404 {
 		t.Errorf("unknown record pdf: %d", r.StatusCode)
@@ -747,8 +771,8 @@ func TestIncomeOfflineSync(t *testing.T) {
 			t.Errorf("pull misses %s: %v", want, ids)
 		}
 	}
-	if ids[foreign] {
-		t.Errorf("pull leaks another recorder's income")
+	if !ids[foreign] {
+		t.Errorf("pull misses another recorder's income (Sales has Finance R)")
 	}
 	fmDev := e.SignInDevice(e.fm, "")
 	var all struct {

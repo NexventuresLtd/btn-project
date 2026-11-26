@@ -204,8 +204,8 @@ func TestDevicesOwnAndAdmin(t *testing.T) {
 	if r := o.Do("PATCH", "/api/account/devices/"+bID, map[string]any{"name": "x"}); r.StatusCode != 404 {
 		t.Fatalf("foreign rename: %d", r.StatusCode)
 	}
-	// Admin view: devices.manage (GM) lists everyone's and revokes; supervisor is denied.
-	gm := e.User(auth.RoleGeneralManager)
+	// Admin view: devices.manage (System Administrator, SRS §8) lists everyone's and revokes; supervisor is denied.
+	gm := e.User(auth.RoleSystemAdmin)
 	page := e.Map(e.Do("GET", "/api/devices?q="+strings.ToUpper(u.Email[:6]), nil, gm))
 	if page["total"].(float64) != 2 {
 		t.Fatalf("admin search: %v", page)

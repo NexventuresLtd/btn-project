@@ -95,7 +95,7 @@ type Default struct {
 // Defaults: BTN starting policy, editable at Administration → Reference data → Approval thresholds.
 var Defaults = []Default{
 	{SalesOrder, 1, 5_000_000, nil, "sales.approve", "", "Sales manager approval (orders from 5 000 000 RWF)"},
-	{SalesOrder, 2, 20_000_000, nil, "sales.approve", "GENERAL_MANAGER", "General manager approval (orders from 20 000 000 RWF)"},
+	{SalesOrder, 2, 20_000_000, nil, "sales.approve", "PRODUCTION_MANAGER", "Production manager approval (orders from 20 000 000 RWF)"},
 	{Procurement, 1, 0, nil, "procurement.approve", "PRODUCTION_MANAGER", "Production manager approval"},
 	{Procurement, 2, 500_000, nil, "procurement.approve", "FINANCE_MANAGER", "Finance approval (from 500 000 RWF)"},
 	{Procurement, 3, 2_000_000, nil, "procurement.approve", "GENERAL_MANAGER", "General manager approval (from 2 000 000 RWF)"},
@@ -104,7 +104,6 @@ var Defaults = []Default{
 	{PettyCash, 1, 0, nil, "pettycash.approve", "", "General manager / MD approval"},
 	{Transfer, 1, 0, nil, "transfers.approve", "", "Production manager approval"},
 	{StockAdjustment, 1, 0, nil, "stock.adjust", "", "Production manager approval"},
-	{StockAdjustment, 2, 1_000_000, nil, "stock.adjust", "GENERAL_MANAGER", "General manager approval (from 1 000 000 RWF)"},
 	{BudgetOverrun, 1, 0, nil, "budgets.approve", "GENERAL_MANAGER", "General manager approval"},
 	{BudgetOverrun, 2, 5_000_000, nil, "budgets.approve", "MANAGING_DIRECTOR", "Managing director approval (overrun from 5 000 000 RWF)"},
 }

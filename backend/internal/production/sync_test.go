@@ -118,7 +118,7 @@ func TestSyncProductionEntry(t *testing.T) {
 		t.Fatalf("pm keeps closed-day entry: %d %s", r.StatusCode, e.Text(r))
 	}
 	// approved meanwhile → conflict for an edit of the same uuid
-	gm := e.User(auth.RoleGeneralManager)
+	gm := e.User(auth.RoleProductionManager) // a second PM decides (SRS §8 Production: PM "A", Top Mgt "R")
 	if r := e.Do("POST", "/api/production/reports/"+en.ID+"/approve", nil, gm); r.StatusCode != 200 {
 		t.Fatalf("approve: %d %s", r.StatusCode, e.Text(r))
 	}

@@ -36,7 +36,7 @@
  "sales.approval.kind.CONFIRM": "kwemeza itegeko",
  "sales.approval.level_amend": "Kwemeza impinduka",
  "sales.approval.level_cancel": "Kwemeza ihagarikwa",
- "sales.approval.level_discount": "Kwemezwa n'Umuyobozi Mukuru (igiciro kiri munsi y'urugero rw'igabanywa)",
+ "sales.approval.level_discount": "Kwemezwa n'Umuyobozi w'Umusaruro (igiciro kiri munsi y'urugero rw'igabanywa)",
  "sales.approval.status.APPROVED": "Byemejwe",
  "sales.approval.status.PENDING": "Birategereje",
  "sales.approval.status.REJECTED": "Byanzwe",

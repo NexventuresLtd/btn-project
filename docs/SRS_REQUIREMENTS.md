@@ -193,7 +193,8 @@ and PDF generation for reports.
 Out of scope: payment gateways / bank or mobile-money integrations. The system keeps records only: every payment
 (cash, MoMo, Airtel Money, bank transfer, cheque) happens outside it and is recorded with date, method, amount and
 reference (docs/FINANCE_RECORDS_DESIGN.md). §8 mapping: Finance "C R U A" = expenses.* / income.* / budgets.* /
-pettycash.* for FM; Sales "R" of finance = income.record for order payments (no income.view).
+pettycash.* for FM; Finance "R" (PM, Sales, Proc., Top Mgt, Admin) = expenses.view / income.view / budgets.view /
+pettycash.view; Sales also holds income.record for the payments customers make on their orders (Clients & orders C, ORD-06).
 
 ## 10 Dashboards and scheduled reports
 Dashboards — Executive/Top Management: production vs target, sales and orders, stock position, revenue, expenses, budget

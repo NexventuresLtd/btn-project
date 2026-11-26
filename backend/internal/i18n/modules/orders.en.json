@@ -36,7 +36,7 @@
  "sales.approval.kind.CONFIRM": "order confirmation",
  "sales.approval.level_amend": "Amendment approval",
  "sales.approval.level_cancel": "Cancellation approval",
- "sales.approval.level_discount": "General manager approval (price below the discount limit)",
+ "sales.approval.level_discount": "Production manager approval (price below the discount limit)",
  "sales.approval.status.APPROVED": "Approved",
  "sales.approval.status.PENDING": "Pending",
  "sales.approval.status.REJECTED": "Rejected",

@@ -702,10 +702,11 @@ scenario("T-05", "same worker's attendance entered offline by two users → conf
   await spaGo(ds, "/sync/conflicts");
   await ds.page.waitForFunction(() => [...document.querySelectorAll("tbody tr")].some((r) => r.innerText.includes("attendance")), { timeout: 20_000 });
   await ds.page.evaluate(() => [...document.querySelectorAll("tbody tr")].find((r) => r.innerText.includes("attendance"))?.click());
-  await ds.page.waitForSelector("#res", { timeout: 10_000 });
+  // §5.5 resolution screen: a field-by-field comparison and one radio per decision (keep server / device / merge)
+  await ds.page.waitForSelector('input[type=radio][value="keep_client"]', { timeout: 10_000 });
   const modal = await dialogText(ds);
   expect(modal.includes("ABSENT") && modal.includes("PRESENT"), "both versions shown", modal.slice(0, 300));
-  await setValue(ds, "#res", "keep_client");
+  await ds.page.click('input[type=radio][value="keep_client"]');
   await setValue(ds, "#note", `${NOTE}: worker left at 9:00, lead's record is right`);
   await clickInDialog(ds, "Save decision");
   await waitFor(() => sql(`SELECT status FROM sync_conflict WHERE id=${q(conf[0])}`) === "resolved", 15_000, "resolved");
@@ -726,7 +727,8 @@ scenario("T-05", "same worker's attendance entered offline by two users → conf
 
 scenario("T-06", "offline record fails a rule after capture → Rejected with reason, kept, corrected in Sync issues, accepted", async () => {
   const u = makeUser("sup6", "SUPERVISOR", "BTN-3");
-  if (!users.pm) makeUser("pm", "PRODUCTION_MANAGER", null);
+  // SRS §8: attendance is captured by the site supervisor (the PM only reads and approves it)
+  const sup2 = makeUser("sup6b", "SUPERVISOR", "BTN-2");
   const plantId = plants["BTN-3"];
   const workers = workersOf(plantId);
   let date;
@@ -736,12 +738,12 @@ scenario("T-06", "offline record fails a rule after capture → Rejected with re
   }
   const d = await device("t06", u);
   await openAttendance(d, plantId, date, workers.length);
-  const roster = await api(users.pm.email, "GET", `/attendance?plantId=${plantId}&date=${date}`);
+  const roster = await api(u.email, "GET", `/attendance?plantId=${plantId}&date=${date}`);
   const worker = roster.entries[0];
   await goOffline(d);
   await markAttendance(d, { marks: { 0: "Present" }, expectPending: 1 });
   // meanwhile, centrally: the worker was lent to BTN-2 for that day and recorded there (WRK-07 rule: one site per day)
-  await api(users.pm.email, "POST", "/attendance", { plantId: plants["BTN-2"], date, entries: [{ workerId: worker.workerId, status: "PRESENT", exception: true, exceptionReason: `${NOTE} lent to BTN-2` }] });
+  await api(sup2.email, "POST", "/attendance", { plantId: plants["BTN-2"], date, entries: [{ workerId: worker.workerId, status: "PRESENT", exception: true, exceptionReason: `${NOTE} lent to BTN-2` }] });
   ok("captured offline; the rules changed underneath", `${worker.name} marked Present at BTN-3 on the device; meanwhile recorded as working at BTN-2 that day`);
 
   await goOnline(d);
@@ -809,7 +811,7 @@ scenario("T-07", "offline beyond the unlock window → online re-authentication 
 
 scenario("T-08", "device revoked while offline → next sync uploads, then locks out and purges local data", async () => {
   const u = makeUser("sup8", "SUPERVISOR", "BTN-3");
-  const gm = makeUser("gm8", "GENERAL_MANAGER", null);
+  const gm = makeUser("adm8", "SYSTEM_ADMIN", null); // SRS §8: devices are administered by the System Administrator
   const plantId = plants["BTN-3"];
   const workers = workersOf(plantId);
   const date = freeDay(plantId);
@@ -819,7 +821,7 @@ scenario("T-08", "device revoked while offline → next sync uploads, then locks
   await markAttendance(d, { all: true, expectPending: workers.length });
   ok("captured offline", `${workers.length} marks Pending`);
 
-  const dg = await device("t08gm", gm);
+  const dg = await device("t08adm", gm);
   await spaGo(dg, "/admin/devices");
   await dg.page.waitForSelector('input[placeholder^="Search user"]', { timeout: 20_000 });
   await dg.page.type('input[placeholder^="Search user"]', u.email);

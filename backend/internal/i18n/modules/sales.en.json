@@ -15,7 +15,7 @@
  "sales.err.draft_only": "You may save the sale as a draft but not confirm it",
  "sales.err.fix_lines": "Please correct the highlighted lines",
  "sales.err.fully_paid": "This sale is already fully paid",
- "sales.err.gm_approval": "One or more prices are more than {pct}% below the product's default price, so the General Manager must confirm this sale. Save it as a draft and ask the GM to confirm it.",
+ "sales.err.gm_approval": "One or more prices are more than {pct}% below the product's default price, so the Production Manager must approve this sale. Save it as a draft and ask the Production Manager to approve it.",
  "sales.err.not_enough_stock": "Not enough finished goods at {plant} on {date} — {detail}",
  "sales.err.only_confirmed_dispatch": "Only confirmed sales can be dispatched",
  "sales.err.only_draft_confirm": "Only draft sales can be confirmed (this one is {status})",

@@ -200,9 +200,9 @@ func TestBlindCategoryCountVarianceApproval(t *testing.T) {
 func TestOwnCountApprovalAndSync(t *testing.T) {
 	f := setup(t)
 	e := f.e
-	f.ok(t, e.Do("POST", "/api/stock/receipts", map[string]any{"plantId": f.plant["BTN-2"], "itemKind": "product", "itemId": f.prod["HB15"], "date": f.today, "qty": 500}, f.pm), 201)
+	f.ok(t, e.Do("POST", "/api/stock/receipts", map[string]any{"plantId": f.plant["BTN-2"], "itemKind": "product", "itemId": f.prod["HB15"], "date": f.today, "qty": 500}, f.sup2), 201)
 	c := count(f.ok(t, e.Do("POST", "/api/stock-counts", map[string]any{"plantId": f.plant["BTN-2"], "countDate": f.today, "scope": "CATEGORY",
-		"itemKind": "product", "category": "HOLLOW_BLOCK"}, f.pm), 201))
+		"itemKind": "product", "category": "HOLLOW_BLOCK"}, f.sup2), 201))
 	id := c["id"].(string)
 	// counts captured offline on the supervisor's device, submitted with the last record
 	dc := e.SignInDevice(f.sup2, "")
@@ -242,24 +242,35 @@ func TestOwnCountApprovalAndSync(t *testing.T) {
 	if bal != 490 {
 		t.Fatalf("balance %d", bal)
 	}
-	// separation of duties: the PM may not approve a count he submitted himself
-	if r := e.Do("POST", "/api/stock-counts", map[string]any{"plantId": f.plant["HQ"], "countDate": f.today, "scope": "CATEGORY", "itemKind": "material", "category": "FUEL"}, f.pm); r.StatusCode != 400 {
+	// separation of duties: an HQ stock officer counts (no approve permission, SRS §8), the PM approves; a PM recorded
+	// as the submitter may not approve his own count
+	sa := e.User(auth.RoleStockOfficer)
+	if r := e.Do("POST", "/api/stock-counts", map[string]any{"plantId": f.plant["HQ"], "countDate": f.today, "scope": "CATEGORY", "itemKind": "material", "category": "FUEL"}, sa); r.StatusCode != 400 {
 		t.Fatalf("empty scope %d", r.StatusCode) // no material in that category
 	}
 	c2 := count(f.ok(t, e.Do("POST", "/api/stock-counts", map[string]any{"plantId": f.plant["HQ"], "countDate": f.today, "scope": "CATEGORY",
-		"itemKind": "material", "category": "AGGREGATE"}, f.pm), 201))
+		"itemKind": "material", "category": "AGGREGATE"}, sa), 201))
 	var zero []any
 	for _, l := range c2["lines"].([]any) {
 		zero = append(zero, map[string]any{"lineId": l.(map[string]any)["id"], "countedQty": 0})
 	}
 	id2 := c2["id"].(string)
-	f.ok(t, e.Do("PUT", "/api/stock-counts/"+id2+"/lines", map[string]any{"lines": zero}, f.pm), 200)
-	f.ok(t, e.Do("POST", "/api/stock-counts/"+id2+"/submit", map[string]any{}, f.pm), 200)
-	if code, _, _ := e.ErrorOf(e.Do("POST", "/api/stock-counts/"+id2+"/approve", map[string]any{}, f.pm)); code != "forbidden" {
-		t.Fatalf("own approval %s", code)
+	f.ok(t, e.Do("PUT", "/api/stock-counts/"+id2+"/lines", map[string]any{"lines": zero}, sa), 200)
+	f.ok(t, e.Do("POST", "/api/stock-counts/"+id2+"/submit", map[string]any{}, sa), 200)
+	if code, _, _ := e.ErrorOf(e.Do("POST", "/api/stock-counts/"+id2+"/approve", map[string]any{}, sa)); code != "forbidden" {
+		t.Fatalf("counter approval %s", code)
 	}
-	if ap := count(f.ok(t, e.Do("POST", "/api/stock-counts/"+id2+"/approve", map[string]any{}, f.gm), 200)); ap["status"] != "APPROVED" {
-		t.Fatalf("gm %+v", ap)
+	if _, err := e.Pool.Exec(t.Context(), `UPDATE stock_count SET submitted_by_id=$2 WHERE id=$1`, id2, f.pm.ID); err != nil {
+		t.Fatal(err)
+	}
+	if code, msg, _ := e.ErrorOf(e.Do("POST", "/api/stock-counts/"+id2+"/approve", map[string]any{}, f.pm)); code != "forbidden" {
+		t.Fatalf("own approval %s %s", code, msg)
+	}
+	if _, err := e.Pool.Exec(t.Context(), `UPDATE stock_count SET submitted_by_id=$2 WHERE id=$1`, id2, sa.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ap := count(f.ok(t, e.Do("POST", "/api/stock-counts/"+id2+"/approve", map[string]any{}, f.pm), 200)); ap["status"] != "APPROVED" {
+		t.Fatalf("pm %+v", ap)
 	}
 	// pull carries open counts with lines
 	r := dc.Do("GET", "/api/sync/pull?entities=stock_counts", nil)

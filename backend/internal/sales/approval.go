@@ -21,7 +21,7 @@ import (
 // Order approvals (ORD-04, ORD-10): value/role levels come from approvals.Levels("sales_order", amount) (admin-configurable
 // thresholds), required lowest level first, one approval per level.
 //
-//	CONFIRM   — thresholds on the order total (+ a General-Manager level when a line is discounted beyond the limit).
+//	CONFIRM   — thresholds on the order total (+ a Production-Manager level when a line is discounted beyond the limit).
 //	            Levels the requester is entitled to approve are satisfied by the request itself.
 //	CANCEL    — thresholds + a "sales.cancel" level; every level by someone other than the requester (four eyes).
 //	AMENDMENT — thresholds on the new total (at least one "sales.approve" level); four eyes.
@@ -45,7 +45,9 @@ func requiredLevels(kind string, thresholds []approvals.Level, discountBeyondLim
 	for _, l := range out {
 		top = max(top, l.Level)
 	}
-	gm := string(auth.RoleGeneralManager)
+	// below-limit prices are approved by the Production Manager: SRS §8 gives order approval ("A") to the
+	// Production Manager and Sales only (Top Management reads orders)
+	gm := string(auth.RoleProductionManager)
 	switch kind {
 	case ApprConfirm:
 		if discountBeyondLimit {

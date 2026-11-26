@@ -15,7 +15,7 @@
  "sales.err.draft_only": "Mushobora kubika igurisha nk'inyandiko y'ibanze ariko ntimushobora kuryemeza",
  "sales.err.fix_lines": "Nyamuneka mukosore imirongo yagaragajwe",
  "sales.err.fully_paid": "Iri gurisha ryamaze kwishyurwa ryose",
- "sales.err.gm_approval": "Igiciro kimwe cyangwa byinshi biri munsi y'igiciro gisanzwe cy'igicuruzwa ku kigero kirenga {pct}%, bityo Umuyobozi Mukuru agomba kwemeza iri gurisha. Ribike nk'inyandiko y'ibanze maze usabe Umuyobozi Mukuru kuryemeza.",
+ "sales.err.gm_approval": "Igiciro kimwe cyangwa byinshi biri munsi y'igiciro gisanzwe cy'igicuruzwa ku kigero kirenga {pct}%, bityo Umuyobozi w'Umusaruro agomba kwemeza iri gurisha. Ribike nk'inyandiko y'ibanze maze usabe Umuyobozi w'Umusaruro kuryemeza.",
  "sales.err.not_enough_stock": "Nta bicuruzwa byarangiye bihagije kuri {plant} ku wa {date} — {detail}",
  "sales.err.only_confirmed_dispatch": "Ibigurishwa byemejwe ni byo byonyine bishobora koherezwa",
  "sales.err.only_draft_confirm": "Ibigurishwa by'inyandiko y'ibanze ni byo byonyine bishobora kwemezwa (iri ni {status})",

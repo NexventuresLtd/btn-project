@@ -67,88 +67,92 @@ const (
 var Matrix = []permRule{
 	{"dashboard.view", all},
 
-	{"production.view", rr(MD, GM, OA, PM, SM, FM, SUP, LEAD, OP, STO)},
-	{"production.record", rr(PM, SUP, LEAD)},
-	{"production.approve", rr(PM, GM)},
-	{"production.targets", rr(PM, GM)},
-	{"production.close", rr(PM, GM)}, // close a day; approve late corrections
+	// SRS §8 "Production": Sup. C R U · PM R U A · Stock R · Fin. R · Top Mgt R · Admin R (Sales, Proc. none).
+	{"production.view", rr(MD, GM, OA, PM, FM, SUP, LEAD, OP, STO, SYS)},
+	{"production.record", rr(PM, SUP, LEAD)}, // Sup. C U; PM U (edits)
+	{"production.approve", rr(PM)},
+	{"production.targets", rr(PM)},
+	{"production.close", rr(PM)}, // close a day; approve late corrections
 
-	{"stock.view", rr(MD, GM, OA, PM, SM, FM, SUP, LEAD, STO)},
-	{"stock.adjust", rr(PM, GM)},
-	{"stock.record", rr(STO, SUP, PM)}, // receipts / issues / adjustment requests at a location
+	// SRS §8 "Stock": Sup. C R (site) · PM R A · Stock C R U · Sales, Fin., Proc., Top Mgt, Admin R.
+	{"stock.view", rr(MD, GM, OA, PM, SM, FM, SUP, LEAD, STO, PRO, SYS)},
+	{"stock.adjust", rr(PM)},       // approve adjustments / opening balances
+	{"stock.record", rr(STO, SUP)}, // receipts / issues / adjustment requests at a location
+	{"transfers.view", rr(MD, GM, OA, PM, SM, FM, SUP, LEAD, STO, PRO, SYS)},
+	{"transfers.request", rr(SUP, STO)}, // §7.2: requested by a site or HQ officer
+	{"transfers.approve", rr(PM)},
+	{"transfers.dispatch", rr(STO, SUP)},
+	{"transfers.receive", rr(STO, SUP)},
+	{"stockcount.record", rr(STO, SUP)},
+	{"stockcount.approve", rr(PM)},
+	{"materials.view", rr(MD, GM, OA, PM, SM, FM, SUP, LEAD, STO, PRO, SYS)},
+	{"materials.record", rr(STO, SUP)},
+	{"materials.adjust", rr(PM)},
 
-	{"transfers.view", rr(PM, STO, SUP, LEAD, GM, MD, OA, FM, SM, PRO)},
-	{"transfers.request", rr(SUP, STO, PM)},
-	{"transfers.approve", rr(PM, GM)},
-	{"transfers.dispatch", rr(STO, SUP, PM)},
-	{"transfers.receive", rr(STO, SUP, PM)},
-
-	{"stockcount.record", rr(STO, SUP, PM)},
-	{"stockcount.approve", rr(PM, GM)},
-
-	{"materials.view", rr(MD, GM, OA, PM, FM, SUP, LEAD, STO)},
-	{"materials.record", rr(PM, FM, SUP)},
-	{"materials.adjust", rr(PM, GM)},
-
-	{"sales.view", rr(MD, GM, OA, PM, SM, FM, STO)},
-	{"sales.create", rr(SM, GM)},
-	{"sales.confirm", rr(SM, GM)},
-	{"sales.cancel", rr(GM, MD)},
-	{"sales.approve", rr(SM, GM, MD)}, // value-based order approval, amendments
-	{"deliveries.create", rr(SM, PM, SUP)},
+	// SRS §8 "Clients & orders": Sup. R · PM R A · Stock R · Sales C R U A · Fin. R · Top Mgt R · Admin R.
+	{"sales.view", rr(MD, GM, OA, PM, SM, FM, SUP, STO, SYS)},
+	{"sales.create", rr(SM)},
+	{"sales.confirm", rr(SM)},
+	{"sales.cancel", rr(SM, PM)},  // approve a cancellation (ORD-04; never the requester)
+	{"sales.approve", rr(SM, PM)}, // value-based order approval, amendments
+	{"customers.manage", rr(SM)},
+	// SRS §8 "Delivery": Stock C R U · Sales C R U · everyone else R (read through sales.view).
+	{"deliveries.create", rr(SM, STO)},
+	// Order payments are income records (Finance C R U A, docs/FINANCE_RECORDS_DESIGN.md).
 	{"payments.record", rr(FM)},
-	{"customers.manage", rr(SM, GM, SYS)},
 
-	{"pettycash.view", rr(MD, GM, OA, FM)},
+	// SRS §8 "Finance": PM R · Sales R · Fin. C R U A · Proc. R · Top Mgt R A · Admin R (Sup., Stock none).
+	{"pettycash.view", rr(MD, GM, OA, FM, PM, SM, PRO, SYS)},
 	{"pettycash.record", rr(FM)},
 	{"pettycash.approve", rr(GM, MD)},
-	{"pettycash.custodian", rr(FM, SUP, PM)}, // hold a float, request top-ups, reconcile
-
-	{"expenses.view", rr(FM, GM, MD, OA, PRO)},
-	{"expenses.record", rr(FM, PM, SUP, STO)},
+	{"pettycash.custodian", rr(FM)}, // hold a float, request top-ups, reconcile
+	{"expenses.view", rr(FM, GM, MD, OA, PM, SM, PRO, SYS)},
+	{"expenses.record", rr(FM)},
 	{"expenses.approve", rr(FM, GM, MD)},
-
 	// Income records (money in). Recorded, never collected by the system: FM records and verifies, Sales records the
-	// payments customers made on orders, management reads.
-	{"income.view", rr(FM, GM, MD, OA)},
+	// payments customers made on their orders (ORD-06, Clients & orders C R U A), everyone with Finance R reads.
+	{"income.view", rr(FM, GM, MD, OA, PM, SM, PRO, SYS)},
 	{"income.record", rr(FM, SM)},
 	{"income.verify", rr(FM)},
-
-	{"budgets.view", rr(FM, GM, MD, OA, PM)},
+	{"budgets.view", rr(FM, GM, MD, OA, PM, SM, PRO, SYS)},
 	{"budgets.manage", rr(FM)},
 	{"budgets.approve", rr(GM, MD)}, // overrun approval
 
-	{"procurement.view", rr(PM, FM, PRO, GM, MD, OA, STO)},
-	{"procurement.request", rr(SUP, PM, STO, PRO, FM)},
+	// SRS §8 "Procurement": Sup. C R · PM R A · Stock R · Fin. R A · Proc. C R U · Top Mgt R A · Admin R.
+	{"procurement.view", rr(PM, FM, PRO, GM, MD, OA, STO, SUP, SYS)},
+	{"procurement.request", rr(SUP, PRO)},
 	{"procurement.approve", rr(PM, FM, GM, MD)}, // level decided by approval thresholds
-	{"procurement.manage", rr(PRO, FM)},         // suppliers, purchase orders
-	{"procurement.receive", rr(STO, PRO, SUP, PM)},
+	{"procurement.manage", rr(PRO)},             // suppliers, purchase orders
+	{"procurement.receive", rr(STO, PRO, SUP)},  // goods receipts create stock receipts (Stock C R U, Sup. C)
 
-	{"attendance.view", rr(MD, GM, OA, PM, FM, SUP, LEAD)},
-	{"attendance.record", rr(PM, SUP, LEAD, FM)},
-	{"attendance.approve", rr(PM, GM)}, // lock attendance, approve corrections
-
-	{"payroll.view", rr(MD, GM, OA, PM, FM, SUP)},
-	{"payroll.prepare", rr(SUP, FM, PM)},
-	{"payroll.check", rr(PM, SUP)},
+	// SRS §8 "Attendance & wages": Sup. C R U (attendance) · PM R A · Fin. R U · Top Mgt R · Admin R.
+	{"attendance.view", rr(MD, GM, OA, PM, FM, SUP, LEAD, SYS)},
+	{"attendance.record", rr(SUP, LEAD)},
+	{"attendance.approve", rr(PM)}, // lock attendance, approve corrections
+	{"payroll.view", rr(MD, GM, OA, PM, FM, SYS)},
+	{"payroll.prepare", rr(FM)},
+	{"payroll.check", rr(PM)}, // §7.4: the calculation is reviewed by the Production Manager (only)
 	{"payroll.verify", rr(FM)},
-	{"payroll.authorize", rr(GM, MD)},
+	{"payroll.authorize", rr(GM, MD)}, // wages are PAYROLL expenses: Finance "Top Mgt R A" (documented in docs/ROLES.md)
 	{"payroll.pay", rr(FM)},
-	{"workers.manage", rr(FM, PM, SUP)},
-	{"wages.view", rr(FM, PM, GM, MD, OA)}, // per-worker payment history
+	{"workers.manage", rr(FM)},
+	{"wages.view", rr(FM, PM, GM, MD, OA, SYS)}, // per-worker payment history
 
-	{"reports.view", rr(MD, GM, OA, PM, SM, FM, SUP, STO, PRO)},
-	{"reports.schedule", rr(SYS, GM, MD)}, // scheduled report recipients
+	// SRS §8 "Reports": everyone R (supervisors their own site).
+	{"reports.view", rr(MD, GM, OA, PM, SM, FM, SUP, STO, PRO, SYS)},
+	{"reports.schedule", rr(SYS)}, // scheduled report recipients (a setting)
 
-	{"sync.resolve", rr(PM, SUP, GM)}, // resolve sync conflicts / negative-stock flags (SUP: own site)
+	{"sync.resolve", rr(PM, SUP)}, // §5.5: supervisor resolves own-site conflicts, PM reviews negative stock
 
-	{"users.manage", rr(SYS, GM, MD)},
-	{"masterdata.manage", rr(SYS, GM, PM)},
+	// SRS §8 "Users, settings, audit": Top Mgt R · Admin C R U.
+	{"users.view", rr(SYS, MD, GM, OA)},
+	{"users.manage", rr(SYS)},
+	{"masterdata.manage", rr(SYS)},
 	{"audit.view", rr(SYS, MD, GM, OA)},
-	{"settings.manage", rr(SYS, MD)},
+	{"settings.manage", rr(SYS)},
 	{"admin.monitor", rr(SYS)},               // jobs, health, errors, sync monitor, devices
-	{"data.export", rr(SYS, MD, GM, OA, FM)}, // bulk CSV/JSON export (ADM-05)
-	{"devices.manage", rr(SYS, GM, MD)},      // revoke any user's devices
+	{"data.export", rr(SYS, MD, GM, OA, FM)}, // bulk CSV/JSON export (ADM-05: authorised users)
+	{"devices.manage", rr(SYS)},              // revoke any user's devices
 
 	// Super Administrator only (the empty role list means nobody else holds them).
 	{"branding.manage", rr()},

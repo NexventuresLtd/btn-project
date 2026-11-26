@@ -76,7 +76,7 @@ func TestAudienceResolutionWithSiteScope(t *testing.T) {
 	pool := testutil.Reset(t)
 	ctx := context.Background()
 	btn1 := plantID(t, pool, "BTN-1")
-	pm := testutil.CreateUser(t, pool, auth.RoleProductionManager)                                           // all sites
+	pm := testutil.CreateUser(t, pool, auth.RoleProductionManager)                                           // all sites; no stock.record (SRS §8 PM R A)
 	sup1 := testutil.CreateUser(t, pool, auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-1"})             // own site
 	sup2 := testutil.CreateUser(t, pool, auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-2"})             // other site
 	_ = testutil.CreateUser(t, pool, auth.RoleSupervisor, testutil.UserOpts{Plant: "BTN-1", Inactive: true}) // inactive
@@ -94,7 +94,7 @@ func TestAudienceResolutionWithSiteScope(t *testing.T) {
 		return r
 	}
 	send("test.plain", notify.ToPermissionAtSite("stock.record", btn1))
-	if got, want := recipients(t, pool, "test.plain"), ids(pm, sup1, stoHQ, super); !eq(got, want) {
+	if got, want := recipients(t, pool, "test.plain"), ids(sup1, stoHQ, super); !eq(got, want) {
 		t.Fatalf("permission+site: got %v want %v", got, want)
 	}
 	_ = sup2

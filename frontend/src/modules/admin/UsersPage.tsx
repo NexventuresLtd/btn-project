@@ -22,7 +22,8 @@ type Pending =
 
 export function UsersPage() {
   const { t, tx } = useT();
-  const { user: me } = useAuth();
+  const { user: me, can } = useAuth();
+  const manage = can("users.manage"); // SRS §8: Top Mgt reads users (users.view), only the administrator changes them
   const { data: lookups } = useLookups();
   const [search, setSearch] = useState("");
   const q = useDebounced(search.trim());
@@ -85,7 +86,7 @@ export function UsersPage() {
       header: <span className="sr-only">{t("common.actions")}</span>,
       align: "right",
       className: "w-12",
-      cell: (u) => (
+      cell: (u) => (!manage ? null :
         <RowMenu
           label={t("admin.users.actionsFor", { name: u.name })}
           items={[
@@ -107,7 +108,7 @@ export function UsersPage() {
         title={t("admin.users.title")}
         description={t("admin.users.description")}
         breadcrumbs={[{ label: t("admin.breadcrumb") }, { label: t("admin.users.title") }]}
-        actions={<Button icon={<UserPlus className="size-4" />} onClick={() => setEditing("new")}>{t("admin.users.new")}</Button>}
+        actions={manage ? <Button icon={<UserPlus className="size-4" />} onClick={() => setEditing("new")}>{t("admin.users.new")}</Button> : undefined}
       />
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
@@ -117,7 +118,7 @@ export function UsersPage() {
         {users.isError ? (
           <ErrorState error={users.error} retry={() => users.refetch()} />
         ) : !users.isLoading && !users.data?.items.length && !q ? (
-          <EmptyState icon={<Users />} title={t("admin.users.emptyTitle")} description={t("admin.users.emptyText")} action={<Button onClick={() => setEditing("new")}>{t("admin.users.new")}</Button>} />
+          <EmptyState icon={<Users />} title={t("admin.users.emptyTitle")} description={t("admin.users.emptyText")} action={manage ? <Button onClick={() => setEditing("new")}>{t("admin.users.new")}</Button> : undefined} />
         ) : (
           <>
             <DataTable columns={columns} rows={users.data?.items} rowKey={(u) => u.id} loading={users.isLoading} empty={t("admin.users.noMatch", { q })} />

@@ -15,7 +15,7 @@
   "sales.err.draft_only": "Vous pouvez enregistrer la vente comme brouillon, mais pas la confirmer",
   "sales.err.fix_lines": "Veuillez corriger les lignes signalées",
   "sales.err.fully_paid": "Cette vente est déjà entièrement payée",
-  "sales.err.gm_approval": "Un ou plusieurs prix sont inférieurs de plus de {pct} % au prix par défaut du produit ; le Directeur général doit donc confirmer cette vente. Enregistrez-la comme brouillon et demandez au Directeur général de la confirmer.",
+  "sales.err.gm_approval": "Un ou plusieurs prix sont inférieurs de plus de {pct} % au prix par défaut du produit ; le Directeur de production doit donc approuver cette vente. Enregistrez-la comme brouillon et demandez au Directeur de production de l'approuver.",
   "sales.err.not_enough_stock": "Produits finis insuffisants à {plant} le {date} — {detail}",
   "sales.err.only_confirmed_dispatch": "Seules les ventes confirmées peuvent être expédiées",
   "sales.err.only_draft_confirm": "Seules les ventes en brouillon peuvent être confirmées (statut actuel : {status})",
