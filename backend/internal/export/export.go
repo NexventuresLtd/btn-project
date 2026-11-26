@@ -110,8 +110,9 @@ func Send(c *fiber.Ctx, format Format, filename string, cols []Column, rows [][]
 
 // SendDoc writes doc as an attachment in format.
 func SendDoc(c *fiber.Ctx, format Format, doc Doc) error {
-	doc.Filters = append(doc.Filters, hookFilters(c)...) // RPT-06 data cut-off (hooks.go)
 	lang := httpx.Lang(c)
+	notes := CutoffNotes(c)
+	doc.Filters = append(doc.Filters, hookFilters(c)...) // RPT-06 data cut-off (hooks.go)
 	if len(doc.Rows) > MaxRows {
 		doc.Rows = doc.Rows[:MaxRows]
 		c.Set("X-Export-Truncated", strconv.Itoa(MaxRows))
@@ -139,7 +140,7 @@ func SendDoc(c *fiber.Ctx, format Format, doc Doc) error {
 	case CSV:
 		c.Set(fiber.HeaderContentType, "text/csv; charset=utf-8")
 		c.Attachment(name + ".csv")
-		return writeCSV(c, headers, doc.Columns, doc.Rows)
+		return writeCSV(c, headers, doc.Columns, doc.Rows, notes)
 	case XLSX:
 		b, err := buildXLSX(meta, headers, doc.Columns, doc.Rows)
 		if err != nil {
@@ -415,9 +416,17 @@ func csvCell(kind Kind, v any, lang i18n.Lang) string {
 		}
 		return i18n.T(lang, "export.no")
 	case string:
-		return safeText(x)
+		return csvText(x)
 	}
-	return safeText(str(t))
+	return csvText(str(t))
+}
+
+// csvText is safeText plus the note guard: a data cell never starts with "#" (see NoteMarker).
+func csvText(s string) string {
+	if strings.HasPrefix(s, "#") {
+		return "'" + s
+	}
+	return safeText(s)
 }
 
 // safeText neutralises spreadsheet formula injection (=, +, -, @, tab, CR at the start of a text cell).
@@ -432,7 +441,50 @@ func safeText(s string) string {
 	return s
 }
 
-func writeCSV(c *fiber.Ctx, headers []string, cols []Column, rows [][]any) error {
+// CutoffNotes are the RPT-06 statement lines (data cut-off, sites with unsynchronised data) of this request,
+// translated, as installed by internal/cutoff. nil when no hook is installed.
+func CutoffNotes(c *fiber.Ctx) []Filter {
+	hf := hookFilters(c)
+	if len(hf) == 0 {
+		return nil
+	}
+	lang := httpx.Lang(c)
+	out := make([]Filter, len(hf))
+	for i, f := range hf {
+		out[i] = Filter{Label: i18n.T(lang, f.Label), Value: f.Value}
+	}
+	return out
+}
+
+// NoteMarker starts every CSV note row (RPT-06: the data cut-off and the sites with unsynchronised offline data,
+// the same lines PDFs and Excel files carry). The CSV layout is:
+//
+//	row 1      column headers
+//	rows 2..n  data
+//	then       one row per note: "# <label>", "<value>", "" … padded to the column count
+//
+// The header stays on the first line (accounting imports), every row has the same number of fields, and readers
+// skip the notes with a comment character: Go csv.Reader{Comment: '#'}, pandas read_csv(comment="#"). Data text
+// cells that would start with "#" are written as "'#…" (like the formula-injection guard), so only notes do.
+const NoteMarker = "# "
+
+// noteRecords renders notes as CSV records of width n (at least one field).
+func noteRecords(notes []Filter, n int) [][]string {
+	out := make([][]string, 0, len(notes))
+	for _, f := range notes {
+		var rec []string
+		if n < 2 {
+			rec = []string{NoteMarker + f.Label + ": " + f.Value}
+		} else {
+			rec = make([]string, n)
+			rec[0], rec[1] = NoteMarker+f.Label, safeText(f.Value)
+		}
+		out = append(out, rec)
+	}
+	return out
+}
+
+func writeCSV(c *fiber.Ctx, headers []string, cols []Column, rows [][]any, notes []Filter) error {
 	lang := httpx.Lang(c)
 	var buf strings.Builder
 	buf.WriteString("\xEF\xBB\xBF")
@@ -452,6 +504,9 @@ func writeCSV(c *fiber.Ctx, headers []string, cols []Column, rows [][]any) error
 			return err
 		}
 	}
+	if err := w.WriteAll(noteRecords(notes, len(cols))); err != nil {
+		return err
+	}
 	w.Flush()
 	if err := w.Error(); err != nil {
 		return err
@@ -461,6 +516,11 @@ func writeCSV(c *fiber.Ctx, headers []string, cols []Column, rows [][]any) error
 
 // WriteCSV writes a CSV (BOM, RFC 4180) to w — for streaming exports that do not go through SendDoc.
 func WriteCSV(w *bufio.Writer, lang i18n.Lang, cols []Column, next func() ([]any, bool, error), withBOM bool) (int, error) {
+	return WriteCSVNotes(w, lang, cols, next, withBOM, nil)
+}
+
+// WriteCSVNotes is WriteCSV followed by the RPT-06 note rows (see NoteMarker; notes from CutoffNotes).
+func WriteCSVNotes(w *bufio.Writer, lang i18n.Lang, cols []Column, next func() ([]any, bool, error), withBOM bool, notes []Filter) (int, error) {
 	if withBOM {
 		w.WriteString("\xEF\xBB\xBF")
 	}
@@ -496,6 +556,11 @@ func WriteCSV(w *bufio.Writer, lang i18n.Lang, cols []Column, next func() ([]any
 		n++
 		if n%500 == 0 {
 			cw.Flush()
+		}
+	}
+	for _, rec := range noteRecords(notes, len(cols)) {
+		if err := cw.Write(rec); err != nil {
+			return n, err
 		}
 	}
 	cw.Flush()

@@ -12,6 +12,7 @@ import (
 
 	"btn-ops/internal/app/apptest"
 	"btn-ops/internal/auth"
+	"btn-ops/internal/export"
 	"btn-ops/internal/testutil"
 )
 
@@ -46,6 +47,14 @@ func TestDataExport(t *testing.T) {
 		t.Fatalf("products csv %d %q %q", r.StatusCode, r.Header.Get("Content-Disposition"), b)
 	}
 	lines := strings.Split(strings.TrimSpace(string(b[3:])), "\r\n")
+	// RPT-06: the file ends with the data cut-off note rows ("# label,value"); data rows never start with "#"
+	notes := 0
+	for len(lines) > 0 && strings.HasPrefix(lines[len(lines)-1], export.NoteMarker) {
+		lines, notes = lines[:len(lines)-1], notes+1
+	}
+	if notes == 0 {
+		t.Fatalf("csv has no cut-off note: %q", b)
+	}
 	var nProducts int
 	_ = e.Pool.QueryRow(context.Background(), `SELECT count(*) FROM "Product"`).Scan(&nProducts)
 	if len(lines) != nProducts+1 || !strings.HasPrefix(lines[0], "Id,Code,Name") {

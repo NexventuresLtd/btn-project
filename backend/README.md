@@ -192,10 +192,14 @@ Never log secrets: the slog handler redacts password/code/token/cookie keys; do 
     `httpx.UnpagedLocal`), then `Build(b *export.Builder, j export.J)` turns the JSON into `b.Columns(...)` + `b.Row(...)`.
     `export.J`: `Get(path) V(path) S(path) F(path) Arr(path) Keys(path) Exists(path)` with dotted paths. `Builder`: `Filter`, `Title`, `Name`, `Enum`, `T`, `C`, `Params`.
   * Or send directly: `export.FormatFromQuery(c) (Format, bool)`, `export.Send(c, format, filename, []export.Column, [][]any)`,
-    `export.SendDoc(c, format, export.Doc{Name, Title, Columns, Rows, Filters})`, streaming `export.WriteCSV(w, lang, cols, next, bom)`, `export.RowObject`.
+    `export.SendDoc(c, format, export.Doc{Name, Title, Columns, Rows, Filters})`, streaming `export.WriteCSV(w, lang, cols, next, bom)` / `export.WriteCSVNotes(…, export.CutoffNotes(c))`, `export.RowObject`.
   * `Column{Key, Header (i18n key), Kind, Width}`, kinds `Text Int Number Money Qty Percent Date DateTime Bool`. Values may be JSON numbers,
     numeric strings, Go numbers, `YYYY-MM-DD`, RFC 3339 or `time.Time`. Shared headers `export.col.*`, enum labels `export.enum.*`.
-  * CSV: BOM, RFC 4180, CRLF, DD/MM/YYYY, cells starting with `= + - @` are prefixed with `'`. XLSX (excelize): typed cells, `dd/mm/yyyy`,
+  * CSV: BOM, RFC 4180, CRLF, DD/MM/YYYY, cells starting with `= + - @` are prefixed with `'`. **RPT-06 cut-off note:** after the data rows every CSV (`SendDoc`, `WriteCSVNotes` for the bulk data export)
+    ends with one row per note — `# Data cut-off,<time>` and, when devices hold unsynced records,
+    `# Unsynchronised data,<n sites (codes)>` — padded to the column count, so the header stays on line 1 and every row has
+    the same field count. Readers skip them as comments (`csv.Reader{Comment: '#'}`, pandas `comment="#"`); data text
+    cells starting with `#` are written `'#…` so only notes start with `#`. JSON data exports carry the same lines in `notes`. XLSX (excelize): typed cells, `dd/mm/yyyy`,
     `#,##0 "RWF"`, bold header, frozen header, autofilter, title/generated/filters block. JSON: `{title, generatedAt, generatedBy, filters, columns, rows}`.
   * `ratelimit.Group("export")` is applied by the middleware; `ratelimit.Check(c, group)` is the non-middleware form.
   * `Personal: true` → `export.PersonalDataHook` (privacy access log).

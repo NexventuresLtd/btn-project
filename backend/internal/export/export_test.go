@@ -2,7 +2,9 @@ package export
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"io"
 	"net/http/httptest"
@@ -208,5 +210,54 @@ func TestRowLimitHeaderOnlyLowersTheCap(t *testing.T) {
 		if string(got) != want {
 			t.Fatalf("header %q: limit %s, want %s", hdr, got, want)
 		}
+	}
+}
+
+// RPT-06: CSV exports end with the same cut-off / unsynchronised-sites lines as PDF and Excel, as "# " note rows
+// padded to the column count, and stay parseable (header first, constant field count, notes skipped as comments).
+func TestCSVCarriesCutoffNotes(t *testing.T) {
+	SetFiltersHook(func(c *fiber.Ctx) []Filter {
+		return []Filter{{Label: "Data cut-off", Value: "26/11/2026 10:00"}, {Label: "Unsynchronised data", Value: "2 sites (BTN-1, BTN-3)"}}
+	})
+	defer SetFiltersHook(nil)
+	app := fiber.New()
+	app.Get("/x", func(c *fiber.Ctx) error {
+		return Send(c, CSV, "r", testCols[:2], [][]any{{"#5 block", 3}, {"b", 4}})
+	})
+	resp, err := app.Test(httptest.NewRequest("GET", "/x", nil), -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	s := string(b[3:])
+	want := "Name,Qty\r\n'#5 block,3\r\nb,4\r\n# Data cut-off,26/11/2026 10:00\r\n# Unsynchronised data,\"2 sites (BTN-1, BTN-3)\"\r\n"
+	if s != want {
+		t.Fatalf("csv mismatch:\n got %q\nwant %q", s, want)
+	}
+	r := csv.NewReader(strings.NewReader(s))
+	r.Comment = '#'
+	recs, err := r.ReadAll()
+	if err != nil || len(recs) != 3 || recs[1][0] != "'#5 block" {
+		t.Fatalf("parse with comments: %v %v", recs, err)
+	}
+	all, err := csv.NewReader(strings.NewReader(s)).ReadAll()
+	if err != nil || len(all) != 5 || len(all[4]) != 2 {
+		t.Fatalf("plain parse: %v %v", all, err)
+	}
+	// one-column exports keep a single field per note
+	if got := noteRecords([]Filter{{Label: "A", Value: "b"}}, 1); len(got[0]) != 1 || got[0][0] != "# A: b" {
+		t.Fatalf("narrow note %v", got)
+	}
+	// streaming writer (data export) carries them too
+	var buf bytes.Buffer
+	w := bufio.NewWriter(&buf)
+	i := 0
+	n, err := WriteCSVNotes(w, "en", testCols[:2], func() ([]any, bool, error) {
+		i++
+		return []any{"x", i}, i <= 1, nil
+	}, false, []Filter{{Label: "Data cut-off", Value: "now"}})
+	w.Flush()
+	if err != nil || n != 1 || buf.String() != "Name,Qty\r\nx,1\r\n# Data cut-off,now\r\n" {
+		t.Fatalf("stream: %d %v %q", n, err, buf.String())
 	}
 }

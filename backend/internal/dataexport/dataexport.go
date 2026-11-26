@@ -281,7 +281,8 @@ func (t *Table) query(p params) (string, []any) {
 }
 
 // stream writes one table to w; returns the row count.
-func stream(ctx context.Context, pool *pgxpool.Pool, w *bufio.Writer, t *Table, p params, lang i18n.Lang) (int, error) {
+// notes are the RPT-06 cut-off lines (export.CutoffNotes), appended to CSV files as "# " rows.
+func stream(ctx context.Context, pool *pgxpool.Pool, w *bufio.Writer, t *Table, p params, lang i18n.Lang, notes []export.Filter) (int, error) {
 	sql, args := t.query(p)
 	rows, err := pool.Query(ctx, sql, args...)
 	if err != nil {
@@ -296,7 +297,7 @@ func stream(ctx context.Context, pool *pgxpool.Pool, w *bufio.Writer, t *Table, 
 		return v, err == nil, err
 	}
 	if p.format == export.CSV {
-		return export.WriteCSV(w, lang, t.Columns, next, true)
+		return export.WriteCSVNotes(w, lang, t.Columns, next, true, notes)
 	}
 	type colOut struct {
 		Key    string `json:"key"`
@@ -308,7 +309,16 @@ func stream(ctx context.Context, pool *pgxpool.Pool, w *bufio.Writer, t *Table, 
 		cols[i] = colOut{col.Key, i18n.T(lang, col.Header), col.Kind.String()}
 	}
 	hdr, _ := json.Marshal(cols)
-	fmt.Fprintf(w, `{"table":%q,"exportedAt":%q,"columns":%s,"rows":[`, t.Name, time.Now().UTC().Format(time.RFC3339), hdr)
+	type noteOut struct {
+		Label string `json:"label"`
+		Value string `json:"value"`
+	}
+	nl := make([]noteOut, 0, len(notes))
+	for _, n := range notes {
+		nl = append(nl, noteOut{n.Label, n.Value})
+	}
+	nb, _ := json.Marshal(nl)
+	fmt.Fprintf(w, `{"table":%q,"exportedAt":%q,"notes":%s,"columns":%s,"rows":[`, t.Name, time.Now().UTC().Format(time.RFC3339), nb, hdr)
 	n := 0
 	for {
 		r, ok, err := next()
@@ -378,10 +388,11 @@ func one(c *fiber.Ctx, d *deps.Deps) error {
 	c.Attachment("btn-" + t.Name + "_" + stamp() + "." + ext)
 	httpx.NoStore(c)
 	tbl := *t
+	notes := export.CutoffNotes(c)
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		ctx, cancel := context.WithTimeout(context.Background(), streamTimeout)
 		defer cancel()
-		if _, err := stream(ctx, d.Pool, w, &tbl, p, lang); err != nil {
+		if _, err := stream(ctx, d.Pool, w, &tbl, p, lang, notes); err != nil {
 			slog.Error("data export stream", "table", tbl.Name, "err", err)
 		}
 		w.Flush()
@@ -411,6 +422,7 @@ func all(c *fiber.Ctx, d *deps.Deps) error {
 	if u := auth.FromCtx(c); u != nil {
 		by = u.Name
 	}
+	notes := export.CutoffNotes(c)
 	c.Set(fiber.HeaderContentType, "application/zip")
 	c.Attachment("btn-data-export_" + stamp() + ".zip")
 	httpx.NoStore(c)
@@ -419,6 +431,13 @@ func all(c *fiber.Ctx, d *deps.Deps) error {
 		defer cancel()
 		zw := zip.NewWriter(w)
 		manifest := map[string]any{"exportedAt": time.Now().UTC().Format(time.RFC3339), "exportedBy": by, "format": p.format, "tables": map[string]int{}}
+		if len(notes) > 0 {
+			nm := map[string]string{}
+			for _, n := range notes {
+				nm[n.Label] = n.Value
+			}
+			manifest["dataCutoff"] = nm // RPT-06
+		}
 		for i := range tables {
 			fw, err := zw.Create(tables[i].Name + "." + string(p.format))
 			if err != nil {
@@ -426,7 +445,7 @@ func all(c *fiber.Ctx, d *deps.Deps) error {
 				return
 			}
 			bw := bufio.NewWriterSize(fw, 64<<10)
-			n, err := stream(ctx, d.Pool, bw, &tables[i], p, lang)
+			n, err := stream(ctx, d.Pool, bw, &tables[i], p, lang, notes)
 			bw.Flush()
 			if err != nil {
 				slog.Error("data export stream", "table", tables[i].Name, "err", err)
