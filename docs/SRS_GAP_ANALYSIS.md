@@ -10,22 +10,23 @@ Legend: ✅ met · ⚠️ partial (the missing clause is stated) · ❌ missing 
 
 ## Summary
 
-**122 numbered requirements: 115 ✅ · 2 ⚠️ · 0 ❌ · 5 env** (after the post-audit fixes of AUTH-05, OFF-11, NFR-P1, NFR-M1, NFR-M2; audit: 110 ✅ · 7 ⚠️).
+**122 numbered requirements: 117 ✅ · 0 ⚠️ · 0 ❌ · 5 env** (after the post-audit fixes of AUTH-05, OFF-11, NFR-P1, NFR-M1, NFR-M2, ORD-04, RPT-06; audit: 110 ✅ · 7 ⚠️).
 
-There are also 9 ⚠️ findings in the cross-cutting sections (§5.2 closed, see below): §5.5 (2), §6.3 (1), §7.2 (1), §7.4 (1),
-§8 (1, many cells) and §10 scheduled reports (2) (§9.2 sync closed after the audit).
+The cross-cutting findings are all closed after the audit: §5.2, §5.5 (2), §6.3, §7.2, §7.4, §8 (every cell, encoded in
+`auth.TestSRSRoleMatrix`), §9.2 sync and §10 scheduled reports (2). Stated deviation kept: `payroll.authorize` stays with
+GM/MD (wages are PAYROLL expenses, Finance "Top Mgt A").
 
 | Module | Reqs | ✅ | ⚠️ | ❌ | env | Open points |
 |---|---|---|---|---|---|---|
 | Access control (AUTH) | 10 | 10 | 0 | 0 | 0 | — (AUTH-05 lockout policy now set by the Super Administrator) |
-| Production (PRD) | 10 | 10 | 0 | 0 | 0 | — (the §5.5 merge UI is listed below) |
-| Stock (STK) | 10 | 10 | 0 | 0 | 0 | — (§7.2: a transfer reason is optional) |
-| Clients & orders (ORD) | 10 | 9 | 1 | 0 | 0 | ORD-04: a draft can be cancelled without approval |
+| Production (PRD) | 10 | 10 | 0 | 0 | 0 | — (§5.5 merge UI built) |
+| Stock (STK) | 10 | 10 | 0 | 0 | 0 | — (§7.2 transfer reason now required) |
+| Clients & orders (ORD) | 10 | 10 | 0 | 0 | 0 | — (ORD-04: every cancellation needs reason + approval) |
 | Delivery (DEL) | 6 | 6 | 0 | 0 | 0 | — |
-| Workforce (WRK) | 7 | 7 | 0 | 0 | 0 | — (§7.4: a supervisor can do the PM review) |
-| Finance (FIN) | 9 | 9 | 0 | 0 | 0 | — (§8: Sales and PM have no finance read) |
+| Workforce (WRK) | 7 | 7 | 0 | 0 | 0 | — (§7.4 review is Production Manager only) |
+| Finance (FIN) | 9 | 9 | 0 | 0 | 0 | — (§8: Finance R for PM, Sales, Proc., Top Mgt, Admin) |
 | Procurement (PRC) | 8 | 8 | 0 | 0 | 0 | — |
-| Reporting (RPT) | 7 | 6 | 1 | 0 | 0 | RPT-06: CSV exports have no cut-off note |
+| Reporting (RPT) | 7 | 7 | 0 | 0 | 0 | — (RPT-06: CSV exports end with the cut-off note rows) |
 | Administration (ADM) | 5 | 5 | 0 | 0 | 0 | — |
 | Offline & sync (OFF) | 22 | 22 | 0 | 0 | 0 | — (OFF-11 pull stall fixed) |
 | Non-functional (NFR) | 18 | 13 | 0 | 0 | 5 | — (P1, M1, M2 fixed after the audit) |
@@ -58,7 +59,7 @@ There are also 9 ⚠️ findings in the cross-cutting sections (§5.2 closed, se
 | ID | Status | Evidence | Missing → fix |
 |---|---|---|---|
 | AUTH-01 | ✅ | Argon2id PHC `auth/password.go:14-32`; login `auth/routes.go:120`; `auth_unit_test.go:TestHashRoundTripAndFormat`, `app/auth_flow_test.go:TestFullSignInFlow` | Sign-in is by email only, no username (the SRS says "or", so this is acceptable) |
-| AUTH-02 | ✅ | Matrix `auth/permissions.go:67-156`, `RequirePermission` on every route (`openapi:TestOpenAPIDocumentCoversEveryRoute`); UI guards in each `routes.tsx`; `TestPermissions`, `TestNewRoleMatrix` | Cell-level differences from §8 are listed under §8 |
+| AUTH-02 | ✅ | Matrix `auth/permissions.go` aligned with SRS §8 cell by cell; `RequirePermission` on every route (`openapi:TestOpenAPIDocumentCoversEveryRoute`); UI guards in each `routes.tsx` / `app/nav.ts`; `TestPermissions`, `TestSRSRoleMatrix` (the §8 table encoded; fails on any over-grant or unbacked cell) | |
 | AUTH-03 | ✅ | `IsPlantScoped`/`UserPlantScoped` `permissions.go:201-213`. curl: sup1 requesting `/stock/balances?plantId=BTN-2` got only BTN-1 data. `production:TestPermissionsAndPlantScope`, `stock:TestReadEndpointsPermissionsAndScope` | |
 | AUTH-04 | ✅ | Single-use 30-min link `auth/reset_link.go:22,59` (`used_at`/`invalidated_at`); forced first-login change `auth/middleware.go:16`; `f3_tokens_test.go:TestPasswordResetLink`, `TestPasswordChangeForcedAndPolicy` | |
 | AUTH-05 | ✅ | Fixed after the audit: the Super Administrator sets the threshold (3–20 failures, default 5) and period (1–1440 min, default 15) in Administration → Settings → *Account lockout* (`settings.Security`, `adminapi.putSettings`, 403 for any other role); the login flow reads it on every failure (`auth/routes.go` → `settings.LoadSecurity`); the change is audited with before/after (`settings.update`) and each lock records the period (`auth.lock`); UI in en/am/rw/fr (`i18n/ns/lockout.ts`). `app:TestLockoutPolicyConfigurable`, `TestAccountLockout` | |
@@ -102,7 +103,7 @@ There are also 9 ⚠️ findings in the cross-cutting sections (§5.2 closed, se
 | ORD-01 | ✅ | Client type, status, notes, TIN, contacts and communications tables (`02200_orders_delivery.sql:8-46`); CustomersPage/CustomerPage; `TestClientDatabaseDuplicatesAndHistory` | |
 | ORD-02 | ✅ | `POST /sales/customers/duplicates` matches on name, phone or TIN (`sales/dupes.go`); warning in the form; `TestDuplicateScoring` | |
 | ORD-03 | ✅ | Line discount, delivery requirements, requested date, payment terms, deposit (`02200:62-146`); SaleFormPage; `TestLineDiscountMaths`, `TestPaymentTermsDepositAndKinds` | |
-| ORD-04 | ⚠️ | All Figure 3 states (`sales/lifecycle.go:11-40`); `/quote`, `/confirm`, `/fulfilment`, `/ready`, `/close`, `/cancel`; approval by value and role via `approval_threshold`; partial dispatch keeps the order open; `TestFigure3Transitions`, `TestValueApprovalsAndCancellation` | Cancelling a **Draft** needs a reason but **no approval** (`cancelNeedsApproval`, `lifecycle.go:89`), while the SRS says cancel is "with reason and approval" → add an approval for draft cancels (threshold-driven, so it can be 0), or record BTN's acceptance |
+| ORD-04 | ✅ | All Figure 3 states (`sales/lifecycle.go`); `/quote`, `/confirm`, `/fulfilment`, `/ready`, `/close`, `/cancel`; approval by value and role via `approval_threshold`; partial dispatch keeps the order open. **Cancel from Draft, Quoted or Confirmed always needs a reason and an approval** (`cancelNeedsApproval` = `cancellable`): a CANCEL `sale_approval` with the threshold levels + a `sales.cancel` level (Sales Manager / Production Manager, §8 Orders A), never decided by the requester; audit `sales.approval.request` → `sales.approval.approve` → `sales.cancel`; approvers notified (`sales.approval_pending`), requester told of the decision; UI "Request cancellation" (online-only) + ApprovalsPage. `TestFigure3Transitions`, `TestSaleLifecycleAndDiscountRule` (draft cancel), `TestValueApprovalsAndCancellation` | |
 | ORD-05 | ✅ | `GET /sales/:id/availability`; shortfall notification `sales.order_shortfall` to production holders; SaleDetailPage | |
 | ORD-06 | ✅ | `POST /:id/payments` (DEPOSIT/PART/BALANCE), mirrored as income (`income:TestIncomeOrderPayments`); ReceivablesPage, statement | |
 | ORD-07 | ✅ | `/customers/:id/orders`, `/customers/:id/communications`, search; CustomerPage | |
@@ -142,7 +143,7 @@ There are also 9 ⚠️ findings in the cross-cutting sections (§5.2 closed, se
 | FIN-06 | ✅ | `/finance/dashboard`: income/revenue, expenses, petty cash, budgets, receivables, procurement spend (curl); FinanceDashboardPage | |
 | FIN-07 | ✅ | Every finance report `?format=csv\|xlsx` (curl: 200, correct MIME); shared ExportMenu | |
 | FIN-08 | ✅ | `POST /expenses/budget-check` warns in the form; over-budget needs `/:id/overrun/approve`; `TestBudgetOverrunControl` | |
-| FIN-09 | ✅ | `expenses.*`, `budgets.*`, `pettycash.*`, `income.*` on every route; curl: sales → 403 on `/expenses` | The SRS gives Sales R on Finance; see §8 |
+| FIN-09 | ✅ | `expenses.*`, `budgets.*`, `pettycash.*`, `income.*` on every route; records only by Finance; read (`*.view`) by the §8 Finance R roles (PM, Sales, Proc., Top Mgt, Admin); supervisors and stock officers get 403 (`expenses:TestExpensePermissionsAndScope`, `finance:TestFinanceRecordEndpoints`) | |
 
 ### PRC — Procurement
 | ID | Status | Evidence | Missing → fix |
@@ -160,11 +161,11 @@ There are also 9 ⚠️ findings in the cross-cutting sections (§5.2 closed, se
 | ID | Status | Evidence | Missing → fix |
 |---|---|---|---|
 | RPT-01 | ✅ | 6 boards `dashboard/boards.go:51-76`, `GET /dashboard/boards/:board`, all 200 in 5–30 ms, wrong role 403; `dashboard/boards.tsx`; `boards_test.go`, `boards.test.ts`. Checklist in §10 | |
-| RPT-02 | ✅ | `report_schedule` with 9 rows (`02600_report_schedules.sql:49-58`); job `reports.scheduled` (`reports/schedule_run.go`) emails PDF/XLSX; SchedulesPage; `TestScheduleDispatchCreatesOneRunPerSlot`, `TestSendNowEmailsAttachmentsPerRecipient`, `TestScheduledRunRetriesThenFails` | Go-live: every schedule is seeded `enabled=false`, so an admin must switch them on |
+| RPT-02 | ✅ | `report_schedule` (`02600`, `03200`): 11 schedules incl. weekly **and** monthly order & sales summary, **all enabled by default** (sending still needs `JOBS_ENABLED` and SMTP); job `reports.scheduled` (`reports/schedule_run.go`) emails PDF/XLSX; SchedulesPage; `TestScheduleDefaultsFollowSRS10`, `TestScheduleDispatchCreatesOneRunPerSlot`, `TestSendNowEmailsAttachmentsPerRecipient`, `TestScheduledRunRetriesThenFails` | On the first job run after 03200, a slot still inside the grace window (and a wage period ended in the last 7 days) is sent once |
 | RPT-03 | ✅ | Site/date filters and `?format=csv\|xlsx\|json` on every report, plus PDF (`reports/module.go:30`); `hub_http_test.go:TestEveryCatalogReportServesPDFAndExports` | |
 | RPT-04 | ✅ | Notification centre: low stock, approvals, transfers, sync conflicts / negative stock, procurement; NotificationBell/NotificationsPage; `platform:TestNotificationsAPI`, `notify:TestDedupAndReadState` | |
 | RPT-05 | ✅ | `GET/PUT /notifications/preferences`, email default per event; PreferencesPage; `TestPreferencesAPI`, `TestPreferenceResolution` | |
-| RPT-06 | ⚠️ | `/reports/cutoff` (cut-off + pending sites) shown on screens (`components/DataCutoff.tsx`), dashboards, PDF, XLSX and emails; `TestCutoffStatement` | **CSV exports carry no cut-off or unsynced-sites statement** (`export/export.go:139-142` writes only header + rows) → add a preamble/comment row or an `X-Data-Cutoff` header |
+| RPT-06 | ✅ | `/reports/cutoff` (cut-off + pending sites) shown on screens (`components/DataCutoff.tsx`), dashboards, PDF, XLSX, JSON and emails; **CSV**: every export through `export.SendDoc` and the bulk data export (`export.WriteCSVNotes`) ends with `# Data cut-off,<time>` and `# Unsynchronised data,<n sites (codes)>` rows padded to the column count (header stays line 1; skip with `Comment: '#'`; data cells starting `#` are written `'#…`; format in `backend/README.md`); `TestCutoffStatement`, `export:TestCSVCarriesCutoffNotes`, `dataexport:TestDataExport` | |
 | RPT-07 | ✅ | Boards 5–30 ms; `TestBoardsRenderTwelveMonthsWithinBudget` | |
 
 ### ADM — Administration
@@ -249,64 +250,47 @@ per-record state (SyncBadge in 16 offline-capable screens), and an encrypted, us
 | Rule | Status | Evidence | Missing → fix |
 |---|---|---|---|
 | Stock movements from two devices | ✅ | Both accepted; `negative_stock` review (`syncsvc/push.go:481-490`); T-04 | |
-| Production duplicate site/product/batch/date | ⚠️ | `production/sync.go:113-152` holds a `duplicate_batch` Conflict; resolve as additional batch or merge; `TestSyncProductionEntry` | In the UI, **merge is a raw JSON textarea** (`ConflictsPage.tsx:57-71`) that does not prefill `mergeInto`, so the supervisor must hand-type the entry id → add "Merge into existing" and "Keep as additional batch" buttons |
+| Production duplicate site/product/batch/date | ✅ | `production/sync.go` holds a `duplicate_batch` Conflict. ConflictsPage (`session/ConflictsPage.tsx`, helpers `conflictMerge.ts`): "Merge into the existing entry" with a target picker prefilled with the clashing entry (other clashing entries selectable), a field-by-field table (server / device / after merge per product+batch, materials, downtime, notes, names from lookups) and `mergeInto` filled in; "Keep as an additional batch"; "Keep the server version". Other conflicts: per-field device/server picker prefilled with the device values, JSON only as an advanced fallback. `TestSyncProductionEntry`, `conflictMerge.test.ts`, e2e T-05 | |
 | Attendance by two users | ✅ | `attendance/sync.go:185` Conflict + audit of both values; T-05 | |
 | Master data edited offline and centrally | ✅ (N/A) | Master data is read-only offline (no push handler), so no clash can arise | |
 | Order status changed centrally while offline edit pending | ✅ | Server wins, offline edit goes to review (`sales/sync.go:93`); `TestOfflineOrderDraftAndDispatchNote` | |
 | Offline edit to a locked record | ✅ (deviation) | Becomes a pending correction request (attendance) or a PM-only Conflict (closed production day) instead of Rejected | Meets "correction via approval workflow"; confirm with BTN |
 | Offline update to a centrally deleted record | ✅ | Rejected `not_found`; kept locally until dismissed | |
-| Both versions of any conflict in the audit trail | ⚠️ | `sync_conflict` stores client_payload + server_data; attendance writes both to AuditLog | `sync.conflict_resolve` audit (`syncsvc/conflicts.go:254`) records only the resolution, and `sync_conflict` is mutable → write both versions into the immutable audit before/after |
+| Both versions of any conflict in the audit trail | ✅ | `syncsvc.Conflict` and the negative-stock review rows write `sync.conflict_open` (before = server version, after = device version) into the immutable AuditLog; `sync.conflict_resolve` carries both versions in before (`clientPayload`, `serverData`, `serverVersion`) and the decision + merged payload in after, for every conflict kind; `TestConflictCreationAndResolution`, `TestNegativeStockFlagRoutesToReview` | |
 
 ## §6.3 Data rules
 | Rule | Status | Evidence | Missing → fix |
 |---|---|---|---|
 | Device UUIDs; readable numbers on acceptance | ✅ | Push keyed by client UUID; `seq` numbering (`seq:TestNextNumberFormatAndConcurrency`) | |
 | RWF exact, quantities exact, UTC storage, Kigali display | ✅ | NUMERIC/BIGINT money (no float columns); UTC writes; Kigali formatters | Columns are `timestamp without time zone`, so UTC is a convention only |
-| Never hard-delete | ⚠️ | Users, sites, products and clients are deactivated | **Hard DELETEs remain**: draft budgets (`budgets/module.go:1119`), approval thresholds (`refdata/thresholds.go:208`), delivery-charge rules (`sales/charges.go:239`), income attachments (`income/attach.go:183`), sale lines on amendment (`sales/amend.go:250`, versions kept), draft PO/request lines → use status/voided flags (thresholds and charge rules affect audit of past approvals and prices) |
+| Never hard-delete | ✅ | `03230_no_hard_delete.sql`: draft budgets → status VOID; approval thresholds retired; delivery-charge rules, income/expense receipts, production targets, recipes and piece-work entries carry `removed_at/by/reason`, are filtered from normal reads and listed in history views. All of these need a reason (`httpx.RemovalReason`) and write audit before/after (`budgets.void`, `approvals.threshold.retire`, `sales.charge.remove`, `income.detach`, `expenses.detach`, `production.target_remove`, `production.recipe_remove`). `btn_forbid_delete` triggers refuse DELETE on those 8 tables. Child rows replaced with their parent (sale/PO/request/budget/production/payroll lines, material usages, recipe items, contacts, exception flags, expense approval steps, reorder levels) are copied by `btn_archive_deleted` into the append-only `deleted_record` table. UI: `RemoveDialog` (reason required) on the 6 affected screens. Tests: `sales:TestRemovalKeepsRecords`, `TestNoHardDeleteTriggersInstalled`, `budgets:TestBudgetLifecycleAndPermissions`, `refdata:TestApprovalThresholdsAPIAndLevels`, `income:TestIncomeVerifyVoidAttachmentsLinks`, `expenses:TestExpenseApprovalPaymentAndReceipts`, `production:TestTargetsAndProgress`, `TestRecipesAndVariance`, `workforce:TestPieceWork` | Excluded by design (not business records): auth tokens, passkey challenges and passkey revocation, AuthAttempt/OTP, monitor retention, email outbox, read notifications, stock_alert_state, i18n_override, the legacy importer `--replace` (CLI) |
 | CSV import validated, with an import report | ✅ | `/data/import/:kind/validate`, templates, history, report (`dataimport.go:51-55`); ImportPage; `TestDryRunCommitIdempotent`, `TestOpeningBalances` | |
 | Personal data minimal, access-controlled, exportable | ✅ | Privacy module + access log; worker PII stripped from offline pulls | |
 
 ## §7 Business rules
 | Rule | Status | Evidence | Missing → fix |
 |---|---|---|---|
-| 7.2 Transfers | ⚠️ | Six states; rejection needs a reason (400 without one); dispatch posts the source TRANSFER_OUT; a shortfall creates a `transfer_shortfall` adjustment for review; cancel only before In transit, then `reverse`; threshold approval levels; `TestTransferValidationCancelReverseInsufficient`, `TestTransferMultiLevelApproval` | **A request does not require a reason** (`transfers/service.go:74`, `note` optional) → make the reason required in `parseCreate` and the form |
+| 7.2 Transfers | ✅ | Six states; **a request needs a reason** (`transfers/service.go` `parseCreate`: `note`/`reason` ≥ 3 characters, 400 otherwise; same rule in the offline record type `transfers/offline.ts` and the sync handler, so an offline request without one is Rejected with the reason); request form field "Reason for the transfer" (required); rejection needs a reason; dispatch posts the source TRANSFER_OUT; a shortfall creates a `transfer_shortfall` adjustment for review; cancel only before In transit, then `reverse`; threshold approval levels, each level by a different person; `TestTransferValidationCancelReverseInsufficient`, `TestTransferMultiLevelApproval`, `TestTransferSyncHandlers` | |
 | 7.3 Approvals / petty cash / procurement receipts | ✅ | `approval_threshold` for 7 domains with value bands + role (`approvals.go:25-34`); receipt reference required (`pettycash/validate.go:208`); no self top-up approval (`TestTopUpSelfApprovalBlocked`); periodic reconciliation with differences (`TestReconcileDifference`); over/under receipt needs a reason + exception notification (`procurement/receiving.go:181-298`, `TestEvaluateReceipt`) | |
-| 7.4 Wages | ⚠️ | Formula incl. half rate, overtime and piece (`workforce/calc.go`); rate rules admin-only; prepare→check→verify→authorize→pay; locked periods; `wage_adjustment` carried into the next period (`payroll/wages.go:130`) | **The PM review step is not PM-only**: `payroll.check` = PM *and* SUPERVISOR (`permissions.go:133`) → restrict it to PRODUCTION_MANAGER |
+| 7.4 Wages | ✅ | Formula incl. half rate, overtime and piece (`workforce/calc.go`); rate rules admin-only; prepare (FM) → **check = Production Manager review, PM only** (`payroll.check`) → verify (FM) → authorize → record payment; locked periods; `wage_adjustment` carried into the next period (`payroll/wages.go`); UI shows the step only to `payroll.check` holders ("Production Manager only"); `payroll:TestWorkflowSeparationOfDutiesAndPay` (supervisor, GM and FM get 403 on the review) | |
 
-## §8 Roles and permissions — ⚠️
+## §8 Roles and permissions — ✅
 
-The operational roles mostly match. The cells below differ from the SRS (checked against `auth/permissions.go`;
-3 cells confirmed with curl).
+`auth/permissions.go` now follows the §8 table cell by cell (audit 9941a63 listed ~20 differing cells). The table is
+encoded in `auth.TestSRSRoleMatrix`: each permission is mapped to the §8 module and letters (C R U A) that grant it, and
+the test fails when a role holds a permission its cells do not give it, or when a letter of a cell is backed by no
+permission. Highlights: SYSTEM_ADMIN reads every business module and is the only role that changes users, settings,
+master data, devices and report schedules (Top management reads users via `users.view` and the audit log); the
+Production Manager approves orders and cancellations (`sales.approve`, `sales.cancel`) and is the only wage reviewer;
+the stock officer creates deliveries; procurement reads stock; Sales, PM, Procurement and Admin read finance; Sales no
+longer reads production; supervisors no longer prepare wages, record expenses, hold floats or create deliveries; GM/MD
+no longer approve production, transfers, counts or orders. Default approval thresholds were moved accordingly
+(migration 03200). The full table is in `docs/SRS_BUILD_PLAN.md` ("Roles and permissions"); the frontend gates nav,
+pages and buttons on the same permissions (`app/nav.ts`; UsersPage is read-only for `users.view`).
 
-| Module | Role | SRS | Code |
-|---|---|---|---|
-| Production | Admin | R | none (curl `/production/reports` → 403) |
-| Production | Sales | – | R (`production.view`) |
-| Stock | Proc. | R | none (curl `/stock/balances` → 403); `transfers.view` only |
-| Stock | Admin | R | none |
-| Clients & orders | Prod. Mgr | R A | R only (`sales.approve` = SM, GM, MD) |
-| Clients & orders | Admin | R | `customers.manage` only, no `sales.view` |
-| Delivery | Stock | C R U | R only, no `deliveries.create` |
-| Delivery | Sup., Prod. Mgr | R | C (`deliveries.create`) |
-| Delivery | Admin | R | none |
-| Attendance & wages | Sup. | C R U (att.) | also `payroll.prepare`, `payroll.check`, `workers.manage` |
-| Attendance & wages | Admin | R | none |
-| Finance | Prod. Mgr | R | `budgets.view` only |
-| Finance | Sales | R | `income.record` only (curl `/expenses`, `/finance/dashboard` → 403) |
-| Finance | Proc. | R | `expenses.view` only |
-| Finance | Sup., Stock | – | `expenses.record` (Sup. also `pettycash.custodian`) |
-| Finance | Admin | R | none |
-| Procurement | Admin | R | none |
-| Reports | Admin | R | no `reports.view` |
-| Users, settings, audit | Top Mgt | R | C R U (`users.manage`, `devices.manage`; MD `settings.manage`) |
-| Users, settings, audit | Prod. Mgr | – | `masterdata.manage` |
-
-Fix:
-- Give SYSTEM_ADMIN read on each module. It holds `data.export`, which already exposes the raw tables.
-- Add PM to `sales.approve`, STOCK_OFFICER to `deliveries.create`, PROCUREMENT_OFFICER to `stock.view`, and Sales/PM
-  to the finance views.
-- Remove or justify the over-grants.
-- Alternatively, record each deviation as approved by BTN.
+Stated deviations: `payroll.authorize` (GM, MD) — wages are PAYROLL expenses, so the authorisation is Finance "Top Mgt A";
+`income.record` for Sales records customer payments on orders (Clients & orders C, ORD-06); `data.export` for FM
+(ADM-05 "authorised users", FIN-07); LEAD_OPERATOR/OPERATOR (not §8 roles) never exceed the supervisor.
 
 ## §9 Interfaces
 | Item | Status | Evidence | Missing → fix |
@@ -327,20 +311,21 @@ Fix:
 | Site Supervisor | own-site production `site.production` · stock `stock.position`/`materials.low` · attendance `workforce.headcount` · pending/unsynced `site.pending` · sync issues `sync.issues` |
 | System Admin | users & roles `admin.users` · devices `admin.devices` · sync monitor `sync.sites` · audit log `admin.audit` · job health `admin.jobs`/`admin.errors` |
 
-### Scheduled reports (`migrations/02600_report_schedules.sql:49-58`, `reports/schedule_run.go`, SchedulesPage)
+### Scheduled reports (`migrations/02600_report_schedules.sql`, `03200_srs_roles_schedules.sql`, `reports/schedule_run.go`, SchedulesPage)
 | Report | SRS freq → seeded | SRS recipients → seeded | Status |
 |---|---|---|---|
-| Daily production | daily → 06:30 | PM, mgmt → PM, GM, MD | ✅ |
-| Daily stock | daily → 06:35 | PM, stock officers → PM, STOCK_OFFICER, GM | ✅ |
+| Daily production | daily → 06:30 | PM, mgmt → PM, MD, GM, OA | ✅ |
+| Daily stock | daily → 06:35 | PM, stock officers → PM, STOCK_OFFICER | ✅ |
 | Daily headcount/attendance | daily → 06:40 | PM, finance → PM, FM | ✅ |
-| Order & sales summary | weekly/monthly → weekly | sales, mgmt → SM, GM, MD, FM | ⚠️ the report key is the PRIMARY KEY, so weekly **and** monthly cannot both run → allow several schedules per report |
-| Stock movement & variance | weekly/on demand → weekly + send-now | PM, finance → PM, STOCK_OFFICER, GM | ⚠️ **FINANCE_MANAGER missing** from default recipients → add to the seed |
-| Procurement & expense | monthly → monthly | finance, mgmt → FM, PROC, GM, MD | ✅ |
-| Wage & workforce | per wage period → `wage_period` | finance, PM → FM, PM, GM | ✅ |
-| Budget monitoring | monthly → monthly | finance, mgmt → FM, GM, MD | ✅ |
-| Site performance | monthly → monthly | mgmt → GM, MD, OA, PM | ✅ |
+| Order & sales summary | weekly/monthly → `orders_sales` weekly **and** `orders_sales_monthly` monthly | sales, mgmt → SM, MD, GM, OA | ✅ |
+| Stock movement & variance | weekly/on demand → weekly + send-now | PM, finance → PM, FM | ✅ |
+| Procurement & expense | monthly → monthly | finance, mgmt → FM, MD, GM, OA | ✅ |
+| Wage & workforce | per wage period → `wage_period` | finance, PM → FM, PM | ✅ |
+| Budget monitoring | monthly → monthly | finance, mgmt → FM, MD, GM, OA | ✅ |
+| Site performance | monthly → monthly | mgmt → MD, GM, OA | ✅ |
+| (extra) Monthly finance records | monthly | finance, mgmt → FM, MD, GM, OA | ✅ (FINANCE_RECORDS_DESIGN §5; not in §10) |
 
-All nine are seeded `enabled=false` (go-live switch-on needed).
+All schedules ship **enabled** (`03200_srs_roles_schedules.sql`; rows never edited by an administrator are aligned to the recipients above); e-mails still go out only when the job runner runs (`JOBS_ENABLED`) and SMTP is configured. `reports:TestScheduleDefaultsFollowSRS10` pins frequencies, recipients and the enabled flag.
 
 ## §12.2 Offline acceptance scenarios — all ✅
 Every scenario is automated in `frontend/e2e/offline-acceptance.mjs` (real Chromium against the API). Backend tests
