@@ -30,6 +30,12 @@
   --color-accent: var(--brand-accent);
   --color-accent-strong: var(--brand-accent-strong);
   --color-surface: #f4f6fa;
+
+  /* WCAG 2.1 AA (SRS §9.1): Tailwind's slate-400 (#90a1b9, 2.6:1 on white) and slate-500 (#62748e, 4.3:1 on
+     slate-100 / 4.4:1 on the surface) carry secondary text everywhere; darkened so text in them is ≥ 4.5:1 on
+     white, slate-50/100 and the surface, keeping 400 lighter than 500. */
+  --color-slate-400: #5f6f86;
+  --color-slate-500: #56657a;
   --color-line: #e5e9f0;
 
   /* chart series, in order */
@@ -55,3 +61,8 @@
 }
 
 @utility tabular { font-variant-numeric: tabular-nums; }
+
+/* Visually hidden text keeps its static position: inside a horizontally scrolling table (a header cell beyond the
+   scroll edge) it escaped the scroller and widened the whole page (wage sheet, 1280×720 and 768×1024). Pinning it
+   to the left edge of its containing block removes that overflow; it is 1px and clipped, so nothing shows. */
+.sr-only { left: 0; }

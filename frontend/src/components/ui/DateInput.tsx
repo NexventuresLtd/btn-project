@@ -3,6 +3,7 @@ import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useT } from "@/i18n";
 import { addMonthsISO, calendarKeyTarget, dtf, formatDate, isoToDMY, monthGrid, parseDMY, shiftISO, todayISO } from "@/lib/dates";
 import { cn } from "@/lib/cn";
+import { useFieldAria } from "./Field";
 
 export interface DateInputProps {
   /** ISO business date "YYYY-MM-DD" ("" = empty). The wire format stays ISO; only the display is DD/MM/YYYY. */
@@ -36,6 +37,7 @@ export function DateInput({ value, onChange, min, max, id, invalid, disabled, re
   const { t } = useT();
   const autoId = useId();
   const inputId = id ?? `date-${autoId}`;
+  const field = useFieldAria({ id, required, "aria-label": aria["aria-label"], "aria-describedby": aria["aria-describedby"] }); // label/hint of the enclosing <Field>
   const [text, setText] = useState(isoToDMY(value));
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -173,8 +175,10 @@ export function DateInput({ value, onChange, min, max, id, invalid, disabled, re
           disabled={disabled}
           required={required}
           aria-invalid={shownInvalid || undefined}
-          aria-describedby={[error ? errId : null, aria["aria-describedby"]].filter(Boolean).join(" ") || undefined}
+          aria-describedby={[error ? errId : null, field["aria-describedby"]].filter(Boolean).join(" ") || undefined}
           aria-label={aria["aria-label"]}
+          aria-labelledby={field["aria-labelledby"]}
+          aria-required={field["aria-required"]}
           onChange={(e) => {
             setText(e.target.value);
             if (error) setError(null);

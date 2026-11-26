@@ -1,10 +1,12 @@
 package export
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
 	"io"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -156,4 +158,55 @@ func TestParseFormatAndMatch(t *testing.T) {
 		t.Fatal("empty param matched")
 	}
 	_ = time.Now
+}
+
+// The auto-filter is written with the streamed sheet (not re-applied after Flush, which re-parsed the whole
+// sheet) and still spans the header row through the last data row.
+func TestXLSXAutoFilterRange(t *testing.T) {
+	_, b, _ := run(t, XLSX)
+	zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sheet, book string
+	for _, zf := range zr.File {
+		rc, _ := zf.Open()
+		data, _ := io.ReadAll(rc)
+		rc.Close()
+		switch zf.Name {
+		case "xl/worksheets/sheet1.xml":
+			sheet = string(data)
+		case "xl/workbook.xml":
+			book = string(data)
+		}
+	}
+	// header row 6 (title, generated, 2 filters, blank), 3 data rows -> A6:G9 (excelize writes absolute refs, as before)
+	if !strings.Contains(sheet, `<autoFilter ref="$A$6:$G$9"`) {
+		t.Fatalf("auto-filter missing or wrong in sheet XML: %.400s", sheet[strings.Index(sheet, "</sheetData>"):])
+	}
+	if !strings.Contains(book, "_xlnm._FilterDatabase") {
+		t.Fatal("filter database name missing from workbook")
+	}
+	if strings.Index(sheet, "<autoFilter") < strings.Index(sheet, "</sheetData>") {
+		t.Fatal("autoFilter must follow sheetData")
+	}
+}
+
+func TestRowLimitHeaderOnlyLowersTheCap(t *testing.T) {
+	app := fiber.New()
+	app.Get("/x", func(c *fiber.Ctx) error { return c.SendString(strconv.Itoa(RowLimit(c))) })
+	for hdr, want := range map[string]string{"": "100000", "5001": "5001", "0": "100000", "-3": "100000", "999999999": "100000", "abc": "100000"} {
+		req := httptest.NewRequest("GET", "/x", nil)
+		if hdr != "" {
+			req.Header.Set(MaxRowsHeader, hdr)
+		}
+		resp, err := app.Test(req, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, _ := io.ReadAll(resp.Body)
+		if string(got) != want {
+			t.Fatalf("header %q: limit %s, want %s", hdr, got, want)
+		}
+	}
 }

@@ -8,7 +8,7 @@ const variants = {
   secondary: "bg-white text-slate-700 border border-line hover:bg-slate-50 hover:border-slate-300",
   ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
   danger: "bg-red-600 text-white hover:bg-red-700 shadow-sm",
-  success: "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm",
+  success: "bg-emerald-700 text-white hover:bg-emerald-800 shadow-sm", // white on emerald-600 is 3.7:1 (WCAG AA needs 4.5)
 } as const;
 
 const sizes = {

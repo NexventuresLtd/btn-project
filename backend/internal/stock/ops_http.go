@@ -93,8 +93,14 @@ func (h *handler) opHandler(op string) fiber.Handler {
 	}
 }
 
-// InvalidateCaches is a hook other packages set to drop their balance caches after P2 writes (materials sets it).
-var InvalidateCaches = func() {}
+// InvalidateCaches drops the cached ledger reads (low-stock lists) after P2 writes and calls OnInvalidate.
+func InvalidateCaches() {
+	lowCache.InvalidateTag(ledgerTag)
+	OnInvalidate()
+}
+
+// OnInvalidate is a hook other packages set to drop their balance caches after P2 writes (materials sets it).
+var OnInvalidate = func() {}
 
 func (h *handler) listAdjustments(c *fiber.Ctx) error {
 	ctx := httpx.Ctx(c)
@@ -189,7 +195,7 @@ func (h *handler) lowRows(c *fiber.Ctx) ([]LowRow, error) {
 	if err := q.Err(); err != nil {
 		return nil, err
 	}
-	rows, err := LowStock(httpx.Ctx(c), h.d.Pool, auth.PlantFilter(u, plant), ItemKind(kind))
+	rows, err := LowStockCached(httpx.Ctx(c), h.d.Pool, auth.PlantFilter(u, plant), ItemKind(kind))
 	if err != nil {
 		return nil, err
 	}

@@ -21,8 +21,8 @@ type Site = ReturnType<typeof useSiteSelection>;
 interface Mark { status: AttendanceStatus | null; note: string; overtime: string; exception: boolean; exceptionReason: string }
 
 const STATUS_STYLE: Record<AttendanceStatus, { on: string; dot: string }> = {
-  PRESENT: { on: "bg-emerald-600 text-white border-emerald-600", dot: "bg-emerald-500" },
-  HALF_DAY: { on: "bg-amber-500 text-white border-amber-500", dot: "bg-amber-500" },
+  PRESENT: { on: "bg-emerald-700 text-white border-emerald-700", dot: "bg-emerald-500" },
+  HALF_DAY: { on: "bg-amber-700 text-white border-amber-700", dot: "bg-amber-500" },
   ABSENT: { on: "bg-slate-600 text-white border-slate-600", dot: "bg-slate-500" },
   LEAVE: { on: "bg-blue-600 text-white border-blue-600", dot: "bg-blue-500" },
 };

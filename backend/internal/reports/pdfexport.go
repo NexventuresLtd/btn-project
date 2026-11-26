@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,6 +94,9 @@ func (h *handler) exportPDF(c *fiber.Ctx) error {
 			req.Header.Set(hdr, v)
 		}
 	}
+	// Only MaxPDFRows are printed: fetch one more (to know it is cut) instead of the spreadsheet's
+	// MaxRows, so a 12-month ledger PDF does not build and parse 100 000 rows of JSON (NFR-P2).
+	req.Header.Set(export.MaxRowsHeader, strconv.Itoa(MaxPDFRows+1))
 	resp, err := c.App().Test(req, 90_000)
 	if err != nil {
 		return err
@@ -147,7 +151,11 @@ func (h *handler) exportPDF(c *fiber.Ctx) error {
 	}
 	rep.Table(cols, rows, nil, i18n.T(lang, "reports.hub.empty"))
 	if len(doc.Rows) > MaxPDFRows {
-		rep.Note(i18n.T(lang, "reports.pdf.truncated", "shown", MaxPDFRows, "total", len(doc.Rows)))
+		total := len(doc.Rows)
+		if n, err := strconv.Atoi(resp.Header.Get(export.TotalHeader)); err == nil && n > total {
+			total = n
+		}
+		rep.Note(i18n.T(lang, "reports.pdf.truncated", "shown", MaxPDFRows, "total", total))
 	}
 	name := strings.ReplaceAll(strings.Trim(path, "/"), "/", "-")
 	for _, k := range []string{"from", "to", "date"} {

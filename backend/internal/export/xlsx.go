@@ -30,6 +30,15 @@ func buildXLSX(m meta, headers []string, cols []Column, rows [][]any) ([]byte, e
 		return nil, err
 	}
 	f.SetDocProps(&excelize.DocProperties{Title: m.title, Creator: firstNonEmpty(m.generatedBy, "BTN Operations"), Created: m.generatedAt.UTC().Format(time.RFC3339)})
+	// header block: title, generated at/by, filters, blank line; then the column headers and one row per record
+	headerRow := 3 + len(m.filters) + 1
+	if len(cols) > 0 {
+		// Set the auto-filter before streaming: the stream writer emits it with the sheet. Adding it after
+		// Flush made excelize re-read and re-encode the whole streamed sheet (~1.8 s of a 15k-row export).
+		if err := f.AutoFilter(sheetName, cellName(1, headerRow)+":"+cellName(len(cols), headerRow+len(rows)), nil); err != nil {
+			return nil, err
+		}
+	}
 	sw, err := f.NewStreamWriter(sheetName)
 	if err != nil {
 		return nil, err
@@ -86,8 +95,6 @@ func buildXLSX(m meta, headers []string, cols []Column, rows [][]any) ([]byte, e
 		row++
 		return sw.SetRow(cell, vals, opts...)
 	}
-	// header block: title, generated at/by, filters, blank line
-	headerRow := 3 + len(m.filters) + 1
 	if len(cols) > 0 {
 		if err := sw.SetPanes(&excelize.Panes{Freeze: true, YSplit: headerRow, TopLeftCell: cellName(1, headerRow+1), ActivePane: "bottomLeft"}); err != nil {
 			return nil, err
@@ -145,12 +152,6 @@ func buildXLSX(m meta, headers []string, cols []Column, rows [][]any) ([]byte, e
 	}
 	if err := sw.Flush(); err != nil {
 		return nil, err
-	}
-	if len(cols) > 0 {
-		last := max(row-1, headerRow)
-		if err := f.AutoFilter(sheetName, cellName(1, headerRow)+":"+cellName(len(cols), last), nil); err != nil {
-			return nil, err
-		}
 	}
 	var buf bytes.Buffer
 	if err := f.Write(&buf); err != nil {

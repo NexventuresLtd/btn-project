@@ -471,3 +471,32 @@ func TestCatalogueCategoriesUnitsAndReorderLevel(t *testing.T) {
 		t.Fatalf("material %+v", m)
 	}
 }
+
+// The low-stock page is served from a short coalescing cache (NFR-P1). A P2 stock write through the API
+// refreshes it immediately; a movement written behind the API's back (another module, SQL) shows after the TTL.
+func TestLowStockPageCacheInvalidatedByStockWrites(t *testing.T) {
+	f := p2setup(t)
+	e := f.e
+	cement := f.mat["CEMENT"] // catalogue min level 50
+	count := func() int {
+		var low struct {
+			Count int `json:"count"`
+		}
+		e.Decode(e.Do("GET", "/api/stock/low-stock?plantId="+f.plant["BTN-1"], nil, f.pm), &low)
+		return low.Count
+	}
+	f.ok(t, e.Do("POST", "/api/stock/receipts", map[string]any{"plantId": f.plant["BTN-1"], "itemKind": "material", "itemId": cement, "date": f.today, "qty": 40}, f.sto1), 201)
+	if n := count(); n != 1 {
+		t.Fatalf("40 < 50 should be low: %d", n)
+	}
+	if _, err := e.Pool.Exec(t.Context(), `INSERT INTO "MaterialMovement" ("plantId","materialId",date,type,quantity) VALUES ($1,$2,current_date,'RECEIPT',100)`, f.plant["BTN-1"], cement); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(); n != 1 {
+		t.Fatalf("direct SQL write is served from the cache until the TTL: %d", n)
+	}
+	f.ok(t, e.Do("POST", "/api/stock/issues", map[string]any{"plantId": f.plant["BTN-1"], "itemKind": "material", "itemId": cement, "date": f.today, "qty": 1, "note": "run"}, f.sto1), 201)
+	if n := count(); n != 0 {
+		t.Fatalf("a stock write must refresh the low-stock page (139 >= 50): %d", n)
+	}
+}

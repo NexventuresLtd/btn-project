@@ -48,7 +48,7 @@ func Register(r fiber.Router, d *deps.Deps) {
 
 	r.Get("/pdf/daily", view, ratelimit.Group("pdf"), h.pdfDaily)
 	r.Get("/pdf/position", view, ratelimit.Group("pdf"), h.pdfPosition)
-	stock.InvalidateCaches = invalidate // P2 writes (transfers, counts, adjustments) refresh the cached balances
+	stock.OnInvalidate = invalidate // P2 writes (transfers, counts, adjustments) refresh the cached balances
 }
 
 type handler struct{ d *deps.Deps }

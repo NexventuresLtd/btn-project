@@ -78,3 +78,38 @@ func TestMiddlewareServesRegisteredReports(t *testing.T) {
 		t.Fatalf("self export rewritten: %q", body)
 	}
 }
+
+// The generic PDF (internal/reports) asks for only the rows it prints via MaxRowsHeader and reads the
+// list's full size back from TotalHeader.
+func TestMiddlewareRowLimitAndTotal(t *testing.T) {
+	Register(Report{Path: "/zz-limited", Name: "zz-limited", Build: func(b *Builder, j J) {
+		b.Columns(Column{Key: "n", Header: "N", Kind: Int})
+		for _, it := range j.Arr("items") {
+			b.Row(it.V("n"))
+		}
+	}})
+	app := fiber.New(fiber.Config{ErrorHandler: httpx.ErrorHandler})
+	api := app.Group("/api")
+	api.Use(Middleware(nil))
+	api.Get("/zz-limited", func(c *fiber.Ctx) error {
+		pg := httpx.Paginate(c, 2)
+		items := []fiber.Map{}
+		for i := 1; i <= min(pg.Limit, 7); i++ {
+			items = append(items, fiber.Map{"n": i})
+		}
+		return c.JSON(fiber.Map{"items": items, "total": 7})
+	})
+	req := httptest.NewRequest("GET", "/api/zz-limited/export?format=json", nil)
+	req.Header.Set(MaxRowsHeader, "3")
+	r, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(r.Body)
+	if r.StatusCode != 200 || strings.Count(string(b), `"n":`) != 3 || r.Header.Get(TotalHeader) != "7" {
+		t.Fatalf("limited: %d total=%q %s", r.StatusCode, r.Header.Get(TotalHeader), b)
+	}
+	if code, _, body := get(t, app, "/api/zz-limited/export?format=json"); code != 200 || strings.Count(body, `"n":`) != 7 {
+		t.Fatalf("unlimited: %d %s", code, body)
+	}
+}

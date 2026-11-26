@@ -107,13 +107,17 @@ func History(ctx context.Context, q db.DBTX, lang i18n.Lang, f HistoryFilter, li
 		return items, total, nil
 	}
 	args = append(args, limit, offset)
+	// The page is cut from the union first (ORDER BY + LIMIT inside), so Postgres merges the two ledgers'
+	// (date DESC, createdAt DESC, id DESC) indexes and stops after limit+offset rows; the lookups below then
+	// join only the rows returned. Joining first made it sort the whole period (NFR-P2: 12-month exports).
 	rows, err := q.Query(ctx, `SELECT h.id, h.kind, to_char(h.date,'YYYY-MM-DD'), h."plantId", pl.code, pl.kind, h.item_id,
 			COALESCE(p.code, mt.code, ''), COALESCE(p.name, mt.name, ''), COALESCE(p.unit, mt.unit, ''), h.type, h.qty::text, h."lotRef", h.reference,
 			h.supplier, cp.code, h."sourceType", h."sourceId",
 			CASE h."sourceType" WHEN 'StockTransfer' THEN tr.number WHEN 'StockTransferReversal' THEN tr.number WHEN 'StockCount' THEN sc.number
 				WHEN 'StockAdjustment' THEN sa.number WHEN 'ProductionReport' THEN rep.number ELSE NULL END,
 			h.note, h."createdById", u.name, h."deviceId", h."createdAt"
-		FROM (`+historyUnion+`) h
+		FROM (SELECT h.* FROM (`+historyUnion+`) h`+where+
+		` ORDER BY h.date DESC, h."createdAt" DESC, h.id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args))+`) h
 		JOIN "Plant" pl ON pl.id = h."plantId"
 		LEFT JOIN "Product" p ON h.kind = 'product' AND p.id = h.item_id
 		LEFT JOIN "Material" mt ON h.kind = 'material' AND mt.id = h.item_id
@@ -122,8 +126,8 @@ func History(ctx context.Context, q db.DBTX, lang i18n.Lang, f HistoryFilter, li
 		LEFT JOIN stock_transfer tr ON h."sourceType" IN ('StockTransfer','StockTransferReversal') AND tr.id = h."sourceId"
 		LEFT JOIN stock_count sc ON h."sourceType" = 'StockCount' AND sc.id = h."sourceId"
 		LEFT JOIN stock_adjustment sa ON h."sourceType" = 'StockAdjustment' AND sa.id = h."sourceId"
-		LEFT JOIN "ProductionReport" rep ON h."sourceType" = 'ProductionReport' AND rep.id = h."sourceId"`+where+
-		` ORDER BY h.date DESC, h."createdAt" DESC, h.id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
+		LEFT JOIN "ProductionReport" rep ON h."sourceType" = 'ProductionReport' AND rep.id = h."sourceId"
+		ORDER BY h.date DESC, h."createdAt" DESC, h.id DESC`, args...)
 	if err != nil {
 		return nil, 0, err
 	}

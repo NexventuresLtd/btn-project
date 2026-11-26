@@ -1,7 +1,7 @@
 import { Fragment, useState } from "react";
 import { useNavigate } from "react-router";
 import { Boxes, ClipboardList, Factory, FileDown, PackageCheck, SlidersHorizontal, TriangleAlert, Truck } from "lucide-react";
-import { Button, Card, CardHeader, EmptyState, ErrorState, FilterBar, PageHeader, ExportMenu, PdfButton, Spinner, StatCard, useFilters } from "@/components/ui";
+import { Button, Card, CardHeader, EmptyState, ErrorState, FilterBar, PageHeader, ExportMenu, PdfButton, ScrollX, Spinner, StatCard, useFilters } from "@/components/ui";
 import { Can } from "@/auth/guards";
 import { qs } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -101,7 +101,7 @@ export function StockPage() {
         ) : !pos ? (
           <div className="py-12"><Spinner className="mx-auto" /></div>
         ) : (
-          <div className="overflow-x-auto">
+          <ScrollX>
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-y border-line bg-slate-50/70 text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
@@ -131,7 +131,7 @@ export function StockPage() {
                 </tr>
               </tfoot>
             </table>
-          </div>
+          </ScrollX>
         )}
       </Card>
 
@@ -156,7 +156,7 @@ export function StockPage() {
         ) : daily.data.days.every((d) => d.rows.length === 0) ? (
           <EmptyState icon={<Boxes />} title={t("stock.daily.emptyTitle")} description={t("stock.daily.emptyText")} />
         ) : (
-          <div className="overflow-x-auto">
+          <ScrollX>
             <table className="w-full min-w-[900px] text-sm">
               <thead className="sticky top-0">
                 <tr className="border-y border-line bg-slate-50 text-[11px] font-semibold tracking-wide text-slate-500 uppercase">
@@ -186,7 +186,7 @@ export function StockPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </ScrollX>
         )}
       </Card>
 

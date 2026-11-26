@@ -7,13 +7,16 @@ package stock
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"btn-ops/internal/auth"
+	memcache "btn-ops/internal/cache"
 	"btn-ops/internal/db"
 	"btn-ops/internal/notify"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // EventLowStock is the notification event key.
@@ -106,6 +109,25 @@ func evaluate(ctx context.Context, q db.DBTX, plantID string, kind ItemKind, ite
 		}
 	}
 	return low, ok, rows.Err()
+}
+
+// A low-stock list sums the whole ledger of every location (~0.5 s of database CPU at 3M movements) and the
+// stock page and the procurement summary read it constantly. Coalesce concurrent loads and keep the
+// result a few seconds, like materials' balances (NFR-P1: p95 was 2.8 s under 50 users): P2 stock writes call
+// InvalidateCaches; movements posted by other modules (production approvals, sales issues) show up after the TTL.
+var lowCache = memcache.New[[]LowRow](lowCacheTTL, 256)
+
+const lowCacheTTL = 5 * time.Second
+
+const ledgerTag = "stock-ledger"
+
+// LowStockCached is LowStock for read-only pages: concurrent loads are coalesced and the result is kept for
+// lowCacheTTL (P2 stock writes invalidate it). Jobs and write flows call LowStock.
+func LowStockCached(ctx context.Context, pool *pgxpool.Pool, plantID string, kind ItemKind) ([]LowRow, error) {
+	rows, err := lowCache.GetOrLoad(ctx, "low:"+plantID+":"+string(kind), func(ctx context.Context) ([]LowRow, error) {
+		return LowStock(ctx, pool, plantID, kind)
+	}, ledgerTag)
+	return slices.Clone(rows), err // callers filter in place
 }
 
 // LowStock lists items below their reorder level (plantID "" = every location in scope; plantIDs restricts).

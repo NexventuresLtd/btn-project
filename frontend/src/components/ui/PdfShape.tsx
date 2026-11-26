@@ -2,6 +2,7 @@ import { useCallback, useSyncExternalStore } from "react";
 import type { PdfShape } from "@/lib/api";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/cn";
+import { radioGroupKeys } from "./radioGroup";
 
 const KEY = "btn.pdfShape";
 const SHAPES: PdfShape[] = ["auto", "portrait", "landscape"];
@@ -63,14 +64,17 @@ function ShapeIcon({ shape, className }: { shape: PdfShape; className?: string }
 export function ShapeToggle({ value, onChange, className, size = "md" }: { value: PdfShape; onChange: (s: PdfShape) => void; className?: string; size?: "sm" | "md" }) {
   const { t } = useT();
   const label: Record<PdfShape, string> = { auto: t("common.shapeAuto"), portrait: t("common.portrait"), landscape: t("common.landscape") };
+  const rg = radioGroupKeys(SHAPES, value, onChange);
   return (
-    <div role="radiogroup" aria-label={t("common.pageShape")} className={cn("inline-flex w-full rounded-xl bg-slate-100 p-1", className)}>
+    <div role="radiogroup" aria-label={t("common.pageShape")} onKeyDown={rg.onKeyDown} className={cn("inline-flex w-full rounded-xl bg-slate-100 p-1", className)}>
       {SHAPES.map((s) => (
         <button
           key={s}
           type="button"
           role="radio"
           aria-checked={value === s}
+          tabIndex={rg.tabIndex(s)}
+          data-value={s}
           onClick={() => onChange(s)}
           className={cn(
             "flex flex-1 items-center justify-center gap-1.5 rounded-lg font-semibold whitespace-nowrap transition",

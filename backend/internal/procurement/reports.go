@@ -14,8 +14,10 @@ import (
 	"btn-ops/internal/export"
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/i18n"
+	"btn-ops/internal/stock"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Report groupings.
@@ -270,7 +272,13 @@ func buildSummary(ctx context.Context, q db.DBTX, u *auth.User, plant string) (*
 		WHERE status NOT IN ('DRAFT','CANCELLED') AND order_date >= $3::date AND ($1 = '' OR delivery_plant_id = $1)`, plant, monthStart, yearStart).Scan(&s.SpendMonth, &s.SpendYear); err != nil {
 		return nil, err
 	}
-	low, err := lowStockRows(ctx, q, plant)
+	// only the count is shown: the shared, briefly cached low-stock list (NFR-P1) instead of the full proposal
+	var low []stock.LowRow
+	if pool, ok := q.(*pgxpool.Pool); ok {
+		low, err = stock.LowStockCached(ctx, pool, plant, "")
+	} else {
+		low, err = stock.LowStock(ctx, q, plant, "")
+	}
 	if err != nil {
 		return nil, err
 	}

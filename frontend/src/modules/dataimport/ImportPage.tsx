@@ -8,6 +8,7 @@ import { useT } from "@/i18n";
 import {
   Alert, Badge, Button, Card, CardHeader, ConfirmDialog, DataTable, EmptyState, ErrorState, PageHeader, Pagination, Spinner, StatCard, Tabs,
   type Column, type Tone,
+  radioGroupKeys,
 } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -67,6 +68,7 @@ export function ImportPage() {
     setKindName(k.kind);
     reset();
   }
+  const kindKeys = radioGroupKeys(kinds.map((k) => k.kind), kind?.kind, (v) => { const k = kinds.find((x) => x.kind === v); if (k) chooseKind(k); });
 
   function pick(f: File | null | undefined) {
     setReport(null);
@@ -107,7 +109,7 @@ export function ImportPage() {
           {/* 1 — what to import */}
           <Card>
             <CardHeader title={t("dataimport.step1")} />
-            <div role="radiogroup" aria-label={t("dataimport.step1")} className="grid gap-3 p-5 pt-1 sm:grid-cols-2 xl:grid-cols-4">
+            <div role="radiogroup" aria-label={t("dataimport.step1")} onKeyDown={kindKeys.onKeyDown} className="grid gap-3 p-5 pt-1 sm:grid-cols-2 xl:grid-cols-4">
               {kinds.map((k) => {
                 const Icon = KIND_ICONS[k.kind] ?? FileSpreadsheet;
                 const active = k.kind === kind.kind;
@@ -117,6 +119,8 @@ export function ImportPage() {
                     type="button"
                     role="radio"
                     aria-checked={active}
+                    tabIndex={kindKeys.tabIndex(k.kind)}
+                    data-value={k.kind}
                     onClick={() => chooseKind(k)}
                     className={cn(
                       "flex items-start gap-3 rounded-xl border p-4 text-left transition focus-visible:ring-2 focus-visible:ring-navy-500 focus-visible:outline-none",

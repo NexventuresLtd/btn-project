@@ -37,7 +37,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           if (!items.length) return null;
           return (
             <div key={group.id} data-tour={`nav-group-${group.id}`}>
-              <p className="mb-1.5 px-3 text-[10.5px] font-semibold tracking-[0.12em] text-navy-300/70 uppercase">{t(group.labelKey)}</p>
+              <p className="mb-1.5 px-3 text-[10.5px] font-semibold tracking-[0.12em] text-navy-200 uppercase">{t(group.labelKey)}</p>
               <ul className="space-y-0.5">
                 {items.map(({ to, labelKey, icon: Icon }) => (
                   <li key={to}>
@@ -73,7 +73,7 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
       <div className="mx-3 mb-4 rounded-xl bg-white/5 p-3.5 ring-1 ring-white/10">
         <p className="text-[11px] font-semibold text-navy-200">{t("common.appName")}</p>
-        <p className="mt-0.5 text-[11px] text-navy-300/80">{t("layout.sidebar.kigali", { date: formatDate(todayISO()) })}</p>
+        <p className="mt-0.5 text-[11px] text-navy-200">{t("layout.sidebar.kigali", { date: formatDate(todayISO()) })}</p>
       </div>
     </div>
   );

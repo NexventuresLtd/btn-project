@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -226,6 +227,22 @@ func (j J) Exists(path string) bool { return j.Get(path).v != nil }
 // UnpagedLocal is the c.Locals key httpx.Paginate honours during an export.
 const UnpagedLocal = httpx.UnpagedLocal
 
+// MaxRowsHeader lets an in-process caller that shows only the first N rows (the generic PDF, RPT-03) ask the
+// list endpoint for N rows instead of MaxRows; it can only lower the cap. TotalHeader carries the list's
+// full row count back (set when the endpoint returns a paginated {items,total}).
+const (
+	MaxRowsHeader = "X-Export-Max-Rows"
+	TotalHeader   = "X-Export-Total"
+)
+
+// RowLimit is the row cap of this export: MaxRows, or less when MaxRowsHeader asks for less.
+func RowLimit(c *fiber.Ctx) int {
+	if n, err := strconv.Atoi(c.Get(MaxRowsHeader)); err == nil && n > 0 && n < MaxRows {
+		return n
+	}
+	return MaxRows
+}
+
 // Middleware serves registered reports as exports. Mount it on the /api group after authentication
 // and before the module routes. It is a no-op for requests that are not report exports.
 func Middleware(d *deps.Deps) fiber.Handler {
@@ -266,7 +283,7 @@ func Middleware(d *deps.Deps) fiber.Handler {
 		if explicit {
 			c.Path(strings.TrimSuffix(path, "/export"))
 		}
-		c.Locals(httpx.UnpagedLocal, MaxRows)
+		c.Locals(httpx.UnpagedLocal, RowLimit(c))
 		c.Request().Header.Del(fiber.HeaderIfNoneMatch)
 		if err := c.Next(); err != nil {
 			return err
@@ -283,6 +300,11 @@ func Middleware(d *deps.Deps) fiber.Handler {
 		var v any
 		if err := dec.Decode(&v); err != nil {
 			return nil // not JSON: leave the response alone
+		}
+		if m, ok := v.(map[string]any); ok { // paginated list: tell a row-limited caller how many rows exist
+			if n, ok := m["total"].(json.Number); ok {
+				c.Set(TotalHeader, n.String())
+			}
 		}
 		b := &Builder{C: c, Lang: httpx.Lang(c), Params: params}
 		rep.Build(b, J{v})

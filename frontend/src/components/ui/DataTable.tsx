@@ -1,7 +1,8 @@
 import { useT } from "@/i18n";
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { Spinner } from "./Feedback";
+import { ScrollX } from "./ScrollX";
 
 export interface Column<T> {
   key: string;
@@ -26,7 +27,7 @@ export function DataTable<T>({ columns, rows, rowKey, loading, empty, onRowClick
   const { t } = useT();
   const align = (a?: string) => (a === "right" ? "text-right" : a === "center" ? "text-center" : "text-left");
   return (
-    <div className={cn("overflow-x-auto", className)}>
+    <ScrollX className={className}>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-y border-line bg-slate-50/70">
@@ -44,7 +45,13 @@ export function DataTable<T>({ columns, rows, rowKey, loading, empty, onRowClick
             <tr><td colSpan={columns.length} className="px-4 py-12 text-center text-sm text-slate-500">{empty ?? t("common.nothingToShow")}</td></tr>
           ) : (
             rows.map((row) => (
-              <tr key={rowKey(row)} onClick={onRowClick ? () => onRowClick(row) : undefined} className={cn("transition-colors", onRowClick && "cursor-pointer hover:bg-navy-50/40")}>
+              <tr
+                key={rowKey(row)}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                tabIndex={onRowClick ? 0 : undefined}
+                onKeyDown={onRowClick ? rowKeyDown(onRowClick, row) : undefined}
+                className={cn("transition-colors", onRowClick && "cursor-pointer hover:bg-navy-50/40 focus-visible:bg-navy-50/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-navy-500")}
+              >
                 {columns.map((c) => (
                   <td key={c.key} className={cn("px-4 py-3 align-middle text-slate-700", align(c.align), c.align === "right" && "tabular", c.hideOnMobile && "hidden md:table-cell", c.className)}>
                     {c.cell(row)}
@@ -56,8 +63,17 @@ export function DataTable<T>({ columns, rows, rowKey, loading, empty, onRowClick
         </tbody>
         {footer && rows?.length ? <tfoot className="border-t-2 border-navy-100 bg-navy-50/50 font-semibold text-slate-900">{footer}</tfoot> : null}
       </table>
-    </div>
+    </ScrollX>
   );
+}
+
+/** Enter/Space on a focused clickable row opens it, unless the key was meant for a control inside the row. */
+function rowKeyDown<T>(onRowClick: (row: T) => void, row: T) {
+  return (e: KeyboardEvent<HTMLTableRowElement>) => {
+    if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+    e.preventDefault();
+    onRowClick(row);
+  };
 }
 
 export function Pagination({ page, pageSize, total, onPage }: { page: number; pageSize: number; total: number; onPage: (p: number) => void }) {

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { ChevronDown, ChevronRight, CopyPlus, Lock, Plus, Save, Send, Trash2, WifiOff } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, CardBody, CardHeader, Checkbox, ErrorState, Field, Input, PageHeader, PageLoader, Select, Textarea, DateInput } from "@/components/ui";
+import { Alert, Button, Card, CardBody, CardHeader, Checkbox, ErrorState, Field, Input, PageHeader, PageLoader, Select, Textarea, DateInput, radioGroupKeys } from "@/components/ui";
 import { useAuth } from "@/auth/AuthProvider";
 import { sitesOnly, useLookups, type RefItem } from "@/hooks/useLookups";
 import { fieldError, useMutate } from "@/hooks/useMutate";
@@ -20,6 +20,8 @@ import {
 } from "./api";
 import { ENTRY_TYPE, validateEntry, type ProductionEntryLocal } from "./offline";
 import { ProductionNav } from "./ProductionNav";
+
+const SHIFTS = ["DAY", "NIGHT"] as const;
 
 interface DefectRow {
   key: string;
@@ -108,6 +110,7 @@ function ReportForm({ existing, correction = false }: { existing?: ReportDetail;
   const [plantId, setPlantId] = useState(existing?.plantId ?? pinnedPlant ?? "");
   const [date, setDate] = useState(existing?.date ?? todayISO());
   const [shift, setShift] = useState<Shift>(existing?.shift ?? "DAY");
+  const shiftKeys = radioGroupKeys(SHIFTS, shift, (s) => { setDirty(true); setShift(s); });
   const [lines, setLines] = useState<LineRow[]>(() =>
     existing
       ? existing.lines.map((l) => ({
@@ -309,9 +312,9 @@ function ReportForm({ existing, correction = false }: { existing?: ReportDetail;
             <DateInput value={date} max={todayISO()} onChange={(v) => { setDirty(true); setDate(v); }} invalid={!!err("date")} />
           </Field>
           <Field label={t("production.shiftLabel")} required error={err("shift")}>
-            <div className="grid h-10 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1" role="radiogroup" aria-label={t("production.shiftLabel")}>
-              {(["DAY", "NIGHT"] as const).map((s) => (
-                <button key={s} type="button" role="radio" aria-checked={shift === s} onClick={() => { setDirty(true); setShift(s); }} className={cn("rounded-lg text-sm font-semibold transition", shift === s ? "bg-white text-navy-800 shadow-sm" : "text-slate-500 hover:text-slate-800")}>
+            <div className="grid h-10 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1" role="radiogroup" aria-label={t("production.shiftLabel")} onKeyDown={shiftKeys.onKeyDown}>
+              {SHIFTS.map((s) => (
+                <button key={s} type="button" role="radio" aria-checked={shift === s} tabIndex={shiftKeys.tabIndex(s)} data-value={s} onClick={() => { setDirty(true); setShift(s); }} className={cn("rounded-lg text-sm font-semibold transition", shift === s ? "bg-white text-navy-800 shadow-sm" : "text-slate-500 hover:text-slate-800")}>
                   {tx(`production.shift.${s}`)}
                 </button>
               ))}
