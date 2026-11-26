@@ -198,13 +198,22 @@ export interface ApprovalSettings {
   maxDiscountPercent: number;
 }
 
+/** AUTH-05: account lockout policy (only the Super Administrator may change it). */
+export interface SecuritySettings {
+  lockoutFailures: number;
+  lockoutMinutes: number;
+}
+
+export const LOCKOUT_BOUNDS = { failures: [3, 20], minutes: [1, 1440] } as const;
+
 export interface Settings {
   company: CompanySettings;
   approvals: ApprovalSettings;
+  security: SecuritySettings;
 }
 
 export function useSettings() {
   return useQuery({ queryKey: [...ADMIN_KEY, "settings"], queryFn: ({ signal }) => get<Settings>("/settings", signal) });
 }
 
-export const saveSettings = (body: Settings) => put<Settings>("/settings", body as unknown as Record<string, unknown>);
+export const saveSettings = (body: Omit<Settings, "security"> & { security?: SecuritySettings }) => put<Settings>("/settings", body as unknown as Record<string, unknown>);

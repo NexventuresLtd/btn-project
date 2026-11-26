@@ -10,14 +10,14 @@ Legend: ✅ met · ⚠️ partial (the missing clause is stated) · ❌ missing 
 
 ## Summary
 
-**122 numbered requirements: 110 ✅ · 7 ⚠️ · 0 ❌ · 5 env.**
+**122 numbered requirements: 115 ✅ · 2 ⚠️ · 0 ❌ · 5 env** (after the post-audit fixes of AUTH-05, OFF-11, NFR-P1, NFR-M1, NFR-M2; audit: 110 ✅ · 7 ⚠️).
 
-There are also 10 ⚠️ findings in the cross-cutting sections (§5.2 closed, see below): §5.5 (2), §6.3 (1), §7.2 (1), §7.4 (1),
-§8 (1, many cells), §9.2 sync (1) and §10 scheduled reports (2).
+There are also 9 ⚠️ findings in the cross-cutting sections (§5.2 closed, see below): §5.5 (2), §6.3 (1), §7.2 (1), §7.4 (1),
+§8 (1, many cells) and §10 scheduled reports (2) (§9.2 sync closed after the audit).
 
 | Module | Reqs | ✅ | ⚠️ | ❌ | env | Open points |
 |---|---|---|---|---|---|---|
-| Access control (AUTH) | 10 | 9 | 1 | 0 | 0 | AUTH-05: the lockout period is hard-coded |
+| Access control (AUTH) | 10 | 10 | 0 | 0 | 0 | — (AUTH-05 lockout policy now set by the Super Administrator) |
 | Production (PRD) | 10 | 10 | 0 | 0 | 0 | — (the §5.5 merge UI is listed below) |
 | Stock (STK) | 10 | 10 | 0 | 0 | 0 | — (§7.2: a transfer reason is optional) |
 | Clients & orders (ORD) | 10 | 9 | 1 | 0 | 0 | ORD-04: a draft can be cancelled without approval |
@@ -27,8 +27,8 @@ There are also 10 ⚠️ findings in the cross-cutting sections (§5.2 closed, s
 | Procurement (PRC) | 8 | 8 | 0 | 0 | 0 | — |
 | Reporting (RPT) | 7 | 6 | 1 | 0 | 0 | RPT-06: CSV exports have no cut-off note |
 | Administration (ADM) | 5 | 5 | 0 | 0 | 0 | — |
-| Offline & sync (OFF) | 22 | 21 | 1 | 0 | 0 | OFF-11: an open DB transaction stalls delta pull |
-| Non-functional (NFR) | 18 | 10 | 3 | 0 | 5 | P1 checked on an empty dataset only; M1 parallel tests and e2e not in CI; M2 no external uptime probe |
+| Offline & sync (OFF) | 22 | 22 | 0 | 0 | 0 | — (OFF-11 pull stall fixed) |
+| Non-functional (NFR) | 18 | 13 | 0 | 0 | 5 | — (P1, M1, M2 fixed after the audit; P2 export note) |
 
 **Test evidence (run during this audit):**
 - Backend `go test -p 1 ./...`: 42 packages pass.
@@ -38,6 +38,13 @@ There are also 10 ⚠️ findings in the cross-cutting sections (§5.2 closed, s
 - `cmd/loadtest run`, 50 users for 60 s: 7,444 reads, p95 6 ms, PASS. This only passed after raising
   `RATE_LIMIT_AUTH_PER_MIN`; with the default, `/auth/me` returned 450 × 429 (see NFR-P1).
 - `cmd/loadtest reports`: 172 boards and reports, slowest 329 ms. The scratch DB was nearly empty.
+
+**Post-audit re-run (fixes for AUTH-05, OFF-11, NFR-P1, NFR-M1, NFR-M2, §9.2):**
+- Backend `go vet ./...` clean; `go test -race ./...` with packages in parallel: all packages pass (template-DB clones).
+- Frontend: `pnpm typecheck` clean, vitest passes (incl. lockout/syncschema catalogs, engine upgrade/too-new tests).
+- `cmd/loadtest run` with **default** rate limits, 50 users × 3 min, 12-month / 10-site / ~737k-row volume DB
+  (`devtools volume -scale 4 -sites 7 -perf-users 90`): 23 099 reads, p95 38 ms, p99 80 ms, 0 × 429, PASS.
+- `cmd/loadtest reports` on the same DB: 171/172 within 5 s; `pettycash-statement` XLSX 11.6 s (see NFR-P2).
 
 **Allowed deviations:**
 - Stack: Go + Fiber, React + Vite, and an in-process PostgreSQL-leader job scheduler instead of FastAPI, Next.js and
@@ -54,7 +61,7 @@ There are also 10 ⚠️ findings in the cross-cutting sections (§5.2 closed, s
 | AUTH-02 | ✅ | Matrix `auth/permissions.go:67-156`, `RequirePermission` on every route (`openapi:TestOpenAPIDocumentCoversEveryRoute`); UI guards in each `routes.tsx`; `TestPermissions`, `TestNewRoleMatrix` | Cell-level differences from §8 are listed under §8 |
 | AUTH-03 | ✅ | `IsPlantScoped`/`UserPlantScoped` `permissions.go:201-213`. curl: sup1 requesting `/stock/balances?plantId=BTN-2` got only BTN-1 data. `production:TestPermissionsAndPlantScope`, `stock:TestReadEndpointsPermissionsAndScope` | |
 | AUTH-04 | ✅ | Single-use 30-min link `auth/reset_link.go:22,59` (`used_at`/`invalidated_at`); forced first-login change `auth/middleware.go:16`; `f3_tokens_test.go:TestPasswordResetLink`, `TestPasswordChangeForcedAndPolicy` | |
-| AUTH-05 | ⚠️ | 5 failures lock the account for 15 min; attempts in `AuthAttempt` (`auth/throttle.go:20-30`, `routes.go:159`); admin unlock; `TestAccountLockout` | **Not configurable**: `Limits` is a compiled-in constant → load it from settings/env and expose it in SettingsPage |
+| AUTH-05 | ✅ | Fixed after the audit: the Super Administrator sets the threshold (3–20 failures, default 5) and period (1–1440 min, default 15) in Administration → Settings → *Account lockout* (`settings.Security`, `adminapi.putSettings`, 403 for any other role); the login flow reads it on every failure (`auth/routes.go` → `settings.LoadSecurity`); the change is audited with before/after (`settings.update`) and each lock records the period (`auth.lock`); UI in en/am/rw/fr (`i18n/ns/lockout.ts`). `app:TestLockoutPolicyConfigurable`, `TestAccountLockout` | |
 | AUTH-06 | ✅ | 15-min access token + rotating 14-day refresh `auth/tokens.go:36-41`; device list and revoke `auth/devices.go:346`, AdminDevicesPage; `TestAccessExpiryAndRefreshRotation`, `TestDevicesOwnAndAdmin` | |
 | AUTH-07 | ✅ | Append-only triggers + device id `migrations/01100_audit_immutable.sql`; sign-ins audited `routes.go:219`; `audit:TestAuditImmutableAndDevice`, `TestAuditCommitsAtomicallyWithTheTransaction` | |
 | AUTH-08 | ✅ | `isActive` toggle, no delete `users/users.go:150,218,294`; UsersPage; `TestUsersCRUD` | |
@@ -182,7 +189,7 @@ There are also 10 ⚠️ findings in the cross-cutting sections (§5.2 closed, s
 | OFF-08 | ✅ | Capture order, batches ≤200, exponential back-off + Retry-After, resumable (`engine.ts`, `backoff.ts`); `backoff.test.ts` | |
 | OFF-09 | ✅ | Dedup on (uuid, revision) `syncsvc/push.go:383-399`; `TestPushIdempotencyAndDuplicates`; curl: resent batch → `duplicate` | |
 | OFF-10 | ✅ | accepted / duplicate / conflict / rejected + reasonCode (`syncsvc/registry.go:52-64`); curl verified | |
-| OFF-11 | ⚠️ | `GET /sync/pull` with (xid, version, scope) cursor (`syncsvc/pull.go:22-62,299-330`); `TestPullDeltaScopeAndSnapshots` | **Delta pull stalls while any write transaction is open in the DB.** Shown live: a 25 s open txn → pull returned `[]` until commit. Nothing is lost, but one idle-in-transaction connection freezes sync for every device. This is also why 8 sync tests fail when packages run in parallel → set `idle_in_transaction_session_timeout` + `statement_timeout` on the app role, show pull lag on `/sync/monitor` with an alert, and isolate the sync tests |
+| OFF-11 | ✅ | `GET /sync/pull` with (stamp, version, scope) cursor (`syncsvc/pull.go`). Fixed after the audit (migration `03250_sync_watermark.sql`, `pullUpper`): writers of synced rows take a shared advisory lock, then stamp `greatest(xid, watermark)`; a pull raises the watermark before its snapshot and is held back only by in-flight transactions holding that lock in its own schema — the invariant (no row below the cursor can commit later) is proved in the code comment. A stuck writer is bounded by `idle_in_transaction_session_timeout` = 5 min on every pool connection (`db.Connect`). Tests: `TestPullNotStalledByUnrelatedTransactions` (open write txn on another table, another schema's sync lock and another database: pull not stalled; a txn whose xid predates the cursor and then writes a synced row is still delivered), `TestPullDoesNotSkipSlowTransactions`, `TestPullDeltaScopeAndSnapshots` (polling workaround removed) | |
 | OFF-12 | ✅ | Signed offline package, 14 days default, configurable via `PUT /sync/settings` (max 60); revoke in AdminDevicesPage; `TestDeviceRevokeStopsSyncAndRefresh` | |
 | OFF-13 | ✅ | AES-GCM-256 key wrapped by PBKDF2 (310k) + device secret (`core/crypto.ts`); wiped on sign-out (`runtime.ts`); `crypto.test.ts` | |
 | OFF-14 | ✅ | `runtime.ts:418-441` confirm before sign-out with pending/issues; e2e T-10 | Browser-level "clear site data" cannot be intercepted (platform limit) |
@@ -193,14 +200,14 @@ There are also 10 ⚠️ findings in the cross-cutting sections (§5.2 closed, s
 | OFF-19 | ✅ | Pulls scoped to site + 60 days / open items; worker PII minimised; quota warnings `core/quota.ts` | |
 | OFF-20 | ✅ | "Sync now" in ConnectionIndicator; passphrase-encrypted export/import (`offline/transfer.ts`) | |
 | OFF-21 | ✅ | `registerType: prompt`; update applied only with no dirty form (`runtime.ts:497-505`); Dexie upgrade migration (`db.ts:100-120`) | |
-| OFF-22 | ✅ | Timeouts, batch halving, back-off, server idempotency; e2e T-03 | Same stall risk as OFF-11 |
+| OFF-22 | ✅ | Timeouts, batch halving, back-off, server idempotency; e2e T-03 | |
 
 ### NFR — Non-functional
 | ID | Status | Evidence | Missing → fix |
 |---|---|---|---|
-| NFR-P1 | ⚠️ | `cmd/loadtest run`, 50 users, 60 s on :4900: p95 6 ms, 100 % < 2 s, PASS | Proven only on an empty dataset. With the default limits the run **fails**: `/auth/me` is in the `auth` group (30/min per IP, `ratelimit.go:149`) and returned 450 × 429. Users at one site behind a shared NAT IP will hit this → move `/auth/me` out of the strict auth group (or key it by session); rerun on a 12-month staging dataset and record the result |
-| NFR-P2 | ✅ | `loadtest reports`: 172 boards/reports, slowest 329 ms; `TestBoardsRenderTwelveMonthsWithinBudget` (12-month fixture) | |
-| NFR-P3 | ✅ | `syncsvc:TestBatchOf200Under10s`; e2e "NFR" scenario: capture ≤300 ms, 200 records at 1 Mbps ≤10 s | The e2e does not run in CI (see NFR-M1) |
+| NFR-P1 | ✅ | Fixed after the audit: signed-in traffic is rate-limited per user, not per IP (`app.go`: per-IP flood guard 30 000/min before the session, then per-user 600/min; `/auth/me`, logout, language, offline key/PIN in the per-user `session` group 120/min; login/OTP/reset/refresh stay per IP 30/min) — `app:TestSharedIPUsersAreLimitedPerUser` (60 users on one IP, default limits). `cmd/loadtest run` with DEFAULT limits on a scratch DB from `devtools volume -scale 4 -sites 7 -perf-users 90` (12 months, 10 sites, 106 users, ~737k rows): 50 users × 3 min, 23 099 reads, 127.6 req/s, p50 2 ms, p95 38 ms, p99 80 ms, 100 % < 2 s, 0 errors, 0 × 429 → PASS | Production hardware not yet measured (run the same command on staging) |
+| NFR-P2 | ✅ | `loadtest reports`: 172 boards/reports, slowest 329 ms; `TestBoardsRenderTwelveMonthsWithinBudget` (12-month fixture) | Re-run (post-audit) on the 10-site ~737k-row volume DB: 171/172 within 5 s (boards ≤ 334 ms), but **`pettycash-statement` XLSX took 11.6 s** (12k entries) → optimise that export before claiming P2 at that volume |
+| NFR-P3 | ✅ | `syncsvc:TestBatchOf200Under10s`; e2e "NFR" scenario: capture ≤300 ms, 200 records at 1 Mbps ≤10 s (runs in the CI `e2e` job) | |
 | NFR-P4 | ✅ | `e2e/load-size.mjs` on a preview build: 1.66 MB initial, repeat visit served from the SW cache | |
 | NFR-A1 | env | systemd units (`deploy/`), health endpoint, offline-first client | Hosting SLA |
 | NFR-R1 | env | `deploy/backup.sh` nightly encrypted pg_dump + rclone off-site with a timer; `deploy/restore-test.sh` | The quarterly restore drill has no timer or runbook date → schedule it |
@@ -212,8 +219,8 @@ There are also 10 ⚠️ findings in the cross-cutting sections (§5.2 closed, s
 | NFR-D2 | ✅ | `/privacy/subjects/:type/:id`: detail, JSON/PDF export, corrections, access log; PrivacyPage/SubjectPage; `TestWorkerExportContainsOnlyTheSubject` | |
 | NFR-U1 | env | Guided tour, help centre, keyboard-entry e2e | Measure training time at UAT |
 | NFR-C1 | env | All e2e runs in Chromium | No Edge or macOS run → add an `msedge` channel |
-| NFR-M1 | ⚠️ | CI `.github/workflows/ci.yml`: gofmt, vet, `go test -race ./...`, pnpm typecheck/test/build; migrations in git; OpenAPI | (1) The parallel `go test ./...` fails here (Postgres `out of shared memory`, plus sync-pull tests under concurrent load), and CI uses the same command, so CI is likely red → raise `max_locks_per_transaction` on the CI Postgres, use a DB per package or `-p 1`. (2) The browser e2e suites (offline acceptance, a11y, keyboard, load-size) are not in CI → add a headless-Chrome job |
-| NFR-M2 | ⚠️ | slog structured logs, error capture (`monitor/capture.go`), job metrics `/ops/jobs`, health with uptime | **No external uptime monitoring**: the internal health job dies with the process → add an external probe on `/api/v1/health` |
+| NFR-M1 | ✅ | CI `.github/workflows/ci.yml`: gofmt, vet, `go test -race ./...`, pnpm typecheck/test/build, shellcheck; migrations in git; OpenAPI. Fixed after the audit: (1) `internal/testutil` migrates a template database once per migration set and gives each test process its own clone (`CREATE DATABASE … TEMPLATE`), so parallel `go test -race ./...` no longer exhausts `max_locks_per_transaction` (42 packages pass in parallel; dev note in `backend/README.md`); the sync-pull flakiness is gone with OFF-11. (2) New CI job `e2e`: Postgres 17 service, builds API + web, headless Chrome, runs `frontend/e2e/run-ci.sh` (a11y, keyboard-entry, offline-attendance, offline-acceptance; artifacts on failure) | |
+| NFR-M2 | ✅ | slog structured logs, error capture (`monitor/capture.go`), job metrics `/ops/jobs`, health with uptime. Fixed after the audit: external probe `deploy/uptime-check.sh` (curl; `/api/health?db=1` now also pings PostgreSQL → 503) with e-mail/webhook alerts, repeat and recovery notices, run from another host by `deploy/btn-ops-uptime.{service,timer}` (every minute) or the `uptime` docker-compose profile; documented in README → *Uptime monitoring* | |
 | NFR-SC1 | env | Sites/users are data; indexes in place; b7e34db reports a 10-site / 100-user / 5.9M-row run | Not reproduced; the volume seeding script is not in the repo → commit it |
 | NFR-L1 | ✅ | DD/MM/YYYY + Africa/Kigali (`lib/dates.ts:33-39`), RWF, en/rw/fr (+am) catalogs with parity tests (`catalog.test.ts`) | Minor: `formatDate(Date)` uses the UTC day, so 22:00–24:00 UTC (00:00–02:00 Kigali) shows the previous day → format in the Kigali TZ |
 
@@ -304,9 +311,9 @@ Fix:
 ## §9 Interfaces
 | Item | Status | Evidence | Missing → fix |
 |---|---|---|---|
-| 9.1 UI | ✅ | Responsive layout; rw + fr catalogs cover all backend keys; SyncBadge Pending/Synced/Conflict/Rejected on 16 offline screens; `e2e/a11y.mjs` axe WCAG 2.1 AA at 1280×720 and 768×1024; `e2e/keyboard-entry.mjs` | The a11y and keyboard e2e are not in CI (NFR-M1) |
+| 9.1 UI | ✅ | Responsive layout; rw + fr catalogs cover all backend keys; SyncBadge Pending/Synced/Conflict/Rejected on 16 offline screens; `e2e/a11y.mjs` axe WCAG 2.1 AA at 1280×720 and 768×1024; `e2e/keyboard-entry.mjs` (both in the CI `e2e` job) | |
 | 9.2 REST | ✅ | `/api/v1` (`app.go:84`); OpenAPI 3.1 at `/api/v1/openapi.json` (447 paths) + `/docs`; pagination `{items,total,page,pageSize}` (`httpx/json.go:84-98`); errors `{"error":{"code","message"}}`; SMTP templates (`mail/`); CSV/XLSX/PDF | |
-| 9.2 Sync API | ⚠️ | `/sync/push`, `/sync/pull` (cursor delta), `/sync/status` (`syncsvc/module.go:38-41`), rate-limited; curl verified | **Backward compatibility is not enforced**: `schemaVersion` is stored but never checked, there is no supported-version range, and no test → define min/max schemaVersion per record type, reject unsupported ones with a reason, add a test |
+| 9.2 Sync API | ✅ | `/sync/push`, `/sync/pull` (cursor delta), `/sync/status` (`syncsvc/module.go:38-41`), rate-limited. Fixed after the audit (`syncsvc/schema.go`): the client sends `X-Sync-Schema` (absent = 1); the server supports min 1 … current 2 (advertised in `/sync/status` → `schema`); below min → 426 `schema_upgrade_required`, above current → 409 `schema_too_new`; each record type declares its supported `schemaVersion` range (`SchemaVersions(min,max)`, default 1..1) and an out-of-range record refuses the whole batch with the same codes, nothing stored. Client: `transport.ts` sends the version, the engine blocks with `blocked: "upgrade"` keeping records pending, and `SchemaUpgradeNotice` shows "Update required" (en/am/rw/fr). `syncsvc:TestSchemaVersionsEnforced`, `engine.test.ts` (upgrade + too-new), `app:TestClientRecordSchemasSupportedByServer` (every client record type's schemaVersion is inside the server's range; attendance accepts 1..2) | |
 
 ## §10 Dashboards and scheduled reports
 
@@ -356,9 +363,9 @@ This audit verified what each scenario asserts and the backend halves. The brows
 not run in CI.
 
 ## Found when running the system
-1. **Delta-pull stall** (OFF-11): an open write transaction anywhere in the DB holds every device's pull at `[]` until
-   it commits. Reproduced with a 25 s transaction. This is also why sync tests fail in parallel runs.
-2. **Parallel backend test run fails** (`out of shared memory`, SQLSTATE 53200). CI uses the same parallel command.
-3. **`/auth/me` is rate-limited at 30/min per IP**: the 50-user load test failed (450 × 429) until
-   `RATE_LIMIT_AUTH_PER_MIN` was raised. Risky for a site where many users share one public IP.
+1. ~~**Delta-pull stall** (OFF-11)~~ — fixed: only in-flight writers of synced rows in the same schema hold pull back
+   (`TestPullNotStalledByUnrelatedTransactions`).
+2. ~~**Parallel backend test run fails**~~ — fixed: per-process clones of a once-migrated template database.
+3. ~~**`/auth/me` is rate-limited at 30/min per IP**~~ — fixed: signed-in calls are limited per user; the load test
+   passes with the default limits.
 4. Monitoring correctly flagged SMTP as critical (expected, because the audit pointed SMTP at a dead port).

@@ -57,7 +57,8 @@ type syncMark struct {
 
 // registerSync plugs attendance into the sync server (called from Register).
 func registerSync() {
-	syncsvc.RegisterHandler(SyncRecordType, syncsvc.HandlerFunc(applyMark), syncsvc.Requires("attendance.record"))
+	// Record schema 2 added overtimeHours / exception / baseVersion; version 1 marks (older clients) still apply (§9.2).
+	syncsvc.RegisterHandler(SyncRecordType, syncsvc.HandlerFunc(applyMark), syncsvc.Requires("attendance.record"), syncsvc.SchemaVersions(1, 2))
 	syncsvc.RegisterPull("attendance", pullMarks, syncsvc.PullRequires("attendance.view", "attendance.record"))
 	syncsvc.RegisterPull("attendance_days", pullDays, syncsvc.PullRequires("attendance.view", "attendance.record"))
 }

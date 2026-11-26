@@ -1,20 +1,28 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Building, FileText, ShieldCheck } from "lucide-react";
+import { Building, FileText, Lock, ShieldCheck } from "lucide-react";
 import { Alert, Button, Card, CardBody, CardHeader, ErrorState, Field, Input, PageHeader, PageLoader, Textarea } from "@/components/ui";
 import { useT, type T } from "@/i18n";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { formatRWF } from "@/lib/format";
-import { ADMIN_KEY, saveSettings, useSettings, type CompanySettings, type Settings } from "./api";
+import { useAuth } from "@/auth/AuthProvider";
+import { ADMIN_KEY, LOCKOUT_BOUNDS, saveSettings, useSettings, type CompanySettings, type Settings } from "./api";
 
 interface FormState {
   company: CompanySettings;
   approvals: { pettyCashApprovalLimit: string; maxDiscountPercent: string };
+  security: { lockoutFailures: string; lockoutMinutes: string };
 }
 
 const toForm = (s: Settings): FormState => ({
   company: { ...s.company },
   approvals: { pettyCashApprovalLimit: String(s.approvals.pettyCashApprovalLimit), maxDiscountPercent: String(s.approvals.maxDiscountPercent) },
+  security: { lockoutFailures: String(s.security?.lockoutFailures ?? 5), lockoutMinutes: String(s.security?.lockoutMinutes ?? 15) },
 });
+
+const inRange = (v: string, [lo, hi]: readonly [number, number]) => {
+  const n = Number(v);
+  return v.trim() !== "" && Number.isInteger(n) && n >= lo && n <= hi;
+};
 
 const COMPANY_FIELDS: { key: keyof CompanySettings; hint?: boolean; type?: string; wide?: boolean; required?: boolean; ph?: boolean }[] = [
   { key: "name", required: true, hint: true },
@@ -36,12 +44,18 @@ function validate(f: FormState, t: T): Record<string, string> {
   if (f.approvals.pettyCashApprovalLimit.trim() === "" || !Number.isInteger(limit) || limit < 0) e["approvals.pettyCashApprovalLimit"] = t("admin.settings.err.limit");
   const pct = Number(f.approvals.maxDiscountPercent);
   if (f.approvals.maxDiscountPercent.trim() === "" || !Number.isFinite(pct) || pct < 0 || pct > 100) e["approvals.maxDiscountPercent"] = t("admin.settings.err.pct");
+  const [fMin, fMax] = LOCKOUT_BOUNDS.failures;
+  const [mMin, mMax] = LOCKOUT_BOUNDS.minutes;
+  if (!inRange(f.security.lockoutFailures, LOCKOUT_BOUNDS.failures)) e["security.lockoutFailures"] = t("lockout.err.failures", { min: fMin, max: fMax });
+  if (!inRange(f.security.lockoutMinutes, LOCKOUT_BOUNDS.minutes)) e["security.lockoutMinutes"] = t("lockout.err.minutes", { min: mMin, max: mMax });
   return e;
 }
 
 export function SettingsPage() {
   const { t, tx } = useT();
   const settings = useSettings();
+  const { user } = useAuth();
+  const canLockout = user?.role === "SUPER_ADMIN"; // AUTH-05: the lockout policy is the Super Administrator's
   const [form, setForm] = useState<FormState | null>(null);
   const [touched, setTouched] = useState(false);
   useEffect(() => {
@@ -65,6 +79,7 @@ export function SettingsPage() {
   const dirty = JSON.stringify(form) !== JSON.stringify(toForm(settings.data));
   const setCompany = (k: keyof CompanySettings, v: string) => setForm((f) => f && { ...f, company: { ...f.company, [k]: v } });
   const setApproval = (k: keyof FormState["approvals"], v: string) => setForm((f) => f && { ...f, approvals: { ...f.approvals, [k]: v } });
+  const setSecurity = (k: keyof FormState["security"], v: string) => setForm((f) => f && { ...f, security: { ...f.security, [k]: v } });
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -73,6 +88,7 @@ export function SettingsPage() {
     save.mutate({
       company: Object.fromEntries(Object.entries(form.company).map(([k, v]) => [k, k === "tin" ? v.replace(/\s+/g, "") : v.trim()])) as unknown as CompanySettings,
       approvals: { pettyCashApprovalLimit: Number(form.approvals.pettyCashApprovalLimit), maxDiscountPercent: Number(form.approvals.maxDiscountPercent) },
+      ...(canLockout ? { security: { lockoutFailures: Number(form.security.lockoutFailures), lockoutMinutes: Number(form.security.lockoutMinutes) } } : {}),
     });
   }
 
@@ -146,6 +162,23 @@ export function SettingsPage() {
             <div className="md:col-span-2">
               <Alert tone="blue">{t("admin.settings.note")}</Alert>
             </div>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader title={<span className="flex items-center gap-2"><Lock className="size-4 text-navy-600" />{t("lockout.title")}</span>} description={t("lockout.description")} />
+          <CardBody className="grid gap-5 md:grid-cols-2">
+            <Field label={t("lockout.failuresLabel")} required htmlFor="s-lock-failures" error={err("security.lockoutFailures")} hint={t("lockout.failuresHint", { n: form.security.lockoutFailures || "…" })}>
+              <Input id="s-lock-failures" type="number" inputMode="numeric" min={LOCKOUT_BOUNDS.failures[0]} max={LOCKOUT_BOUNDS.failures[1]} step={1} className="tabular" value={form.security.lockoutFailures} onChange={(e) => setSecurity("lockoutFailures", e.target.value)} invalid={!!err("security.lockoutFailures")} disabled={!canLockout} />
+            </Field>
+            <Field label={t("lockout.minutesLabel")} required htmlFor="s-lock-minutes" error={err("security.lockoutMinutes")} hint={t("lockout.minutesHint", { n: form.security.lockoutMinutes || "…" })}>
+              <Input id="s-lock-minutes" type="number" inputMode="numeric" min={LOCKOUT_BOUNDS.minutes[0]} max={LOCKOUT_BOUNDS.minutes[1]} step={1} className="tabular" value={form.security.lockoutMinutes} onChange={(e) => setSecurity("lockoutMinutes", e.target.value)} invalid={!!err("security.lockoutMinutes")} disabled={!canLockout} />
+            </Field>
+            {!canLockout && (
+              <div className="md:col-span-2">
+                <Alert tone="blue">{t("lockout.readOnly")}</Alert>
+              </div>
+            )}
           </CardBody>
         </Card>
 

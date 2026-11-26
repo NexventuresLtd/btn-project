@@ -155,6 +155,12 @@ func (m *module) push(c *fiber.Ctx) error {
 	if len(body.Records) > MaxBatch {
 		return httpx.NewKey(400, "batch_too_large", "sync.batch_too_large", "max", MaxBatch)
 	}
+	if _, err := clientSchema(c); err != nil { // §9.2: unsupported client versions are refused before anything is stored
+		return err
+	}
+	if err := checkRecordSchemas(body.Records); err != nil {
+		return err
+	}
 	out, err := m.Push(c, ctx, u, body, lang)
 	if err != nil {
 		return err

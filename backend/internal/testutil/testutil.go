@@ -1,13 +1,20 @@
-// Package testutil gives tests an isolated, fully migrated PostgreSQL schema inside the test database
-// (btn_ops_go_test). Every test process gets its own schema, so packages can run in parallel.
+// Package testutil gives tests an isolated, fully migrated PostgreSQL database. The migrations run ONCE per
+// migration set into a template database (<test db>_tpl_<hash>); every test process then gets its own clone
+// (<test db>_p<pid>, CREATE DATABASE … TEMPLATE), so packages run in parallel without each one replaying every
+// migration in large transactions — that exhausted the shared lock table (SQLSTATE 53200 "out of shared memory",
+// max_locks_per_transaction) when `go test ./...` ran many packages at once (NFR-M1).
 package testutil
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -30,9 +37,11 @@ var (
 	pool   *pgxpool.Pool
 	cfg    *config.Config
 	setErr error
+	dbName string // this process's clone
+	baseU  *url.URL
 )
 
-// Main wraps m.Run so the per-process schema is dropped afterwards. Optional:
+// Main wraps m.Run so the per-process database is dropped afterwards. Optional:
 //
 //	func TestMain(m *testing.M) { testutil.Main(m) }
 func Main(m *testing.M) {
@@ -41,15 +50,19 @@ func Main(m *testing.M) {
 	os.Exit(code)
 }
 
-// Close drops this process's schema (no-op when unused).
+// Close drops this process's database (no-op when unused).
 func Close() {
-	if pool != nil {
-		_, _ = pool.Exec(context.Background(), `DROP SCHEMA IF EXISTS `+schemaName()+` CASCADE`)
-		pool.Close()
+	if pool == nil {
+		return
+	}
+	pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if admin, err := pgxpool.New(ctx, baseU.String()); err == nil {
+		_, _ = admin.Exec(ctx, `DROP DATABASE IF EXISTS `+quoteIdent(dbName)+` WITH (FORCE)`)
+		admin.Close()
 	}
 }
-
-func schemaName() string { return fmt.Sprintf("t_%d", os.Getpid()) }
 
 // Config returns the test configuration (env + safe test defaults).
 func Config(t testing.TB) *config.Config {
@@ -58,7 +71,7 @@ func Config(t testing.TB) *config.Config {
 	return cfg
 }
 
-// Pool returns the pool bound to this process's schema (created and migrated on first use).
+// Pool returns the pool bound to this process's database (cloned from the migrated template on first use).
 func Pool(t testing.TB) *pgxpool.Pool {
 	t.Helper()
 	once.Do(func() { setErr = setup() })
@@ -66,6 +79,38 @@ func Pool(t testing.TB) *pgxpool.Pool {
 		t.Fatalf("test database setup: %v (is PostgreSQL up and DATABASE_URL set in backend/.env?)", setErr)
 	}
 	return pool
+}
+
+func quoteIdent(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
+
+func withDB(u *url.URL, name string) string {
+	c := *u
+	c.Path = "/" + name
+	return c.String()
+}
+
+// migrationsHash fingerprints the embedded migration set (names + contents).
+func migrationsHash() (string, error) {
+	h := sha256.New()
+	var names []string
+	if err := fs.WalkDir(migrations.FS, ".", func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(p, ".sql") {
+			names = append(names, p)
+		}
+		return err
+	}); err != nil {
+		return "", err
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		b, err := fs.ReadFile(migrations.FS, n)
+		if err != nil {
+			return "", err
+		}
+		h.Write([]byte(n))
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:10], nil
 }
 
 func setup() error {
@@ -86,69 +131,156 @@ func setup() error {
 	cfg.FrontendOrigins = []string{"http://localhost:5173"}
 	cfg.AppURL = "http://localhost:5173"
 	cfg.GlobalRateLimit = 1_000_000
+	cfg.IPFloodLimit = 1_000_000
 	ctx := context.Background()
 	if err := db.EnsureDatabase(ctx, cfg.TestDatabaseURL); err != nil {
 		return err
 	}
+	baseU, err = url.Parse(cfg.TestDatabaseURL)
+	if err != nil {
+		return err
+	}
+	base := strings.TrimPrefix(baseU.Path, "/")
 	admin, err := pgxpool.New(ctx, cfg.TestDatabaseURL)
 	if err != nil {
 		return err
 	}
 	defer admin.Close()
-	// purge schemas left behind by crashed runs (names embed nothing time-based, so use pg stats: drop all t_* not ours older than 2h)
-	rows, _ := admin.Query(ctx, `SELECT nspname FROM pg_namespace WHERE nspname LIKE 't\_%' AND nspname <> $1`, schemaName())
-	var stale []string
-	for rows != nil && rows.Next() {
-		var n string
-		_ = rows.Scan(&n)
-		stale = append(stale, n)
+	hash, err := migrationsHash()
+	if err != nil {
+		return err
 	}
-	if rows != nil {
+	tpl := fmt.Sprintf("%s_tpl_%s", base, hash)
+	if err := ensureTemplate(ctx, admin, base, tpl); err != nil {
+		return fmt.Errorf("template %s: %w", tpl, err)
+	}
+	purgeStale(ctx, admin, base)
+	dbName = fmt.Sprintf("%s_p%d", base, os.Getpid())
+	if _, err := admin.Exec(ctx, `DROP DATABASE IF EXISTS `+quoteIdent(dbName)+` WITH (FORCE)`); err != nil {
+		return err
+	}
+	if err := createFromTemplate(ctx, admin, dbName, tpl); err != nil {
+		return err
+	}
+	pool, err = db.Connect(ctx, withDB(baseU, dbName), 10)
+	return err
+}
+
+// createFromTemplate clones tpl; PostgreSQL refuses while another session is still connected to the template
+// (e.g. a concurrent clone's catalog check), so retry briefly.
+func createFromTemplate(ctx context.Context, admin *pgxpool.Pool, name, tpl string) error {
+	var err error
+	for i := 0; i < 50; i++ {
+		if _, err = admin.Exec(ctx, `CREATE DATABASE `+quoteIdent(name)+` TEMPLATE `+quoteIdent(tpl)); err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), "being accessed by other users") {
+			return err
+		}
+		time.Sleep(time.Duration(50+i*10) * time.Millisecond)
+	}
+	return err
+}
+
+// ensureTemplate migrates the template database once per migration set. Processes racing to build it are
+// serialized by an advisory lock; a template is usable once it carries the "ready" comment.
+func ensureTemplate(ctx context.Context, admin *pgxpool.Pool, base, tpl string) error {
+	ready := func() (bool, error) {
+		var ok bool
+		err := admin.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_database d WHERE d.datname = $1
+			AND shobj_description(d.oid, 'pg_database') = 'btn-test-template ready')`, tpl).Scan(&ok)
+		return ok, err
+	}
+	if ok, err := ready(); err != nil || ok {
+		return err
+	}
+	conn, err := admin.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtext($1))`, "btn-test-template:"+base); err != nil {
+		return err
+	}
+	defer func() { _, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext($1))`, "btn-test-template:"+base) }()
+	if ok, err := ready(); err != nil || ok {
+		return err
+	}
+	// Older templates of this test database are no longer needed (best effort: skip ones still in use).
+	rows, err := conn.Query(ctx, `SELECT datname FROM pg_database WHERE datname LIKE $1 AND datname <> $2`,
+		strings.ReplaceAll(base, "_", `\_`)+`\_tpl\_%`, tpl)
+	if err == nil {
+		var old []string
+		for rows.Next() {
+			var n string
+			_ = rows.Scan(&n)
+			old = append(old, n)
+		}
 		rows.Close()
-	}
-	for _, n := range stale {
-		if schemaIdle(ctx, admin, n) {
-			_, _ = admin.Exec(ctx, `DROP SCHEMA `+n+` CASCADE`)
+		for _, n := range old {
+			_, _ = conn.Exec(ctx, `DROP DATABASE IF EXISTS `+quoteIdent(n))
 		}
 	}
-	sn := schemaName()
-	if _, err := admin.Exec(ctx, `DROP SCHEMA IF EXISTS `+sn+` CASCADE`); err != nil {
+	if _, err := conn.Exec(ctx, `DROP DATABASE IF EXISTS `+quoteIdent(tpl)+` WITH (FORCE)`); err != nil {
 		return err
 	}
-	if _, err := admin.Exec(ctx, `CREATE SCHEMA `+sn); err != nil {
+	if _, err := conn.Exec(ctx, `CREATE DATABASE `+quoteIdent(tpl)+` TEMPLATE template0`); err != nil {
 		return err
 	}
-	u, _ := url.Parse(cfg.TestDatabaseURL)
-	q := u.Query()
-	q.Set("search_path", sn)
-	u.RawQuery = q.Encode()
-
-	sqlDB, err := sql.Open("pgx", u.String())
+	sqlDB, err := sql.Open("pgx", withDB(baseU, tpl))
 	if err != nil {
 		return err
 	}
 	goose.SetBaseFS(migrations.FS)
 	_ = goose.SetDialect("postgres")
 	goose.SetLogger(goose.NopLogger())
-	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
-		sqlDB.Close()
+	err = goose.UpContext(ctx, sqlDB, ".")
+	sqlDB.Close()
+	if err != nil {
 		return err
 	}
-	sqlDB.Close()
-	pool, err = db.Connect(ctx, u.String(), 10)
+	_, err = conn.Exec(ctx, `COMMENT ON DATABASE `+quoteIdent(tpl)+` IS 'btn-test-template ready'`)
 	return err
 }
 
-// schemaIdle: a leftover schema is stale when no live backend of that pid exists (best effort: older than 2h).
-func schemaIdle(ctx context.Context, p *pgxpool.Pool, name string) bool {
-	var pid int
-	if _, err := fmt.Sscanf(name, "t_%d", &pid); err != nil {
-		return false
+// purgeStale drops per-process databases (and legacy per-process schemas) left behind by crashed runs.
+func purgeStale(ctx context.Context, admin *pgxpool.Pool, base string) {
+	alive := func(pid int) bool {
+		_, err := os.Stat(fmt.Sprintf("/proc/%d", pid))
+		return err == nil
 	}
-	if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err == nil {
-		return false // that process is still running
+	rows, err := admin.Query(ctx, `SELECT datname FROM pg_database WHERE datname LIKE $1`, strings.ReplaceAll(base, "_", `\_`)+`\_p%`)
+	if err == nil {
+		var stale []string
+		for rows.Next() {
+			var n string
+			var pid int
+			_ = rows.Scan(&n)
+			if _, err := fmt.Sscanf(strings.TrimPrefix(n, base+"_p"), "%d", &pid); err == nil && pid != os.Getpid() && !alive(pid) {
+				stale = append(stale, n)
+			}
+		}
+		rows.Close()
+		for _, n := range stale {
+			_, _ = admin.Exec(ctx, `DROP DATABASE IF EXISTS `+quoteIdent(n)+` WITH (FORCE)`)
+		}
 	}
-	return true
+	rows, err = admin.Query(ctx, `SELECT nspname FROM pg_namespace WHERE nspname LIKE 't\_%'`)
+	if err == nil {
+		var stale []string
+		for rows.Next() {
+			var n string
+			var pid int
+			_ = rows.Scan(&n)
+			if _, err := fmt.Sscanf(n, "t_%d", &pid); err == nil && !alive(pid) {
+				stale = append(stale, n)
+			}
+		}
+		rows.Close()
+		for _, n := range stale {
+			_, _ = admin.Exec(ctx, `DROP SCHEMA IF EXISTS `+quoteIdent(n)+` CASCADE`)
+		}
+	}
 }
 
 // Reset truncates every table in the test schema and re-seeds plants/catalogue/settings.

@@ -13,6 +13,7 @@ import (
 	"btn-ops/internal/db"
 	"btn-ops/internal/deps"
 	"btn-ops/internal/httpx"
+	"btn-ops/internal/settings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
@@ -168,7 +169,11 @@ func getSettings(c *fiber.Ctx, d *deps.Deps) error {
 	if err != nil {
 		return err
 	}
-	return httpx.JSONCached(c, fiber.Map{"company": co, "approvals": ap}, "private, no-cache")
+	sec, err := d.Settings.Security(ctx)
+	if err != nil {
+		return err
+	}
+	return httpx.JSONCached(c, fiber.Map{"company": co, "approvals": ap, "security": sec}, "private, no-cache")
 }
 
 func putSettings(c *fiber.Ctx, d *deps.Deps) error {
@@ -185,7 +190,11 @@ func putSettings(c *fiber.Ctx, d *deps.Deps) error {
 	if err != nil {
 		return err
 	}
-	before := fiber.Map{"company": co, "approvals": ap}
+	sec, err := d.Settings.Security(ctx)
+	if err != nil {
+		return err
+	}
+	before := fiber.Map{"company": co, "approvals": ap, "security": sec}
 	after := fiber.Map{}
 	if cv := v.Obj("company", false); cv != nil {
 		got := fiber.Map{}
@@ -225,6 +234,28 @@ func putSettings(c *fiber.Ctx, d *deps.Deps) error {
 		}
 		after["approvals"] = got
 	}
+	// AUTH-05: the account lockout policy is the Super Administrator's alone.
+	if sv := v.Obj("security", false); sv != nil {
+		if u := auth.MustUser(c); u.Role != auth.RoleSuperAdmin {
+			return httpx.NewKey(403, "forbidden", "settings.security_super_admin_only")
+		}
+		got := fiber.Map{}
+		if sv.Has("lockoutFailures") {
+			n := sv.OptNum("lockoutFailures").Coerce().Whole().Min(settings.MinLockoutFailures).Max(settings.MaxLockoutFailures)
+			if n.Present() {
+				sec.LockoutFailures = int(n.I())
+				got["lockoutFailures"] = sec.LockoutFailures
+			}
+		}
+		if sv.Has("lockoutMinutes") {
+			n := sv.OptNum("lockoutMinutes").Coerce().Whole().Min(settings.MinLockoutMinutes).Max(settings.MaxLockoutMinutes)
+			if n.Present() {
+				sec.LockoutMinutes = int(n.I())
+				got["lockoutMinutes"] = sec.LockoutMinutes
+			}
+		}
+		after["security"] = got
+	}
 	if err := v.Err(); err != nil {
 		return err
 	}
@@ -239,11 +270,16 @@ func putSettings(c *fiber.Ctx, d *deps.Deps) error {
 				return err
 			}
 		}
+		if _, ok := after["security"]; ok {
+			if err := d.Settings.Put(ctx, tx, "security", sec); err != nil {
+				return err
+			}
+		}
 		return audit.Record(c, tx, audit.Input{Action: "settings.update", Entity: "Setting", Before: before, After: after})
 	})
 	d.Settings.Invalidate()
 	if err != nil {
 		return err
 	}
-	return c.JSON(fiber.Map{"company": co, "approvals": ap})
+	return c.JSON(fiber.Map{"company": co, "approvals": ap, "security": sec})
 }

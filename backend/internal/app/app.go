@@ -2,6 +2,7 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 	"runtime/debug"
 	"strings"
@@ -96,7 +97,7 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     strings.Join(cfg.FrontendOrigins, ","),
 		AllowCredentials: true,
-		AllowHeaders:     "Content-Type,X-Requested-With,Accept,X-Device-Id",
+		AllowHeaders:     "Content-Type,X-Requested-With,Accept,X-Device-Id,X-Sync-Schema",
 		ExposeHeaders:    "Content-Disposition,Retry-After,ETag,Server-Timing,X-Request-Id",
 		MaxAge:           600,
 	}))
@@ -110,7 +111,9 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 	app.Use(httpx.ServerTiming())
 
 	api := app.Group("/api")
-	api.Use(ratelimit.Middleware(ratelimit.New(ratelimit.Rule{PerMinute: cfg.GlobalRateLimit, Burst: cfg.GlobalRateLimit / 5}), "global", ratelimit.IPKey))
+	// NFR-P1: a whole site often reaches the API through one public (NAT) IP, so signed-in traffic is limited per
+	// user, not per IP. Before the session is known only a generous per-IP flood guard applies.
+	api.Use(ratelimit.Middleware(ratelimit.New(ratelimit.Rule{PerMinute: cfg.IPFloodLimit, Burst: max(1, cfg.IPFloodLimit/5)}), "flood", ratelimit.IPKey))
 	api.Use(httpx.Timeout(cfg.RequestTimeout))
 	api.Use(httpx.CSRFGuard(cfg.FrontendOrigins))
 	api.Use(d.Auth.LoadSession())
@@ -120,17 +123,32 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 		}
 		return ""
 	}, nil))
-	userLimiter := ratelimit.New(ratelimit.Rule{PerMinute: cfg.GlobalRateLimit, Burst: cfg.GlobalRateLimit / 5})
-	api.Use(func(c *fiber.Ctx) error { // per-user bucket (signed-in requests only)
+	userLimiter := ratelimit.New(ratelimit.Rule{PerMinute: cfg.GlobalRateLimit, Burst: max(1, cfg.GlobalRateLimit/5)})
+	anonLimiter := ratelimit.New(ratelimit.Rule{PerMinute: cfg.GlobalRateLimit, Burst: max(1, cfg.GlobalRateLimit/5)})
+	byUser := ratelimit.Middleware(userLimiter, "user", ratelimit.Key)
+	byIP := ratelimit.Middleware(anonLimiter, "global", ratelimit.IPKey)
+	api.Use(func(c *fiber.Ctx) error { // per-user bucket when signed in, per-IP bucket otherwise
 		if u := auth.FromCtx(c); u != nil {
-			return ratelimit.Middleware(userLimiter, "user", ratelimit.Key)(c)
+			return byUser(c)
 		}
-		return c.Next()
+		return byIP(c)
 	})
 
 	// ── public (no auth) ────────────────────────────────────────────────────
+	// ?db=1 also pings PostgreSQL (2 s budget) and answers 503 when it is unreachable: the external uptime probe
+	// (deploy/uptime-check.sh, NFR-M2) uses it so "API up but database down" alerts too.
 	api.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"ok": true, "time": time.Now().UTC().Format("2006-01-02T15:04:05.000Z")})
+		out := fiber.Map{"ok": true, "time": time.Now().UTC().Format("2006-01-02T15:04:05.000Z")}
+		if c.Query("db") == "1" {
+			ctx, cancel := context.WithTimeout(c.UserContext(), 2*time.Second)
+			defer cancel()
+			if err := d.Pool.Ping(ctx); err != nil {
+				out["ok"], out["db"] = false, "down"
+				return c.Status(503).JSON(out)
+			}
+			out["db"] = "up"
+		}
+		return c.JSON(out)
 	})
 	d.Auth.Routes(api.Group("/auth"))
 	d.Auth.AccountRoutes(api.Group("/account/passkeys"))

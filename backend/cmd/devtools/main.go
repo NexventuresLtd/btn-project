@@ -2,6 +2,7 @@
 //
 //	go run ./cmd/devtools users          one test account per role (password DevPass1234!)
 //	go run ./cmd/devtools session <email> print a session cookie token (skips password + OTP)
+//	go run ./cmd/devtools volume [flags]  synthetic months of activity for load tests / e2e (see volume.go)
 package main
 
 import (
@@ -53,7 +54,7 @@ func main() {
 		os.Exit(1)
 	}
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: devtools users | session <email>")
+		fmt.Fprintln(os.Stderr, "usage: devtools users | session <email> | volume [-months N -scale F -sites N -perf-users N]")
 		os.Exit(2)
 	}
 	ctx := context.Background()
@@ -110,6 +111,11 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Print(tok)
+	case "volume":
+		if err := volume(ctx, pool, os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintln(os.Stderr, "unknown command", os.Args[1])
 		os.Exit(2)

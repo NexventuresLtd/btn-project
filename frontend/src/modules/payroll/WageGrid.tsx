@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { ChevronDown, ChevronRight, Keyboard, RefreshCw, Save, Trash2, TriangleAlert, Undo2 } from "lucide-react";
-import { Alert, Badge, Button, Select } from "@/components/ui";
+import { Alert, Badge, Button, ScrollX, Select } from "@/components/ui";
 import { useT, type T } from "@/i18n";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { ApiError } from "@/lib/api";
@@ -221,7 +221,7 @@ export function WageGrid({ period, onDirtyChange }: { period: PeriodDetail; onDi
           <Alert tone="red">{apiMessage}</Alert>
         </div>
       ) : null}
-      <div className="mt-3 overflow-x-auto">
+      <ScrollX className="mt-3">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-y border-line bg-slate-50/70 text-[11px] font-semibold tracking-wide whitespace-nowrap text-slate-500 uppercase">
@@ -357,7 +357,7 @@ export function WageGrid({ period, onDirtyChange }: { period: PeriodDetail; onDi
             </tfoot>
           ) : null}
         </table>
-      </div>
+      </ScrollX>
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-4">
         <div className="flex flex-wrap items-center gap-2">
           <Select

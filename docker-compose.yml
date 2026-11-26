@@ -66,5 +66,20 @@ services:
     depends_on:
       - api
 
+  # External uptime probe (NFR-M2), not started by `up`. Run it on ANOTHER machine than the API (it must survive the
+  # API host going down): copy this file + deploy/uptime-check.sh there, create deploy/uptime.env from
+  # deploy/uptime.env.example, then `docker compose --profile uptime up -d uptime`. It has no dependency on the
+  # other services. Checks every 60 s and alerts by e-mail / webhook (see README → Uptime monitoring).
+  uptime:
+    image: curlimages/curl:8.11.1
+    profiles: ["uptime"]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/opt/uptime/uptime-check.sh", "--env-file", "/opt/uptime/uptime.env", "--loop", "60"]
+    environment:
+      UPTIME_STATE_DIR: /tmp/btn-ops-uptime # failure counter; lost on restart (worst case: one extra alert)
+    volumes:
+      - ./deploy/uptime-check.sh:/opt/uptime/uptime-check.sh:ro
+      - ./deploy/uptime.env:/opt/uptime/uptime.env:ro
+
 volumes:
   pgdata:

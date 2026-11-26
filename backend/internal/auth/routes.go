@@ -12,32 +12,36 @@ import (
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/i18n"
 	"btn-ops/internal/ratelimit"
+	"btn-ops/internal/settings"
 
 	"github.com/gofiber/fiber/v2"
 )
 
 // Routes mounts /api/auth/* (r must already be the "/auth" group). Includes the stricter "auth" rate limit.
 func (s *Service) Routes(r fiber.Router) {
-	r.Use(ratelimit.Group("auth"))
-	r.Post("/login", s.login)
-	r.Post("/otp/verify", s.otpVerify)
-	r.Post("/otp/resend", s.otpResend)
-	r.Get("/me", s.me)
-	r.Post("/logout", s.logout)
-	r.Post("/password/forgot", s.passwordForgot)
-	r.Post("/password/reset", s.passwordReset)
-	r.Post("/password/change", s.passwordChange)
-	r.Put("/language", s.setLanguage)
-	r.Post("/passkey/begin", s.passkeyLoginBegin)
-	r.Post("/passkey/finish", s.passkeyLoginFinish)
+	// Unauthenticated steps (password, codes, resets, passkey sign-in, token refresh): strict, per client IP.
+	ip := ratelimit.Group("auth")
+	// Calls made with a session (NFR-P1): per user, so many users behind one site NAT IP never share a bucket.
+	sess := ratelimit.Group("session")
+	r.Post("/login", ip, s.login)
+	r.Post("/otp/verify", ip, s.otpVerify)
+	r.Post("/otp/resend", ip, s.otpResend)
+	r.Get("/me", sess, s.me)
+	r.Post("/logout", sess, s.logout)
+	r.Post("/password/forgot", ip, s.passwordForgot)
+	r.Post("/password/reset", ip, s.passwordReset)
+	r.Post("/password/change", sess, s.passwordChange)
+	r.Put("/language", sess, s.setLanguage)
+	r.Post("/passkey/begin", ip, s.passkeyLoginBegin)
+	r.Post("/passkey/finish", ip, s.passkeyLoginFinish)
 	// F3: tokens, reset links, offline unlock.
-	r.Post("/refresh", s.refresh)
-	r.Post("/password/reset-link/check", s.resetLinkCheck)
-	r.Post("/password/reset-link", s.resetLinkConsume)
-	r.Get("/offline-key", s.offlineKey)
-	r.Post("/offline-package", s.offlinePackage)
-	r.Put("/offline-pin", s.offlinePin)
-	r.Delete("/offline-pin", s.offlinePin)
+	r.Post("/refresh", ip, s.refresh)
+	r.Post("/password/reset-link/check", ip, s.resetLinkCheck)
+	r.Post("/password/reset-link", ip, s.resetLinkConsume)
+	r.Get("/offline-key", sess, s.offlineKey)
+	r.Post("/offline-package", sess, s.offlinePackage)
+	r.Put("/offline-pin", sess, s.offlinePin)
+	r.Delete("/offline-pin", sess, s.offlinePin)
 }
 
 // UserPayload is the /api/auth/me user object.
@@ -151,19 +155,21 @@ func (s *Service) login(c *fiber.Ctx) error {
 	if !ok || user == nil || !user.IsActive {
 		_ = RecordAttempt(ctx, s.Pool, "ip:"+ip, KindLogin, false)
 		if user != nil {
+			policy := settings.LoadSecurity(ctx, s.Pool) // AUTH-05: set by the Super Administrator
 			failures := user.FailedLoginCount + 1
-			lock := failures >= Limits.LoginFailuresPerAccount
+			lock := failures >= policy.LockoutFailures
 			var until *time.Time
 			cnt := failures
 			if lock {
-				t := time.Now().UTC().Add(Limits.AccountLock)
+				t := time.Now().UTC().Add(policy.LockDuration())
 				until, cnt = &t, 0
 			}
 			if _, err := s.Pool.Exec(ctx, `UPDATE "User" SET "failedLoginCount"=$2, "lockedUntil"=$3, "updatedAt"=now() WHERE id=$1`, user.ID, cnt, until); err != nil {
 				return err
 			}
 			if lock {
-				_ = audit.Log(ctx, s.Pool, audit.Actor{IP: ip}, audit.Input{Action: "auth.lock", Entity: "User", EntityID: user.ID, Summary: "Locked after repeated failed sign-ins"})
+				_ = audit.Log(ctx, s.Pool, audit.Actor{IP: ip}, audit.Input{Action: "auth.lock", Entity: "User", EntityID: user.ID, Summary: "Locked after repeated failed sign-ins",
+					After: map[string]any{"failures": failures, "lockedMinutes": policy.LockoutMinutes, "lockedUntil": until}})
 			}
 		}
 		return httpx.NewKey(401, "invalid_credentials", "auth.invalid_credentials")

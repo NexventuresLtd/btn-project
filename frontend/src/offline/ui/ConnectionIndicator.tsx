@@ -9,6 +9,7 @@ import { Button } from "@/components/ui";
 import { useConnectivity, useOfflineState } from "../hooks";
 import { applyPendingUpdate } from "../runtime";
 import { openOfflineDialog } from "./dialogBus";
+import { SchemaUpgradeNotice } from "./SchemaUpgradeNotice";
 
 /** Persistent top-bar indicator (OFF-05): Online / Offline / Syncing + pending count, with a details popover. */
 export function ConnectionIndicator() {
@@ -55,7 +56,7 @@ export function ConnectionIndicator() {
         <span className="hidden sm:inline">{label}</span>
         {c.pending ? <span className="tabular rounded-full bg-amber-400 px-1.5 text-[11px] leading-[18px] text-navy-950" data-testid="pending-count">{c.pending}</span> : null}
         {c.issues ? <AlertTriangle className="size-4 text-red-500" aria-hidden /> : null}
-        {st.updateReady ? <Download className="size-4 text-blue-600" aria-hidden /> : null}
+        {st.updateReady || c.blocked === "upgrade" ? <Download className="size-4 text-blue-600" aria-hidden /> : null}
       </button>
       {open ? (
         <div role="dialog" aria-label={t("offline.indicator.label")} className="absolute right-0 z-30 mt-2 w-80 max-w-[calc(100vw-1rem)] overflow-hidden rounded-2xl border border-line bg-white text-sm shadow-xl">
@@ -66,6 +67,7 @@ export function ConnectionIndicator() {
             <p className="text-xs text-slate-500">{c.lastSyncAt ? t("offline.indicator.lastSync", { time: formatDateTime(c.lastSyncAt) }) : t("offline.indicator.never")}</p>
             {c.nextRetryAt && c.pending ? <p className="text-xs text-slate-500">{t("offline.indicator.retryAt", { time: new Date(c.nextRetryAt).toLocaleTimeString() })}</p> : null}
             {c.blocked === "auth" ? <p className="text-xs font-medium text-amber-800">{t("offline.indicator.signInAgain")}</p> : null}
+            <SchemaUpgradeNotice compact />
             {st.phase === "locked" ? <p className="flex items-center gap-1.5 text-xs font-medium text-amber-800"><Lock className="size-3.5" />{t("offline.indicator.locked")}</p> : null}
             {c.issues ? <p className="flex items-center gap-1.5 text-xs font-medium text-red-700"><AlertTriangle className="size-3.5" />{t("offline.indicator.issues", { count: c.issues })}</p> : null}
           </div>

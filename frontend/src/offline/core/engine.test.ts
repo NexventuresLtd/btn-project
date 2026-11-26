@@ -5,7 +5,7 @@ import { UserDB } from "./db";
 import { SyncEngine } from "./engine";
 import { registerOfflineRecordType } from "./registry";
 import { OfflineStore, type WireRecord } from "./store";
-import { httpTransport } from "./transport";
+import { httpTransport, SYNC_SCHEMA_VERSION } from "./transport";
 import { Vault } from "./vault";
 
 registerOfflineRecordType<{ worker: string; status: string; date: string }>({
@@ -25,14 +25,18 @@ function mockServer() {
   let pullReset = false;
   const log: WireRecord[] = [];
   const batches: number[] = [];
-  let script: ("ok" | "network" | "500" | "400" | "revoked" | "401" | "final")[] = [];
+  let script: ("ok" | "network" | "500" | "400" | "revoked" | "401" | "final" | "426" | "toonew")[] = [];
+  const schemaHeaders: (string | null)[] = [];
   const rules: { reject?: (r: WireRecord) => string | null; conflict?: (r: WireRecord) => boolean } = {};
   const fetch = async (url: string, init: RequestInit): Promise<Response> => {
     const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
     if (url.includes("/sync/records")) return json(200, { items: [...resolved.entries()].map(([uuid, resolution]) => ({ uuid, revision: 1, status: resolution === "keep_client" ? "accepted" : "conflict", conflictStatus: "resolved", resolution })) });
     if (url.includes("/sync/pull") && pullReset) return json(200, { changes: [{ entity: "workers", id: "w1", op: "upsert", data: { name: "Only" } }], cursor: "c2", hasMore: false, reset: true });
     if (url.includes("/sync/pull")) return json(200, { changes: [{ entity: "test_marks", id: "srv1", op: "upsert", data: { date: "2026-11-20", worker: "w9", status: "PRESENT" } }, { entity: "workers", id: "w9", op: "upsert", data: { name: "Ann" } }], cursor: "c1", hasMore: false });
+    schemaHeaders.push(new Headers(init.headers).get("X-Sync-Schema"));
     const step = script.shift() ?? "ok";
+    if (step === "426") return json(426, { error: { code: "schema_upgrade_required", message: "update", fields: { min: "3" } } });
+    if (step === "toonew") return json(409, { error: { code: "schema_too_new", message: "server behind" } });
     if (step === "network") throw new TypeError("Failed to fetch");
     if (step === "500") return json(500, { error: { code: "boom" } });
     if (step === "revoked") return json(403, { error: { code: "device_revoked" } });
@@ -56,7 +60,7 @@ function mockServer() {
     });
     return json(200, { results, serverTime: new Date().toISOString(), ...(step === "final" ? { deviceStatus: "revoked" } : {}) });
   };
-  return { fetch, applied, log, batches, rules, firstOutcome, resolved, setReset: (v: boolean) => (pullReset = v), setScript: (s: typeof script) => (script = s) };
+  return { fetch, applied, log, batches, rules, firstOutcome, resolved, schemaHeaders, setReset: (v: boolean) => (pullReset = v), setScript: (s: typeof script) => (script = s) };
 }
 
 let n = 0;
@@ -206,6 +210,40 @@ describe("sync engine", () => {
     expect(auth).toBe(1);
     e2.resume();
     await e2.sync();
+    expect(await store.counts()).toMatchObject({ pending: 0 });
+  });
+
+  it("§9.2: sends its sync schema version; an upgrade-required answer blocks sync without rejecting anything", async () => {
+    const srv = mockServer();
+    await capture(1);
+    await capture(2);
+    let upgrade = 0;
+    const e = engineFor(srv, { onUpgradeRequired: () => upgrade++ });
+    srv.setScript(["426"]);
+    const out = await e.sync();
+    expect(srv.schemaHeaders[0]).toBe(String(SYNC_SCHEMA_VERSION));
+    expect(out.ok).toBe(false);
+    expect(out.error?.kind).toBe("upgrade");
+    expect(e.state.blocked).toBe("upgrade");
+    expect(upgrade).toBe(1);
+    expect(await store.counts()).toMatchObject({ pending: 2, rejected: 0 }); // kept for the updated app
+    const calls = srv.schemaHeaders.length;
+    await e.sync(); // blocked: nothing is sent until the app is updated
+    expect(srv.schemaHeaders.length).toBe(calls);
+    expect(timers).toHaveLength(0);
+  });
+
+  it("§9.2: a server older than the app (schema_too_new) is retried later, records stay pending", async () => {
+    const srv = mockServer();
+    await capture(1);
+    const e = engineFor(srv);
+    srv.setScript(["toonew"]);
+    await e.sync();
+    expect(e.state.phase).toBe("waiting");
+    expect(e.state.blocked).toBeNull();
+    expect(await store.counts()).toMatchObject({ pending: 1, rejected: 0 });
+    timers.shift()!.fn();
+    await e.sync();
     expect(await store.counts()).toMatchObject({ pending: 0 });
   });
 

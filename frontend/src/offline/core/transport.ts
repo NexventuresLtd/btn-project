@@ -5,7 +5,18 @@
  */
 import type { Change, PushResult, WireRecord } from "./store";
 
-export type TransportErrorKind = "network" | "timeout" | "server" | "auth" | "revoked" | "client" | "rate";
+/**
+ * Sync schema (wire) version this client speaks (SRS §9.2), sent as X-Sync-Schema on every /sync call. The server
+ * declares the range it supports (GET /sync/status → schema {min, current}); below its minimum it answers
+ * 426 schema_upgrade_required (this app must be updated; nothing was stored), above its current version
+ * 409 schema_too_new (the server is behind, e.g. mid-deployment: retry later). Raise it with the server's
+ * syncsvc.SchemaCurrent when the wire shape changes.
+ */
+export const SYNC_SCHEMA_VERSION = 2;
+export const SYNC_SCHEMA_HEADER = "X-Sync-Schema";
+
+/** upgrade = the server no longer accepts this app's sync schema: the app must be updated before it syncs again */
+export type TransportErrorKind = "network" | "timeout" | "server" | "auth" | "revoked" | "client" | "rate" | "upgrade";
 
 export class TransportError extends Error {
   kind: TransportErrorKind;
@@ -53,6 +64,8 @@ export interface RecordState {
 
 export interface SyncStatusResponse {
   deviceStatus: "active" | "revoked";
+  /** supported sync schema range (§9.2) */
+  schema?: { min: number; current: number };
   lastSyncAt?: string | null;
   rejected?: number;
   conflicts?: number;
@@ -126,6 +139,7 @@ export function httpTransport(opts: { base?: string; fetch?: FetchLike; headers?
           Accept: "application/json",
           "X-Requested-With": "btn-ops",
           ...(init.body ? { "Content-Type": "application/json" } : {}),
+          ...(path.startsWith("/sync/") ? { [SYNC_SCHEMA_HEADER]: String(SYNC_SCHEMA_VERSION) } : {}),
           ...(opts.headers?.() ?? {}),
         },
         body: init.body ? JSON.stringify(init.body) : undefined,
@@ -141,6 +155,8 @@ export function httpTransport(opts: { base?: string; fetch?: FetchLike; headers?
       if (res.status === 401 && code === "token_expired" && !init.retried && (await refresh())) return callOnce<T>(path, { ...init, retried: true });
       if (res.status === 401) throw new TransportError("auth", 401, code);
       if (res.status === 403 && /device[_.]revoked/.test(code)) throw new TransportError("revoked", 403, code);
+      if (res.status === 426 || code === "schema_upgrade_required") throw new TransportError("upgrade", res.status, code || "schema_upgrade_required");
+      if (code === "schema_too_new") throw new TransportError("server", res.status, code); // server behind: back off and retry
       if (res.status === 429) {
         const ra = Number(res.headers.get("Retry-After"));
         throw new TransportError("rate", 429, code, Number.isFinite(ra) && ra > 0 ? ra * 1000 : null);

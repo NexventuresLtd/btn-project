@@ -238,8 +238,9 @@ func (f HandlerFunc) Apply(ctx context.Context, tx pgx.Tx, rec Record, actor Act
 }
 
 type handlerEntry struct {
-	h     Handler
-	perms []auth.Permission
+	h                    Handler
+	perms                []auth.Permission
+	schemaMin, schemaMax int // supported record schemaVersions (0 = 1..1, see SchemaVersions)
 }
 
 // HandlerOption configures a registration.

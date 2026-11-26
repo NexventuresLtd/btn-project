@@ -94,7 +94,7 @@ func registerNote() {
 			return r
 		}
 		return syncsvc.Accept(rec.UUID, ver)
-	}), syncsvc.Requires("production.record"))
+	}), syncsvc.Requires("production.record"), syncsvc.SchemaVersions(1, 2))
 	syncsvc.OnReview = func(ctx context.Context, tx pgx.Tx, it syncsvc.ReviewItem) error {
 		applyMu.Lock()
 		reviewed = append(reviewed, it)
@@ -639,19 +639,10 @@ func TestPullDeltaScopeAndSnapshots(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// A full (cursorless) pull withholds rows newer than the oldest open transaction on the server, so a slow
-	// writer is never skipped. Other test packages on the same Postgres can briefly hold such a transaction:
-	// the seeded workers are then delayed (never lost), so poll until they appear.
-	var first pullOut
-	var n map[string]int
-	for deadline := time.Now().Add(10 * time.Second); ; {
-		first = pull(f.dc, "")
-		n = byEntity(first)
-		if n["workers"] == 1 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+	// OFF-11: only transactions writing synced rows hold a pull back, so a full pull sees the seeded workers at once
+	// even while other test packages run against the same PostgreSQL.
+	first := pull(f.dc, "")
+	n := byEntity(first)
 	if n["sites"] < 3 || n["products"] != 11 || n["materials"] < 6 || n["workers"] != 1 || n["customers"] != 0 || n["scope"] != 1 || n["balances"] < 0 || first.HasMore {
 		t.Fatalf("first pull: %v", n)
 	}
@@ -768,6 +759,193 @@ func TestPullDoesNotSkipSlowTransactions(t *testing.T) {
 		_ = f.e.Pool.QueryRow(t.Context(), `SELECT server_xid::text, server_version, pg_snapshot_xmin(pg_current_snapshot())::text FROM "Product" ORDER BY server_version DESC LIMIT 1`).Scan(&x, &v, &xm)
 		t.Logf("product xid=%s v=%d xmin=%s", x, v, xm)
 		t.Fatalf("slow transaction skipped or duplicated: %v", seen)
+	}
+}
+
+// OFF-11: unrelated open transactions (another table, another schema, another database) do not stall delta pull,
+// while a transaction writing a synced table is still never skipped — including one whose xid was assigned before
+// the pull ran and that only writes the synced row afterwards.
+func TestPullNotStalledByUnrelatedTransactions(t *testing.T) {
+	f := setup(t)
+	ctx := t.Context()
+	type out struct {
+		Changes []struct {
+			Entity string         `json:"entity"`
+			Data   map[string]any `json:"data"`
+		} `json:"changes"`
+		Cursor string `json:"cursor"`
+	}
+	pull := func(cursor string) out {
+		t.Helper()
+		var o out
+		f.e.Decode(f.dc.Do("GET", "/api/sync/pull?entities=products,materials&cursor="+cursor, nil), &o)
+		return o
+	}
+	names := func(o out, entity string) []string {
+		var r []string
+		for _, c := range o.Changes {
+			if c.Entity == entity {
+				r = append(r, fmt.Sprint(c.Data["name"]))
+			}
+		}
+		return r
+	}
+	base := pull("")
+
+	// 1. An open write transaction on a NON-synced table of the same schema (xid assigned, idle in transaction).
+	unrelated, err := f.e.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unrelated.Rollback(context.Background()) }()
+	if _, err := unrelated.Exec(ctx, `UPDATE "User" SET name = name WHERE id = $1`, f.sup.ID); err != nil {
+		t.Fatal(err)
+	}
+	// 2. An open transaction holding the sync lock of ANOTHER schema (another test package or tenant).
+	other, err := f.e.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = other.Rollback(context.Background()) }()
+	if _, err := other.Exec(ctx, `SELECT pg_current_xact_id(), pg_advisory_xact_lock_shared(1112821331, hashtext('some_other_schema'))`); err != nil {
+		t.Fatal(err)
+	}
+	// 3. An open write transaction in ANOTHER database of the same cluster.
+	cfg := f.e.Pool.Config().ConnConfig.Copy()
+	cfg.Database = "postgres"
+	delete(cfg.RuntimeParams, "search_path")
+	foreign, err := pgx.ConnectConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer foreign.Close(context.Background())
+	ftx, err := foreign.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ftx.Rollback(context.Background()) }()
+	if _, err := ftx.Exec(ctx, `SELECT pg_current_xact_id()`); err != nil {
+		t.Fatal(err)
+	}
+
+	// A committed change is delivered immediately despite the three open transactions.
+	if _, err := f.e.Pool.Exec(ctx, `UPDATE "Material" SET name = name || ' (fast)' WHERE code = (SELECT min(code) FROM "Material")`); err != nil {
+		t.Fatal(err)
+	}
+	mid := pull(base.Cursor)
+	if got := names(mid, "materials"); len(got) != 1 || !strings.HasSuffix(got[0], "(fast)") {
+		t.Fatalf("pull stalled by unrelated transactions: %v", got)
+	}
+
+	// The unrelated same-schema transaction (xid assigned BEFORE the pull above advanced the cursor) now writes a
+	// synced row and commits: it must still be delivered by the next pulls, not skipped.
+	if _, err := unrelated.Exec(ctx, `UPDATE "Product" SET name = name || ' (late)' WHERE code = (SELECT min(code) FROM "Product")`); err != nil {
+		t.Fatal(err)
+	}
+	// While it is in flight it holds the window back: a further committed change is withheld, never lost.
+	if _, err := f.e.Pool.Exec(ctx, `UPDATE "Material" SET name = name || ' (held)' WHERE code = (SELECT min(code) FROM "Material")`); err != nil {
+		t.Fatal(err)
+	}
+	held := pull(mid.Cursor)
+	if err := unrelated.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after := pull(held.Cursor)
+	products := append(names(held, "products"), names(after, "products")...)
+	materials := append(names(held, "materials"), names(after, "materials")...)
+	if len(products) != 1 || !strings.HasSuffix(products[0], "(late)") {
+		t.Fatalf("late synced write skipped or duplicated: %v", products)
+	}
+	if len(materials) != 1 || !strings.HasSuffix(materials[0], "(held)") {
+		t.Fatalf("held change lost or duplicated: %v", materials)
+	}
+}
+
+// §9.2: the sync API enforces schema versions. Older-but-supported clients and record shapes keep working; an
+// unsupported version gets a clear error code and nothing of the batch is stored.
+func TestSchemaVersionsEnforced(t *testing.T) {
+	f := setup(t)
+	push := func(hdr string, recs ...map[string]any) (int, string, map[string]string, string) {
+		t.Helper()
+		var h []string
+		if hdr != "" {
+			h = []string{syncsvc.SchemaHeader, hdr}
+		}
+		r := f.dc.Do("POST", "/api/sync/push", map[string]any{"deviceId": f.dc.DeviceID, "records": recs}, h...)
+		if r.StatusCode == 200 {
+			return 200, "", nil, f.e.Text(r)
+		}
+		code, msg, fields := f.e.ErrorOf(r)
+		return r.StatusCode, code, fields, msg
+	}
+	pull := func(hdr string) (int, string) {
+		t.Helper()
+		r := f.dc.Do("GET", "/api/sync/pull?entities=products", nil, syncsvc.SchemaHeader, hdr)
+		code, _, _ := f.e.ErrorOf(r)
+		return r.StatusCode, code
+	}
+	ledger := func() int { return count(t, f.e, `SELECT count(*) FROM sync_ledger`) }
+	withVersion := func(r map[string]any, v int) map[string]any { r["schemaVersion"] = v; return r }
+
+	// Supported range is advertised.
+	var st struct {
+		Schema struct{ Min, Current int } `json:"schema"`
+	}
+	f.e.Decode(f.dc.Do("GET", "/api/sync/status", nil), &st)
+	if st.Schema.Min != syncsvc.SchemaMin || st.Schema.Current != syncsvc.SchemaCurrent || st.Schema.Current < 2 {
+		t.Fatalf("status schema: %+v", st.Schema)
+	}
+	// Backward compatible: a legacy client (no header, record v1) and a current one (header, record v2) both sync.
+	if s, code, _, body := push("", note(1, f.plant, "legacy")); s != 200 || !strings.Contains(body, `"accepted"`) {
+		t.Fatalf("legacy client: %d %s %s", s, code, body)
+	}
+	if s, code, _, body := push(fmt.Sprint(syncsvc.SchemaCurrent), withVersion(note(2, f.plant, "current"), 2)); s != 200 || !strings.Contains(body, `"accepted"`) {
+		t.Fatalf("current client: %d %s %s", s, code, body)
+	}
+	if s, _ := pull(""); s != 200 {
+		t.Fatalf("legacy pull: %d", s)
+	}
+	if s, _ := pull(fmt.Sprint(syncsvc.SchemaCurrent)); s != 200 {
+		t.Fatalf("current pull: %d", s)
+	}
+	n := ledger()
+	// A record shape newer than the handler knows: 409 schema_too_new, nothing stored.
+	if s, code, fields, _ := push("2", note(3, f.plant, "ok"), withVersion(note(4, f.plant, "future"), 3)); s != 409 || code != syncsvc.CodeSchemaTooNew || fields["type"] != "test_note" {
+		t.Fatalf("future record: %d %s %v", s, code, fields)
+	}
+	// A client newer than the server: 409 on push and pull.
+	if s, code, _, _ := push(fmt.Sprint(syncsvc.SchemaCurrent+1), note(3, f.plant, "x")); s != 409 || code != syncsvc.CodeSchemaTooNew {
+		t.Fatalf("future client push: %d %s", s, code)
+	}
+	if s, code := pull(fmt.Sprint(syncsvc.SchemaCurrent + 1)); s != 409 || code != syncsvc.CodeSchemaTooNew {
+		t.Fatalf("future client pull: %d %s", s, code)
+	}
+	if s, code := pull("abc"); s != 400 || code != "bad_schema_version" {
+		t.Fatalf("garbage header: %d %s", s, code)
+	}
+	// A record type whose oldest supported shape is 2: a v1 record means the app must be updated.
+	syncsvc.RegisterHandler("test_note_v2", syncsvc.HandlerFunc(func(ctx context.Context, tx pgx.Tx, rec syncsvc.Record, a syncsvc.Actor) syncsvc.Result {
+		return syncsvc.Accept(rec.UUID, 1)
+	}), syncsvc.SchemaVersions(2, 2))
+	defer syncsvc.UnregisterHandler("test_note_v2")
+	old := apptest.SyncRecord("test_note_v2", 3, map[string]any{"plantId": f.plant})
+	if s, code, fields, msg := push("2", old); s != 426 || code != syncsvc.CodeSchemaUpgradeRequired || fields["min"] != "2" || msg == "" {
+		t.Fatalf("old record shape: %d %s %v %q", s, code, fields, msg)
+	}
+	// The server stops serving wire version 1: legacy clients are told to upgrade, current ones carry on.
+	defer func(m int) { syncsvc.SchemaMin = m }(syncsvc.SchemaMin)
+	syncsvc.SchemaMin = 2
+	if s, code, _, _ := push("", note(3, f.plant, "legacy")); s != 426 || code != syncsvc.CodeSchemaUpgradeRequired {
+		t.Fatalf("legacy push after min raised: %d %s", s, code)
+	}
+	if s, code := pull("1"); s != 426 || code != syncsvc.CodeSchemaUpgradeRequired {
+		t.Fatalf("legacy pull after min raised: %d %s", s, code)
+	}
+	if got := ledger(); got != n {
+		t.Fatalf("refused batches stored records: %d → %d", n, got)
+	}
+	if s, code, _, _ := push("2", withVersion(note(3, f.plant, "after"), 2)); s != 200 {
+		t.Fatalf("current client after min raised: %d %s", s, code)
 	}
 }
 

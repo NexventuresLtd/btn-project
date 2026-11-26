@@ -59,8 +59,11 @@ func main() {
 		fmt.Println("ok")
 		return
 	}
-	// RATE_LIMIT_AUTH_PER_MIN (README): per-IP limit on /api/auth/*; the default 30/min equals the built-in rule.
+	// RATE_LIMIT_AUTH_PER_MIN (README): per-IP limit on the unauthenticated /api/auth/* steps (login, codes, resets);
+	// the default 30/min equals the built-in rule. RATE_LIMIT_SESSION_PER_MIN: per-user limit on the signed-in
+	// /api/auth/* calls (/me, logout, language, offline key/PIN), so users sharing one site IP do not starve each other.
 	ratelimit.Configure("auth", ratelimit.Rule{PerMinute: cfg.AuthRateLimit, Burst: max(1, cfg.AuthRateLimit/3)})
+	ratelimit.Configure("session", ratelimit.Rule{PerMinute: cfg.SessionLimit, Burst: max(1, cfg.SessionLimit/4), ByUser: true})
 	a := app.New(d)
 	jobsDone := startJobs(ctx, d) // F1: background job scheduler (advisory-lock leader), stops with ctx
 

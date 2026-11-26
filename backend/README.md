@@ -16,7 +16,13 @@ make test                 # go test ./...   (make test-race, make vet, make benc
 ```
 
 `go` not on PATH (snap)? `make GO=/snap/go/current/bin/go test`.
-Env vars: see `.env.example` (+ `APP_ENV`, `TRUSTED_PROXIES`, `REQUEST_TIMEOUT_SECONDS`, `DB_MAX_CONNS`, `RATE_LIMIT_GLOBAL_PER_MIN`, `RATE_LIMIT_AUTH_PER_MIN`, `TEST_DATABASE_URL`).
+Env vars: see `.env.example` (+ `APP_ENV`, `TRUSTED_PROXIES`, `REQUEST_TIMEOUT_SECONDS`, `DB_MAX_CONNS`, `RATE_LIMIT_GLOBAL_PER_MIN`, `RATE_LIMIT_AUTH_PER_MIN`, `RATE_LIMIT_SESSION_PER_MIN`, `RATE_LIMIT_IP_FLOOD_PER_MIN`, `TEST_DATABASE_URL`).
+
+Rate limits (NFR-P1): signed-in requests are limited **per user** (`RATE_LIMIT_GLOBAL_PER_MIN`, default 600/min; the signed-in
+`/api/auth/*` calls — `/me`, logout, language, offline key/PIN — `RATE_LIMIT_SESSION_PER_MIN`, default 120/min), so a whole
+site behind one NAT address never shares a bucket. Anonymous requests are limited per IP (600/min), the unauthenticated
+sign-in steps (login, codes, resets, passkey sign-in, refresh) per IP at `RATE_LIMIT_AUTH_PER_MIN` (30/min), and a per-IP
+flood guard (`RATE_LIMIT_IP_FLOOD_PER_MIN`, 30000/min) applies before the session is resolved.
 
 ## Layout
 
@@ -144,7 +150,13 @@ func TestSalesList(t *testing.T) {                 // package sales_test (extern
     e.Pool; e.Deps; e.Mail (captured emails)       // direct DB access for assertions
 }
 ```
-Each test process owns a schema inside `btn_ops_go_test` (parallel-safe). `testutil.Reset(t)` truncates and re-seeds; `apptest.New` calls it.
+Migrations run once per migration set into a template database (`<test db>_tpl_<hash>`); each test process then gets its
+own clone (`<test db>_p<pid>`, `CREATE DATABASE … TEMPLATE`), so `go test ./...` runs packages in parallel without replaying
+the migrations in big transactions (that exhausted PostgreSQL's shared lock table: `out of shared memory`,
+`max_locks_per_transaction`). The role needs `CREATEDB`. Add `func TestMain(m *testing.M) { testutil.Main(m) }` to a
+package so its clone is dropped at exit (leftovers of crashed runs are dropped by the next run). If you still see
+SQLSTATE 53200 on a small dev server, raise `max_locks_per_transaction` (e.g. 256) in `postgresql.conf` and restart.
+`testutil.Reset(t)` truncates and re-seeds; `apptest.New` calls it.
 `apptest.Options{KeepRateLimits: true}` keeps real limits (default relaxes them); `Options.Extra` mounts test-only routes.
 Silence/enable logs: `TEST_LOG=1`. Run with `-race`.
 

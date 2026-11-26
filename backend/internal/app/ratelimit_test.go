@@ -7,6 +7,7 @@ import (
 
 	"btn-ops/internal/app/apptest"
 	"btn-ops/internal/auth"
+	"btn-ops/internal/testutil"
 )
 
 func TestAuthEndpointsAreRateLimited(t *testing.T) {
@@ -49,5 +50,42 @@ func TestGlobalLimiter(t *testing.T) {
 	}
 	if n429 == 0 {
 		t.Fatal("global limiter never triggered")
+	}
+}
+
+// NFR-P1: users sharing one public IP (a site behind NAT) are limited per user on signed-in calls, with the
+// DEFAULT limits: 60 users each calling /api/auth/me and a list several times from one IP never get a 429,
+// while one user hammering /api/auth/me still does, and anonymous sign-in attempts stay limited per IP.
+func TestSharedIPUsersAreLimitedPerUser(t *testing.T) {
+	def, _ := config.FromEnv()
+	e := apptest.New(t, apptest.Options{KeepRateLimits: true, Config: func(c *config.Config) {
+		c.GlobalRateLimit, c.IPFloodLimit = def.GlobalRateLimit, def.IPFloodLimit
+	}})
+	if def.GlobalRateLimit != 600 || def.AuthRateLimit != 30 {
+		t.Skipf("non-default limits in the environment: %d/%d", def.GlobalRateLimit, def.AuthRateLimit)
+	}
+	users := make([]*testutil.TestUser, 60)
+	for i := range users {
+		users[i] = e.User(auth.RoleSupervisor)
+	}
+	for round := 0; round < 4; round++ {
+		for _, u := range users {
+			for _, path := range []string{"/api/auth/me", "/api/lookups"} {
+				if r := e.Do("GET", path, nil, u); r.StatusCode != 200 {
+					t.Fatalf("round %d %s for %s: %d (shared IP must not be throttled per IP)", round, path, u.Email, r.StatusCode)
+				}
+			}
+		}
+	}
+	// One user over the per-user session budget is throttled.
+	hit := false
+	for i := 0; i < 200 && !hit; i++ {
+		hit = e.Do("GET", "/api/auth/me", nil, users[0]).StatusCode == 429
+	}
+	if !hit {
+		t.Fatal("per-user session limit never triggered")
+	}
+	if r := e.Do("GET", "/api/auth/me", nil, users[1]); r.StatusCode != 200 {
+		t.Fatalf("another user on the same IP throttled: %d", r.StatusCode)
 	}
 }

@@ -19,8 +19,9 @@ export interface EngineState {
   failures: number;
   nextRetryAt: number | null;
   batchSize: number;
-  /** auth = session must be renewed online; revoked = an administrator revoked this device */
-  blocked: "auth" | "revoked" | null;
+  /** auth = session must be renewed online; revoked = an administrator revoked this device;
+   * upgrade = the server requires a newer app (sync schema, §9.2) — pending records stay on the device */
+  blocked: "auth" | "revoked" | "upgrade" | null;
 }
 
 export interface SyncOutcome {
@@ -42,6 +43,8 @@ export interface EngineOptions {
   maxPullPages?: number;
   onRevoked?: () => void;
   onAuthRequired?: () => void;
+  /** the server refused this app's sync schema version (426 schema_upgrade_required) */
+  onUpgradeRequired?: () => void;
   onSynced?: (o: SyncOutcome) => void;
   /** pull is skipped when the server has no sync pull yet (404) */
   pull?: boolean;
@@ -202,6 +205,9 @@ export class SyncEngine {
     if (err.kind === "revoked") {
       this.set({ phase: "blocked", blocked: "revoked", lastError: err.message });
       this.o.onRevoked?.();
+    } else if (err.kind === "upgrade") {
+      this.set({ phase: "blocked", blocked: "upgrade", lastError: err.message });
+      this.o.onUpgradeRequired?.();
     } else if (err.kind === "auth") {
       this.set({ phase: "blocked", blocked: "auth", lastError: err.message });
       this.o.onAuthRequired?.();

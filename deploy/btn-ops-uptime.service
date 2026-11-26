@@ -1,0 +1,37 @@
+# /etc/systemd/system/btn-ops-uptime.service — one external uptime check of BTN Operations (SRS NFR-M2).
+# Install on a machine OTHER than the API server (the probe must survive the API host going down):
+#   install -d -m 755 /opt/btn-ops/deploy && install -m 755 deploy/uptime-check.sh /opt/btn-ops/deploy/
+#   install -d -m 750 /etc/btn-ops && install -m 640 deploy/uptime.env.example /etc/btn-ops/uptime.env   # then edit it
+#   install -m 400 /dev/stdin /etc/btn-ops/uptime.smtp-pass <<<'the-smtp-password'                    # if e-mail is used
+#   cp deploy/btn-ops-uptime.service deploy/btn-ops-uptime.timer /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now btn-ops-uptime.timer
+#   systemd-run -P --wait -p EnvironmentFile=/etc/btn-ops/uptime.env -p LoadCredential=smtp-pass:/etc/btn-ops/uptime.smtp-pass \
+#     -p DynamicUser=yes /opt/btn-ops/deploy/uptime-check.sh --test-alert      # prove the alert path
+# Logs: journalctl -u btn-ops-uptime -e. A failed check leaves the unit "failed" (exit 2) until the next pass.
+[Unit]
+Description=BTN Operations external uptime check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=true
+StateDirectory=btn-ops-uptime
+# Read by systemd (as root) so the unprivileged dynamic user never needs access to the file.
+EnvironmentFile=/etc/btn-ops/uptime.env
+# SMTP password as a credential ($CREDENTIALS_DIRECTORY/smtp-pass). Webhook-only setup: delete this line.
+LoadCredential=smtp-pass:/etc/btn-ops/uptime.smtp-pass
+ExecStart=/opt/btn-ops/deploy/uptime-check.sh
+TimeoutStartSec=2min
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=

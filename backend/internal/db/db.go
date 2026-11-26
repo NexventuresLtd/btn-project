@@ -42,6 +42,12 @@ func Connect(ctx context.Context, url string, maxConns int32) (*pgxpool.Pool, er
 	cfg.MaxConnIdleTime = 10 * time.Minute
 	cfg.HealthCheckPeriod = time.Minute
 	cfg.ConnConfig.RuntimeParams["timezone"] = "UTC"
+	// Bounded guard (OFF-11): a connection left idle inside a transaction (a leaked or stuck request) is ended by
+	// the server after 5 minutes, so a writer of synced rows can never hold every device's delta pull back for
+	// longer than that. A DATABASE_URL parameter of the same name overrides it.
+	if _, ok := cfg.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"]; !ok {
+		cfg.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = "300000"
+	}
 	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement // prepared statements, cached per connection
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

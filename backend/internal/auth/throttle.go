@@ -16,18 +16,17 @@ const (
 	KindPasskey   = "passkey"
 )
 
-// Limits are the DB-backed lockout rules (same values as Node).
+// Limits are the DB-backed throttling rules. The per-account lockout (failures and period) is not here: the
+// Super Administrator sets it in Settings → Security (settings.Security, AUTH-05).
 var Limits = struct {
-	LoginFailuresPerAccount int
-	AccountLock             time.Duration
-	LoginFailuresPerIP      int
-	LoginIPWindow           time.Duration
-	OTPSendsPerHour         int
-	OTPResendCooldown       time.Duration
-	OTPTTL                  time.Duration
-	OTPMaxAttempts          int
-	ResetPerIPPerHour       int
-}{5, 15 * time.Minute, 20, 15 * time.Minute, 5, time.Minute, 10 * time.Minute, 5, 10}
+	LoginFailuresPerIP int
+	LoginIPWindow      time.Duration
+	OTPSendsPerHour    int
+	OTPResendCooldown  time.Duration
+	OTPTTL             time.Duration
+	OTPMaxAttempts     int
+	ResetPerIPPerHour  int
+}{20, 15 * time.Minute, 5, time.Minute, 10 * time.Minute, 5, 10}
 
 // CountAttempts counts attempts for key within the window (only failures when onlyFailures).
 func CountAttempts(ctx context.Context, q db.DBTX, key, kind string, window time.Duration, onlyFailures bool) (int, error) {

@@ -20,3 +20,5 @@ coverage/
 .idea/
 .vscode/*
 !.vscode/extensions.json
+# external uptime probe settings (deploy/uptime.env.example is the template)
+deploy/uptime.env

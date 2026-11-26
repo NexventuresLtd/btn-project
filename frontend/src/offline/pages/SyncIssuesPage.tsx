@@ -12,6 +12,7 @@ import { useConnectivity, useOfflineState, useOutbox } from "../hooks";
 import { getStore, markPinOnServer, openForUser, refreshQuota, removeOfflinePin, wipeUser } from "../runtime";
 import { SyncBadge } from "../ui/SyncBadge";
 import { openOfflineDialog } from "../ui/dialogBus";
+import { SchemaUpgradeNotice } from "../ui/SchemaUpgradeNotice";
 
 const fmtBytes = (n: number) => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n >= 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
@@ -75,6 +76,7 @@ export function SyncIssuesPage() {
         <div className="mb-6"><Alert tone="amber" title={t("offline.page.locked")}><Button size="sm" className="mt-2" icon={<Lock className="size-3.5" />} onClick={() => openOfflineDialog("unlock")}>{t("offline.page.unlock")}</Button></Alert></div>
       ) : null}
       {c.blocked === "auth" ? <div className="mb-6"><Alert tone="amber">{t("offline.indicator.signInAgain")}</Alert></div> : null}
+      <SchemaUpgradeNotice />
 
       <Card className="mb-6">
         <CardHeader title={t("offline.page.issuesTitle")} description={issues.length ? t("offline.indicator.issues", { count: issues.length }) : undefined} />

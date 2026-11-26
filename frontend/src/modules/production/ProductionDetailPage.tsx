@@ -4,7 +4,7 @@ import {
   CheckCircle2, CircleDot, Clock, FilePen, Flag, GitMerge, GitPullRequestArrow, Lock, MessageSquarePlus, Pencil, Send, ThumbsDown, ThumbsUp, TriangleAlert, X, XCircle,
 } from "lucide-react";
 import {
-  Alert, Badge, Button, Card, CardBody, CardHeader, ConfirmDialog, DataTable, ErrorState, Field, Input, Modal, PageHeader, PageLoader, ExportMenu, PdfButton, Select, StatCard, StatusBadge, Textarea, type Column,
+  Alert, Badge, Button, Card, CardBody, CardHeader, ConfirmDialog, DataTable, ErrorState, Field, Input, Modal, PageHeader, PageLoader, ExportMenu, PdfButton, ScrollX, Select, StatCard, StatusBadge, Textarea, type Column,
 } from "@/components/ui";
 import { useAuth } from "@/auth/AuthProvider";
 import { useLookups } from "@/hooks/useLookups";
@@ -202,7 +202,7 @@ function Detail({ r }: { r: ReportDetail }) {
           <Card>
             <CardHeader title={tt("production.defectsTitle")} description={tt("production.defectsDesc")} />
             {defectRows.length ? (
-              <div className="overflow-x-auto">
+              <ScrollX>
                 <table className="w-full text-sm">
                   <thead><tr className="border-y border-line bg-slate-50/70 text-left text-[11px] font-semibold tracking-wide text-slate-500 uppercase"><th className="px-5 py-2">{tt("production.col.product")}</th><th className="px-3 py-2">{tt("production.defectReason")}</th><th className="px-3 py-2">{tt("production.stageLabel")}</th><th className="px-3 py-2 text-right">{tt("production.defectQty")}</th><th className="px-5 py-2">{tt("production.defectNote")}</th></tr></thead>
                   <tbody className="divide-y divide-line">
@@ -211,7 +211,7 @@ function Detail({ r }: { r: ReportDetail }) {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </ScrollX>
             ) : <CardBody><p className="text-sm text-slate-500">{tt("production.noDefects")}</p></CardBody>}
           </Card>
 
@@ -219,7 +219,7 @@ function Detail({ r }: { r: ReportDetail }) {
             <Card>
               <CardHeader title={tt("production.materialsVsRecipe")} description={tt(r.stockPosted ? "production.postedConsumptionSubmit" : "production.postedWhenSubmitted", { pct: formatQty(r.variance.tolerancePct) })} />
               {r.materialUsages.length || r.variance.rows.length ? (
-                <div className="overflow-x-auto">
+                <ScrollX>
                   <table className="w-full text-sm">
                     <thead><tr className="border-y border-line bg-slate-50/70 text-[11px] font-semibold tracking-wide text-slate-500 uppercase"><th className="px-5 py-2 text-left">{tt("production.material")}</th><th className="px-3 py-2 text-right">{tt("production.used")}</th><th className="px-3 py-2 text-right">{tt("production.expected")}</th><th className="px-5 py-2 text-right">{tt("production.variance")}</th></tr></thead>
                     <tbody className="divide-y divide-line">
@@ -240,7 +240,7 @@ function Detail({ r }: { r: ReportDetail }) {
                     </tbody>
                   </table>
                   {r.variance.missingRecipes.length ? <p className="px-5 py-2 text-xs text-slate-500">{tt("production.noRecipeFor", { list: r.variance.missingRecipes.map((p) => p.name).join(", ") })}</p> : null}
-                </div>
+                </ScrollX>
               ) : <CardBody><p className="text-sm text-slate-500">{tt("production.noMaterials")}</p></CardBody>}
             </Card>
             <Card>

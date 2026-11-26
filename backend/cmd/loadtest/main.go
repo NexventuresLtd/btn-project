@@ -9,8 +9,9 @@
 // every "page" fires the same concurrent reads the web app does (lists with filters + pagination, detail
 // pages, lookups, dashboards, report JSON), then thinks for -think before the next page. Endpoints a user
 // may not read (403) are dropped from that user's mix after the first probe.
-// The global per-IP rate limit must be raised on the API (RATE_LIMIT_GLOBAL_PER_MIN) because every
-// virtual user shares one IP here, unlike production (also RATE_LIMIT_AUTH_PER_MIN for /api/auth/me).
+// It runs against the DEFAULT rate limits: signed-in traffic is limited per user (not per IP), so 50 virtual users
+// sharing one IP behave like a site behind one NAT address. Realistic data: `devtools volume -scale 4 -sites 7
+// -perf-users 90` on a scratch database (12 months, 10 sites, ~740k rows); results are recorded in README.
 // Every role account is signed in first (ORDER BY puts bulk "perf-" accounts last), so each role's mix runs.
 package main
 

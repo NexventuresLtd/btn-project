@@ -145,11 +145,12 @@ var (
 
 func builtinRules() map[string]Rule {
 	return map[string]Rule{
-		"global": {PerMinute: 600, Burst: 120},
-		"auth":   {PerMinute: 30, Burst: 10},
-		"pdf":    {PerMinute: 30, Burst: 8, ByUser: true},
-		"upload": {PerMinute: 12, Burst: 5, ByUser: true},
-		"export": {PerMinute: 30, Burst: 8, ByUser: true},
+		"global":  {PerMinute: 600, Burst: 120},
+		"auth":    {PerMinute: 30, Burst: 10},                // unauthenticated sign-in steps, per IP
+		"session": {PerMinute: 120, Burst: 30, ByUser: true}, // signed-in /api/auth/* calls, per user
+		"pdf":     {PerMinute: 30, Burst: 8, ByUser: true},
+		"upload":  {PerMinute: 12, Burst: 5, ByUser: true},
+		"export":  {PerMinute: 30, Burst: 8, ByUser: true},
 	}
 }
 

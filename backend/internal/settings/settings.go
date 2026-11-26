@@ -42,6 +42,50 @@ var DefaultCompany = Company{
 
 var DefaultApprovals = Approvals{PettyCashApprovalLimit: 0, MaxDiscountPercent: 10}
 
+// Security is the account lockout policy (AUTH-05), set by the Super Administrator.
+type Security struct {
+	// LockoutFailures: consecutive failed sign-ins that lock the account.
+	LockoutFailures int `json:"lockoutFailures"`
+	// LockoutMinutes: how long the account stays locked.
+	LockoutMinutes int `json:"lockoutMinutes"`
+}
+
+// DefaultSecurity: 5 failures lock the account for 15 minutes.
+var DefaultSecurity = Security{LockoutFailures: 5, LockoutMinutes: 15}
+
+// Bounds of the lockout policy (validated on save; stored values outside them are clamped when read).
+const (
+	MinLockoutFailures, MaxLockoutFailures = 3, 20
+	MinLockoutMinutes, MaxLockoutMinutes   = 1, 1440
+)
+
+func (s Security) clamp() Security {
+	s.LockoutFailures = min(max(s.LockoutFailures, MinLockoutFailures), MaxLockoutFailures)
+	s.LockoutMinutes = min(max(s.LockoutMinutes, MinLockoutMinutes), MaxLockoutMinutes)
+	return s
+}
+
+// LockDuration is the lockout period as a duration.
+func (s Security) LockDuration() time.Duration { return time.Duration(s.LockoutMinutes) * time.Minute }
+
+// Security returns the lockout policy (defaults merged with stored values).
+func (s *Service) Security(ctx context.Context) (Security, error) {
+	v := DefaultSecurity
+	err := s.get(ctx, "security", &v)
+	return v.clamp(), err
+}
+
+// LoadSecurity reads the lockout policy straight from q (no cache, so a change applies to the next sign-in in
+// every process). Used by the login flow; errors fall back to the defaults.
+func LoadSecurity(ctx context.Context, q db.DBTX) Security {
+	v := DefaultSecurity
+	var raw []byte
+	if err := q.QueryRow(ctx, `SELECT value FROM "Setting" WHERE key = 'security'`).Scan(&raw); err == nil {
+		_ = json.Unmarshal(raw, &v)
+	}
+	return v.clamp()
+}
+
 // Service is the settings facade. Create once (app wiring) and share.
 type Service struct {
 	pool   *pgxpool.Pool

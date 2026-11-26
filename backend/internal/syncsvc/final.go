@@ -63,6 +63,12 @@ func (m *module) finalUpload(c *fiber.Ctx, lim *ratelimit.Limiter) error {
 	if len(body.Records) > MaxBatch {
 		return httpx.NewKey(400, "batch_too_large", "sync.batch_too_large", "max", MaxBatch)
 	}
+	if _, err := clientSchema(c); err != nil { // §9.2
+		return err
+	}
+	if err := checkRecordSchemas(body.Records); err != nil {
+		return err
+	}
 	before := false
 	for _, r := range body.Records {
 		if ca, err := time.Parse(time.RFC3339Nano, r.CapturedAt); err == nil && !ca.After(*revokedAt) {

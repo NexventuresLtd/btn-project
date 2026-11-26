@@ -20,14 +20,14 @@ import (
 )
 
 // Cursor is the delta-pull position (OFF-11): rows strictly after (Xid, Version) in (server_xid, server_version)
-// order. Pulls only ever see rows of transactions older than every in-flight transaction (Upper), so a long
-// transaction cannot be skipped. Serialized as "<xid>.<version>.<scope>"; "" = from the beginning. The scope part
-// fingerprints the user's role, site and entity filter: when it changes the pull restarts from zero (reset=true).
+// order. A pull only returns rows below Upper, which is held back only by in-flight transactions writing synced rows
+// (see pullUpper), so a long transaction cannot be skipped and an unrelated one does not stall the pull.
+// Serialized as "<xid>.<version>.<scope>"; "" = from the beginning. The scope part fingerprints the user's role, site and entity filter: when it changes the pull restarts from zero (reset=true).
 type Cursor struct {
 	Xid     uint64
 	Version int64
 	Scope   string
-	upper   uint64 // exclusive upper xid bound of this pull (snapshot xmin)
+	upper   uint64 // exclusive upper stamp bound of this pull (pullUpper)
 	limit   int
 }
 
@@ -257,6 +257,9 @@ func (m *module) pull(c *fiber.Ctx) error {
 	ctx := httpx.Ctx(c)
 	httpx.NoStore(c)
 	u := auth.MustUser(c)
+	if _, err := clientSchema(c); err != nil { // §9.2
+		return err
+	}
 	since, err := ParseCursor(c.Query("cursor"))
 	if err != nil {
 		return httpx.NewKey(400, "bad_cursor", "sync.bad_cursor")
@@ -299,19 +302,17 @@ func (m *module) pull(c *fiber.Ctx) error {
 func (m *module) Pull(ctx context.Context, c *fiber.Ctx, u *auth.User, since Cursor, limit int, only map[string]bool) (*PullResult, error) {
 	var res *PullResult
 	snap := auth.PermSnapshot{Role: u.Role, PlantID: u.PlantID, Permissions: auth.PermissionsFor(u.Role)}
+	// Step 1 (before the snapshot): raise the watermark to the live xmax M.
+	var wm string
+	if err := m.d.Pool.QueryRow(ctx, `SELECT btn_sync_advance_watermark()::text`).Scan(&wm); err != nil {
+		return nil, err
+	}
 	err := pullTx(ctx, m.d.Pool, func(tx pgx.Tx) error {
-		var upper string
-		var now time.Time
-		// Upper bound = oldest transaction of THIS database still in flight at our snapshot (or the snapshot's xmax).
-		// Transactions of other databases on the same cluster cannot write our tables and must not stall pulls;
-		// an in-flight xid we cannot attribute is treated as ours (conservative: it only delays, never skips).
-		if err := tx.QueryRow(ctx, `WITH s AS (SELECT pg_current_snapshot() AS snap)
-			SELECT (SELECT coalesce(min(x), pg_snapshot_xmax(s.snap)) FROM pg_snapshot_xip(s.snap) x
-				WHERE NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.backend_xid = xid(x) AND a.datname IS DISTINCT FROM current_database())
-			)::text, now() FROM s`).Scan(&upper, &now); err != nil {
+		upper, now, err := pullUpper(ctx, tx, wm)
+		if err != nil {
 			return err
 		}
-		since.upper, _ = strconv.ParseUint(upper, 10, 64)
+		since.upper = upper
 		since.limit = limit
 		actor := m.actorFor(c, u, u.DeviceRowID, u.DeviceID, snap)
 		actor.DB = tx
@@ -394,6 +395,47 @@ func (m *module) Pull(ctx context.Context, c *fiber.Ctx, u *auth.User, since Cur
 		return nil
 	})
 	return res, err
+}
+
+// Lock classes shared with migrations/03250_sync_watermark.sql.
+const syncStampLockClass = 1112821331
+
+// pullUpper computes the exclusive upper bound of a pull window (OFF-11).
+//
+// Invariant: every row stamped s < upper is visible in the pull's snapshot σ, so advancing the cursor to upper-1
+// can never skip a row. Writers stamp s = greatest(own xid X, watermark read AFTER taking the shared sync lock),
+// and the lock is held until they end. The caller raised the watermark to M (M ≤ xmax(σ)) before σ was taken.
+// upper = min(M, every X in xip(σ) that, after σ, still holds the sync lock of this schema or has already ended).
+// Proof, for a row of writer W invisible in σ: if X ≥ xmax(σ) then s ≥ X ≥ M ≥ upper. Otherwise X is in xip(σ):
+//   - if W held the lock when pg_locks was read, or had ended when its status was read, X is in the min → s ≥ X ≥ upper;
+//   - otherwise W was still running and had not taken the lock when pg_locks was read (a lock taken before that
+//     point is held until W ends, and status is read after pg_locks), so W reads the watermark later → s ≥ M ≥ upper.
+// Hence only transactions that are actually writing synced rows of this schema hold the window back; an unrelated
+// open transaction (another table, another schema or another database) does not stall pulls any more.
+func pullUpper(ctx context.Context, tx pgx.Tx, wm string) (uint64, time.Time, error) {
+	var now time.Time
+	// Statement 1 takes the REPEATABLE READ snapshot σ.
+	if err := tx.QueryRow(ctx, `SELECT now()`).Scan(&now); err != nil {
+		return 0, now, err
+	}
+	// Statement 2: xids of in-flight transactions holding this schema's sync lock (read before the status checks).
+	var holders []string
+	if err := tx.QueryRow(ctx, `SELECT coalesce(array_agg(DISTINCT t.transactionid::text), '{}')
+		FROM pg_locks a JOIN pg_locks t ON t.pid = a.pid AND t.locktype = 'transactionid' AND t.transactionid IS NOT NULL
+		WHERE a.locktype = 'advisory' AND a.granted AND a.objsubid = 2
+		  AND a.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+		  AND a.classid = $1::int4::oid AND a.objid = hashtext(current_schema())::oid`, syncStampLockClass).Scan(&holders); err != nil {
+		return 0, now, err
+	}
+	// Statement 3: the bound over σ's in-flight list.
+	var upper string
+	if err := tx.QueryRow(ctx, `SELECT coalesce(min(x), $1::text::xid8)::text FROM pg_snapshot_xip(pg_current_snapshot()) x
+		WHERE x < $1::text::xid8 AND (xid(x)::text = ANY($2::text[]) OR pg_xact_status(x) IS DISTINCT FROM 'in progress')`,
+		wm, holders).Scan(&upper); err != nil {
+		return 0, now, err
+	}
+	u, err := strconv.ParseUint(upper, 10, 64)
+	return u, now, err
 }
 
 // pullTx runs fn in a REPEATABLE READ, READ ONLY transaction (one consistent snapshot for all entities).

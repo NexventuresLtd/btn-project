@@ -68,7 +68,7 @@ func New(t testing.TB, o ...Options) *Env {
 	if opt.KeepRateLimits {
 		ratelimit.ResetDefaults()
 	} else {
-		for _, g := range []string{"auth", "pdf", "upload", "export"} {
+		for _, g := range []string{"auth", "session", "pdf", "upload", "export"} {
 			ratelimit.Configure(g, ratelimit.Rule{PerMinute: 1_000_000, Burst: 1_000_000, ByUser: g != "auth"})
 		}
 	}

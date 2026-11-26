@@ -38,8 +38,10 @@ type Config struct {
 	RequestTimeout  time.Duration
 	DBMaxConns      int32
 	AssetsDir       string // optional override dir for logo files (backend/assets)
-	GlobalRateLimit int    // requests per minute per IP
-	AuthRateLimit   int    // requests per minute per IP on /api/auth/*
+	GlobalRateLimit int    // requests per minute per signed-in user, or per IP for anonymous requests
+	AuthRateLimit   int    // requests per minute per IP on the unauthenticated /api/auth/* steps (login, codes, resets)
+	IPFloodLimit    int    // requests per minute per IP before the session is resolved (flood guard, shared NAT safe)
+	SessionLimit    int    // requests per minute per user on the signed-in /api/auth/* calls (/me, logout, language, …)
 	OpsAlertEmail   string // F1: critical alerts (job failures, server errors, health) are also emailed here; "" = in-app only
 	DataDir         string // F1: directory whose free disk space the health check reports (default ".")
 	JobsEnabled     bool   // F1: run the background job scheduler in this process (JOBS_ENABLED, default true)
@@ -160,6 +162,8 @@ func FromEnv() (*Config, error) {
 		AssetsDir:       get("ASSETS_DIR", ""),
 		GlobalRateLimit: atoi("RATE_LIMIT_GLOBAL_PER_MIN", 600),
 		AuthRateLimit:   atoi("RATE_LIMIT_AUTH_PER_MIN", 30),
+		IPFloodLimit:    atoi("RATE_LIMIT_IP_FLOOD_PER_MIN", 30000),
+		SessionLimit:    atoi("RATE_LIMIT_SESSION_PER_MIN", 120),
 		OpsAlertEmail:   strings.TrimSpace(get("OPS_ALERT_EMAIL", "")),
 		DataDir:         get("DATA_DIR", "."),
 		JobsEnabled:     get("JOBS_ENABLED", "true") != "false",

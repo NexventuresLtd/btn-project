@@ -72,9 +72,11 @@ func (m *module) status(c *fiber.Ctx) error {
 		MaxClockSkewMinutes int        `json:"maxClockSkewMinutes"`
 		OfflineUnlockDays   int        `json:"offlineUnlockDays"`
 		OfflineExpiresAt    *time.Time `json:"offlineExpiresAt"`
+		// Schema is the supported sync schema range (§9.2), so a client can tell it must update before syncing.
+		Schema SchemaInfo `json:"schema"`
 	}
 	o := out{DeviceStatus: auth.DeviceActive, ServerTime: time.Now().UTC(),
-		MaxClockSkewMinutes: m.d.Auth.SettingInt(ctx, SettingMaxClockSkew, DefaultMaxClockSkewMins), OfflineUnlockDays: m.d.Auth.OfflineUnlockDays(ctx)}
+		MaxClockSkewMinutes: m.d.Auth.SettingInt(ctx, SettingMaxClockSkew, DefaultMaxClockSkewMins), OfflineUnlockDays: m.d.Auth.OfflineUnlockDays(ctx), Schema: schemaInfo()}
 	rowID, deviceID := u.DeviceRowID, u.DeviceID
 	if rowID == "" { // device-less session (dev tools / tests): look the device up by header
 		if h := auth.RequestDeviceID(c); h != "" {

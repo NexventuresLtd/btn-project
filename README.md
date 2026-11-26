@@ -110,6 +110,34 @@ Redoc from cdn.jsdelivr.net, so allow it in the proxy CSP or vendor the file). I
 API's header for `/api/v1/docs`. Reports export to CSV/Excel/JSON (`?format=` or `/export`); Administration → Data export (ADM-05)
 streams whole tables as CSV/JSON or a ZIP, and Administration → Import loads reference data and opening balances from CSV.
 
+### Uptime monitoring (NFR-M2)
+
+The API's own health job runs inside the API process, so it cannot report the API (or its host) being down. An external
+probe does: `deploy/uptime-check.sh` (POSIX sh + curl) checks `https://<domain>/api/health?db=1` (API **and** a
+PostgreSQL ping; 503 when the database is unreachable) and the web app `/`, and alerts by e-mail (SMTP via curl, or
+`sendmail`) and/or a webhook (Slack, Mattermost, Google Chat, ntfy) after `UPTIME_FAILS_BEFORE_ALERT` failed runs in a row
+(default 2 ≈ 2 minutes), reminds every `UPTIME_REPEAT_MINUTES` (60) while down, and sends a "recovered" notice with the
+outage length. **Install it on a different machine than the API server** (office server, backup host, small VPS) and use
+an SMTP account that does not depend on the API host. Settings: `deploy/uptime.env.example`.
+
+```bash
+# systemd (every minute)
+sudo install -d /opt/btn-ops/deploy && sudo install -m 755 deploy/uptime-check.sh /opt/btn-ops/deploy/
+sudo install -d -m 750 /etc/btn-ops && sudo install -m 640 deploy/uptime.env.example /etc/btn-ops/uptime.env   # edit it
+sudo cp deploy/btn-ops-uptime.service deploy/btn-ops-uptime.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now btn-ops-uptime.timer
+sudo /opt/btn-ops/deploy/uptime-check.sh --env-file /etc/btn-ops/uptime.env --test-alert   # prove the alert path works (UPTIME_SMTP_PASSWORD_FILE or the credential)
+journalctl -u btn-ops-uptime -e                                                            # UP/DOWN log lines
+
+# or Docker (same script, checks every 60 s): copy docker-compose.yml + deploy/ to the monitoring host
+cp deploy/uptime.env.example deploy/uptime.env    # edit it
+docker compose --profile uptime up -d uptime
+```
+
+Exit codes: 0 up · 2 a check failed (the systemd unit shows *failed* until the next good run) · 1 configuration error.
+A hosted monitor (UptimeRobot, Better Stack, Uptime Kuma on another host) pointed at `/api/health?db=1` with keyword
+`"ok":true` is an equivalent alternative.
+
 ### Backups & restore (NFR-R1)
 
 **What is backed up:** the whole PostgreSQL database (`pg_dump --format=custom`), including uploaded

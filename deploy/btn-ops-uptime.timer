@@ -1,0 +1,14 @@
+# /etc/systemd/system/btn-ops-uptime.timer — runs btn-ops-uptime.service every minute (SRS NFR-M2).
+# Enable:  systemctl daemon-reload && systemctl enable --now btn-ops-uptime.timer
+# Check:   systemctl list-timers btn-ops-uptime.timer
+[Unit]
+Description=External uptime check of BTN Operations every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=btn-ops-uptime.service
+
+[Install]
+WantedBy=timers.target
