@@ -14,8 +14,8 @@ Legend: ✅ met · ⚠️ partial (the missing clause is stated) · ❌ missing 
 
 ## Summary
 
-**122 numbered requirements: 116 ✅ · 1 ⚠️ · 0 ❌ · 5 env.** In the cross-cutting sections (§5–§12), one finding is ⚠️:
-§7.4 (payroll needs two Finance Managers).
+**122 numbered requirements: 116 ✅ · 1 ⚠️ · 0 ❌ · 5 env.** The cross-cutting §7.4 finding (payroll needed two Finance
+Managers) is fixed after the re-audit: every approval workflow is walked with exactly one user per role (see §8 below).
 
 | Module | Reqs | ✅ | ⚠️ | ❌ | env | Open points |
 |---|---|---|---|---|---|---|
@@ -24,7 +24,7 @@ Legend: ✅ met · ⚠️ partial (the missing clause is stated) · ❌ missing 
 | Stock (STK) | 10 | 10 | 0 | 0 | 0 | — |
 | Clients & orders (ORD) | 10 | 10 | 0 | 0 | 0 | — |
 | Delivery (DEL) | 6 | 6 | 0 | 0 | 0 | — |
-| Workforce (WRK) | 7 | 7 | 0 | 0 | 0 | — (see §7.4 for the payroll staffing constraint) |
+| Workforce (WRK) | 7 | 7 | 0 | 0 | 0 | — (§7.4 fixed: one user per role completes payroll; supervisors register casual workers pending Finance approval) |
 | Finance (FIN) | 9 | 9 | 0 | 0 | 0 | — |
 | Procurement (PRC) | 8 | 8 | 0 | 0 | 0 | — |
 | Reporting (RPT) | 7 | 7 | 0 | 0 | 0 | — |
@@ -71,7 +71,7 @@ Legend: ✅ met · ⚠️ partial (the missing clause is stated) · ❌ missing 
 | §5.5 raw-JSON merge; one version in the audit | ✅ | `ConflictsPage.tsx` + `conflictMerge.ts`: merge target prefilled, "Keep as additional batch", per-field picker. `syncsvc/conflicts.go` writes `sync.conflict_open` / `sync.conflict_resolve` with server Before / device After; `conflictMerge.test.ts` |
 | §6.3 hard deletes | ✅ | `migrations/03230_no_hard_delete.sql`: `btn_forbid_delete` on budget, threshold, charge rule, attachments, target, recipe, piece-work; `btn_archive_deleted` archives replaced child lines into `deleted_record`; `httpx.RemovalReason` + RemoveDialog |
 | §7.2 transfer reason optional | ✅ | `note` is required, at least 3 characters (live 400) |
-| §7.4 supervisor could review wages | ⚠️ | `payroll.check` = PM only ✅. New constraint below |
+| §7.4 supervisor could review wages | ✅ | `payroll.check` = PM only; the payroll staffing constraint found by the re-audit is fixed (7.4 row below) |
 | §8 ~20 mismatched cells | ✅ | `auth/permissions.go` matches the matrix (deviations below); live cells above |
 | §9.2 sync schema version not enforced | ✅ | `X-Sync-Schema` + per-record-type ranges (426/409, nothing stored); `app/sync_schema_test.go`; client "Update required" notice (`SchemaUpgradeNotice.tsx`) |
 | §10 weekly+monthly orders; finance on variance | ✅ | `migrations/03200_srs_roles_schedules.sql`: `orders_sales` weekly + `orders_sales_monthly`; `stock_movement_variance` → PM, FM; all enabled |
@@ -296,7 +296,7 @@ Both versions of every conflict are written to the immutable audit (`sync.confli
 |---|---|---|---|
 | 7.2 Transfers | ✅ | Reason required; rejection needs a reason; dispatch posts the source issue; shortfall → adjustment for review; cancel before In transit, then `reverse`; `TestTransferValidationCancelReverseInsufficient` | |
 | 7.3 Approvals, petty cash, receipts | ✅ | Value bands + role thresholds; receipt reference required; no self top-up approval; reconciliation differences; over/under receipt needs a reason + exception notification (`TestTopUpSelfApprovalBlocked`, `TestReconcileDifference`, `TestEvaluateReceipt`) | |
-| 7.4 Wages | ⚠️ | Formula, admin rate rules, PM-only review (`payroll.check` = PM), GM/MD authorise, locked periods, adjustments in the next period | **Payroll cannot be completed with a single Finance Manager.** `payroll.prepare` and `payroll.verify` are both FM-only (`auth/permissions.go`), and `payroll/calc.go` `CheckTransition` requires the preparer and verifier to be different people. The tests use 2–3 FM users (`payroll_test.go:222-224`). Before the §8 re-alignment, a Supervisor or PM could prepare → either confirm BTN has two finance users, or let the PM/Supervisor prepare (or a second role verify) |
+| 7.4 Wages | ✅ | Formula, admin rate rules, locked periods, adjustments in the next period. Steps now follow §7.4/§8 with **one user per role**: the site **Supervisor prepares** the wage sheet from the attendance he recorded (`payroll.prepare` = SUP, site-scoped; §8 Sup. C R U on attendance, the calculation itself is automatic, WRK-03) → **Production Manager reviews** (`payroll.check`, PM only) → **Finance verifies** (`payroll.verify`, Fin. U) → GM/MD authorise (stated deviation: wages are PAYROLL expenses, Finance "Top Mgt A") → Finance records the payment. `CheckTransition` keeps every signer distinct. `payroll:TestPayrollOneUserPerRole` walks a period to PAID with exactly one SUP, PM, FM, GM and MD (and an attendance day: SUP records, PM locks, SUP correction, PM approves); `TestWorkflowSeparationOfDutiesAndPay` | Each site that pays wage workers needs a supervisor (the PM or FM preparing would block their own later step) — BTN to confirm |
 
 ## §8 Roles and permissions — ✅
 
@@ -315,15 +315,15 @@ Petty cash and expenses work with one FM plus GM/MD.
 
 | Workflow | Steps and who holds them |
 |---|---|
-| Production | record: Sup/Lead/PM → approve, close a day: PM |
-| Orders | create, quote, confirm: Sales → value approval and cancel approval: Sales/PM (never the requester) → dispatch, delivered: Sales/Stock → payment: FM, recorded as income |
-| Procurement | request: Sup/Proc → approve by threshold: PM/FM/GM/MD → PO, invoice: Proc → receive: Stock/Proc/Sup → expense: FM |
-| Petty cash | custodian, entries: FM → approve: GM/MD |
-| Expenses | record: FM → approve: FM/GM/MD |
-| Transfers | request: Sup/Stock → approve: PM → dispatch, receive: Stock/Sup → shortfall review: PM |
-| Stock counts | count: Stock/Sup → approve: PM |
-| Payroll | prepare: FM → check: PM → verify: a **second** FM → authorise: GM/MD → pay: FM. This is the §7.4 finding |
-| Attendance | record: Sup/Lead → approve: PM. Workers are created by FM only, so a supervisor cannot add a new casual worker on site |
+| Production | record: Sup/Lead → approve, corrections, close a day: PM; recipes: Admin; targets: PM (`TestOneUserPerRoleProduction`) |
+| Orders | create, quote, confirm: Sales → value approval and cancel approval: Sales/PM (never the requester) → dispatch, delivered: Sales/Stock → payment: FM, recorded as income; one approver's decision covers every following level he qualifies for (each level still recorded), so the single PM completes 2-level amendments and cancellations (`TestOneUserPerRoleOrders`) |
+| Procurement | request: Sup/Proc → approve by threshold: PM/FM/GM/MD → PO, invoice: Proc → receive: Stock/Proc/Sup → expense: FM (`TestOneUserPerRoleProcurement`) |
+| Petty cash | custodian, entries: FM → top-up / over-limit / count review: GM/MD, never the custodian (`TestOneUserPerRolePettyCash`) |
+| Expenses | record: FM → approve: FM/GM/MD; a level the recorder would sign is taken by GM/MD, so the single FM's own expenses and overruns complete (`TestOneUserPerRoleExpenses`, `TestOneUserPerRoleFinanceRecords`). Income: recorded by Sales/FM → verified by FM; FM's own income verified by GM/MD (`TestOneUserPerRoleIncome`). Budgets: FM → GM (`TestOneUserPerRoleBudgets`) |
+| Transfers | request: Sup/Stock → approve: PM (one PM decision covers every following level his role may approve; a level naming another role still waits) → dispatch, receive: Stock/Sup → shortfall review: PM (`TestOneUserPerRoleTransfer`) |
+| Stock counts / adjustments | count or request: Stock/Sup → approve: PM, never the counter/requester (`TestOneUserPerRoleStockCount`, `TestOneUserPerRoleStockAdjustments`) |
+| Payroll | prepare: Sup (site) → check: PM → verify: FM → authorise: GM/MD → record payment: FM (`TestPayrollOneUserPerRole`) |
+| Attendance | record: Sup/Lead → approve: PM. A supervisor registers a new casual worker at his site (`workers.register`, also offline: record type `worker_registration`); the worker can be marked present at once but is left out of wage sheets until Finance approves (`POST /payroll/workers/:id/approve`, audited; migration 03240); `TestSupervisorRegistersWorker` |
 
 ## §9 Interfaces
 | Item | Status | Evidence |
@@ -372,4 +372,4 @@ and `TestClockSkewFlags` (T-09). This audit did not re-run the browser suite.
    20 want 22") (NFR-M1).
 2. **Load-test harness reports FAIL on default limits**: a few 429s from the per-IP `global` limit with 50 users on one
    IP. Latency was well within budget.
-3. **Payroll needs two distinct Finance Managers** after the §8 re-alignment (§7.4).
+3. ~~Payroll needs two distinct Finance Managers~~ — fixed after the re-audit (§7.4).

@@ -81,7 +81,9 @@ Read access: SYSTEM_ADMIN reads every business module; Top management (MD, GM, O
 | `procurement.approve` | PM, FM, GM, MD | Procurement A |
 | `attendance.view` / `.record` / `.approve` | MD, GM, OA, PM, FM, SUP, LEAD, SA / SUP, LEAD / PM | Sup. C R U (att.), PM A |
 | `payroll.view`, `wages.view` | MD, GM, OA, PM, FM, SA | Wages R |
-| `payroll.prepare`, `payroll.verify`, `payroll.pay`, `workers.manage` | FM | Fin. R U |
+| `payroll.prepare` (compile the site wage sheet from attendance) | SUP (own site) | Sup. C R U (att.); §7.4 |
+| `workers.register` (new casual worker at the own site, pending Finance approval) | SUP | Sup. C (att.) |
+| `payroll.verify`, `payroll.pay`, `workers.manage` (edit / approve registrations) | FM | Fin. R U |
 | `payroll.check` (§7.4 review) | PM only | PM A |
 | `payroll.authorize` | GM, MD | wages are PAYROLL expenses: Finance "Top Mgt A" (stated deviation from the wages row) |
 | `reports.view` | every role except LEAD/OP | Reports R |
@@ -90,6 +92,10 @@ Read access: SYSTEM_ADMIN reads every business module; Top management (MD, GM, O
 | `data.export` | SA, MD, GM, OA, FM | ADM-05 authorised users (FM for FIN-07 accounting) |
 | `sync.resolve` | PM, SUP (own site) | §5.5 |
 
+One user per role completes every workflow (BTN has one FM, PM, GM, MD): one approver's decision covers every following
+level his role may approve (orders, transfers, stock counts/adjustments, expense levels; each level still recorded); a
+level the expense recorder would sign goes to GM/MD; the FM's own income is verified by GM/MD; payroll is prepared by the
+site supervisor so prepare, review, verify and authorise are four different people.
 Default approval thresholds follow the same matrix: order level 2 (≥ 20 M RWF) is the Production Manager, stock
 adjustments are approved by the Production Manager only (migration 03200 updates the shipped rows).
 
