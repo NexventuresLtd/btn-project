@@ -14,8 +14,12 @@ Legend: ✅ met · ⚠️ partial (the missing clause is stated) · ❌ missing 
 
 ## Summary
 
-**122 numbered requirements: 116 ✅ · 1 ⚠️ · 0 ❌ · 5 env.** The cross-cutting §7.4 finding (payroll needed two Finance
-Managers) is fixed after the re-audit: every approval workflow is walked with exactly one user per role (see §8 below).
+**122 numbered requirements: 117 ✅ · 0 ⚠️ · 0 ❌ · 5 env.** Every finding of the re-audit of `55f026f` is closed:
+§7.4 (payroll needed two Finance Managers — every approval workflow now completes with one user per role, see §8),
+NFR-M1 (flaky pull test — a real pull-bound bug, fixed by migration 03260; parallel race suite green 5× in a row),
+NFR-P1 (429s at default limits — signed-in traffic is limited per user only; load test PASS with 0 × 429) and NFR-R1
+(quarterly restore drill, `deploy/btn-ops-restore-drill.timer`). The 5 env items (A1, R1 target, U1, C1, SC1) are
+verified on the production host at go-live.
 
 | Module | Reqs | ✅ | ⚠️ | ❌ | env | Open points |
 |---|---|---|---|---|---|---|
@@ -30,7 +34,7 @@ Managers) is fixed after the re-audit: every approval workflow is walked with ex
 | Reporting (RPT) | 7 | 7 | 0 | 0 | 0 | — |
 | Administration (ADM) | 5 | 5 | 0 | 0 | 0 | — |
 | Offline & sync (OFF) | 22 | 22 | 0 | 0 | 0 | — |
-| Non-functional (NFR) | 18 | 12 | 1 | 0 | 5 | NFR-M1: the parallel race suite is flaky |
+| Non-functional (NFR) | 18 | 13 | 0 | 0 | 5 | — (env items checked on the production host) |
 
 **Test evidence from this audit:**
 
@@ -368,8 +372,8 @@ back them up: `TestPushIdempotencyAndDuplicates` (T-03), `TestNegativeStockFlagR
 and `TestClockSkewFlags` (T-09). This audit did not re-run the browser suite.
 
 ## Found when running the system
-1. **Flaky parallel test** `syncsvc:TestPullDeltaScopeAndSnapshots`: 1 of 2 parallel race runs failed ("paged total
-   20 want 22") (NFR-M1).
-2. **Load-test harness reports FAIL on default limits**: a few 429s from the per-IP `global` limit with 50 users on one
-   IP. Latency was well within budget.
+1. ~~Flaky parallel test `syncsvc:TestPullDeltaScopeAndSnapshots`~~ — fixed in `a9248a3`: the pull bound is computed
+   only from this schema's in-flight sync writers and is carried within a page series (`TestPullPageSeriesKeepsItsBound`).
+2. ~~Load-test harness reports FAIL on default limits~~ — fixed in `a9248a3`: no anonymous per-IP bucket for signed-in
+   traffic; 50 users, default limits, 0 × 429, PASS on the empty and the volume database.
 3. ~~Payroll needs two distinct Finance Managers~~ — fixed after the re-audit (§7.4).
