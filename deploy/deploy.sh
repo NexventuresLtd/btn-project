@@ -74,16 +74,27 @@ apt_install() {
 }
 # find_tool NAME [extra dirs…] — PATH first (sudo resets it), then the usual install locations
 find_tool() {
-  local name="$1" d home=""; shift
+  local name="$1" d h p homes=(); shift
   command -v "$name" 2>/dev/null && return 0
-  [[ -n "${SUDO_USER:-}" ]] && home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
-  for d in "$@" /usr/local/bin /usr/bin /snap/bin ${home:+"$home/.local/bin" "$home/go/bin" "$home/.local/share/pnpm"}; do
+  # the invoking user's home (sudo) and root's home — tools installed there are invisible under sudo's PATH
+  [[ -n "${SUDO_USER:-}" ]] && homes+=("$(getent passwd "$SUDO_USER" | cut -d: -f6)")
+  homes+=(/root)
+  local dirs=("$@" ${PNPM_HOME:+"$PNPM_HOME"} ${CONDA_PREFIX:+"$CONDA_PREFIX/bin"} /usr/local/bin /usr/bin /snap/bin /opt/conda/bin)
+  for h in "${homes[@]}"; do
+    [[ -d "$h" ]] || continue
+    dirs+=("$h/.local/bin" "$h/go/bin" "$h/.local/share/pnpm" "$h/.npm-global/bin" "$h/.yarn/bin"
+           "$h/miniconda3/bin" "$h/anaconda3/bin" "$h/miniforge3/bin" "$h/.bun/bin")
+    while IFS= read -r p; do dirs+=("$p"); done < <(find "$h/.nvm/versions/node" "$h/.local/share/fnm" -maxdepth 4 -type d -name bin 2>/dev/null | sort -rV)
+  done
+  for d in "${dirs[@]}"; do
     [[ -x "$d/$name" ]] && { echo "$d/$name"; return 0; }
   done
-  if [[ -n "$home" && "$name" == node ]]; then  # nvm / fnm installs
-    d="$(find "$home/.nvm/versions/node" "$home/.local/share/fnm" -path '*/bin/node' -type f 2>/dev/null | sort -V | tail -1)"
-    [[ -n "$d" ]] && { echo "$d"; return 0; }
-  fi
+  # last resort: ask the user's own interactive shell (conda init, custom PATH in .bashrc)
+  for h in "${homes[@]}"; do
+    [[ -f "$h/.bashrc" ]] || continue
+    p="$(HOME="$h" bash -ic "command -v $name" 2>/dev/null </dev/null | tail -1)"
+    [[ -n "$p" && -x "$p" ]] && { echo "$p"; return 0; }
+  done
   return 1
 }
 port_busy() { ss -Hltn "sport = :$1" 2>/dev/null | grep -q .; }
