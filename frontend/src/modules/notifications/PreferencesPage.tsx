@@ -94,7 +94,7 @@ export function PreferencesPage() {
       )}
       {changed.length ? (
         <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-white/95 px-4 py-3 shadow-[0_-4px_16px_rgba(12,35,75,.08)] backdrop-blur lg:left-64">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3">
+          <div className="flex w-full flex-wrap items-center justify-between gap-3">
             <Alert tone="amber">{t("notifications.prefs.unsaved")}</Alert>
             <div className="flex gap-2">
               <Button variant="secondary" onClick={() => setDraft(server)} disabled={save.isPending}>{t("notifications.prefs.reset")}</Button>

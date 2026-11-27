@@ -53,7 +53,7 @@ export function SecurityPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="w-full">
       <PageHeader
         title={t("security.title")}
         description={t("security.description")}

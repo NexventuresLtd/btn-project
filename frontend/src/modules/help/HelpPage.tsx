@@ -37,7 +37,7 @@ export function HelpPage() {
   }, [q, can, tx]);
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="w-full">
       <PageHeader title={t("guide.help.title")} description={t("guide.help.description")} />
       <Card className="mb-6 flex flex-wrap items-center gap-4 p-5">
         <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-navy-50 text-navy-700"><Compass className="size-5" /></span>
@@ -79,7 +79,7 @@ function TopicSection({ topic, guides, onOpen }: { topic: HelpTopic; guides: Sho
         </h2>
         {start && <p className="text-[13px] text-slate-600">{t("guide.help.startHint")}</p>}
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
         {guides.map(({ g, title, summary, steps }) => (
           <Card key={g.id} className={cn("flex flex-col p-5", start && "border-navy-200")} data-testid={`guide-${g.id}`}>
             <h3 className="text-[15px] font-semibold text-slate-900">{title}</h3>

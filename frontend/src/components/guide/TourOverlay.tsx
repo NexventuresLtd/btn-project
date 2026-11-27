@@ -135,12 +135,19 @@ export function TourOverlay({ steps, index, onIndex, onClose }: { steps: Resolve
         </div>
         <p id={textId} className="mt-1.5 text-sm leading-relaxed text-slate-600">{tx(`guide.step.${step.id}.text`, undefined, "")}</p>
         <div className="mt-4 flex items-center justify-between gap-3">
-          <ol className="flex items-center gap-1.5" aria-label={t("guide.progress", { n: index + 1, total: steps.length })}>
-            {steps.map((s, i) => (
-              <li key={s.id} aria-current={i === index ? "step" : undefined} className={cn("h-1.5 rounded-full transition-all", i === index ? "w-5 bg-navy-700" : i < index ? "w-1.5 bg-navy-300" : "w-1.5 bg-slate-200")} />
-            ))}
-          </ol>
-          <span className="text-xs text-slate-400 tabular" aria-live="polite">{t("guide.progress", { n: index + 1, total: steps.length })}</span>
+          {/* dots for short tours; a progress bar once they would not fit the card (a role tour can have 40 steps) */}
+          {steps.length <= 10 ? (
+            <ol className="flex min-w-0 items-center gap-1.5" aria-hidden="true">
+              {steps.map((s, i) => (
+                <li key={s.id} className={cn("h-1.5 shrink-0 rounded-full transition-all", i === index ? "w-5 bg-navy-700" : i < index ? "w-1.5 bg-navy-300" : "w-1.5 bg-slate-200")} />
+              ))}
+            </ol>
+          ) : (
+            <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-slate-200" aria-hidden="true">
+              <div className="h-full rounded-full bg-navy-700 transition-all" style={{ width: `${((index + 1) / steps.length) * 100}%` }} />
+            </div>
+          )}
+          <span className="shrink-0 text-xs text-slate-400 tabular" aria-live="polite">{t("guide.progress", { n: index + 1, total: steps.length })}</span>
         </div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           <button onClick={() => onClose(false)} className="text-[13px] font-medium text-slate-500 hover:text-slate-800">{t("guide.skipTour")}</button>

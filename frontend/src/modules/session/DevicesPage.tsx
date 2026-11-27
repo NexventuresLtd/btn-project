@@ -32,7 +32,7 @@ export function DevicesPage() {
   });
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="w-full">
       <PageHeader title={t("session.devices.title")} description={t("session.devices.description")} />
       <Card>
         {isLoading ? (
