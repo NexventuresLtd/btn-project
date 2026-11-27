@@ -79,6 +79,13 @@ func scanRun(row pgx.Row, lang i18n.Lang) (RunOut, error) {
 	r.Recipients, r.Attachments = []Recipient{}, []AttachmentMeta{}
 	_ = json.Unmarshal(rec, &r.Recipients)
 	_ = json.Unmarshal(att, &r.Attachments)
+	// a stored JSON null (a run that failed before resolving recipients or rendering) unmarshals to a nil slice
+	if r.Recipients == nil {
+		r.Recipients = []Recipient{}
+	}
+	if r.Attachments == nil {
+		r.Attachments = []AttachmentMeta{}
+	}
 	return r, nil
 }
 

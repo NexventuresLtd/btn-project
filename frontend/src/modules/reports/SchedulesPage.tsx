@@ -182,7 +182,7 @@ function RunsCard({ keyFilter }: { keyFilter: string }) {
               { key: "report", header: t("reports.schedules.col.report"), cell: (r) => r.title },
               { key: "period", header: t("reports.schedules.col.period"), cell: (r) => `${formatDate(r.periodFrom)} – ${formatDate(r.periodTo)}` },
               { key: "trigger", header: t("reports.schedules.col.trigger"), cell: (r) => tx(`reports.schedules.trigger.${r.trigger}`, undefined, r.trigger) },
-              { key: "sent", header: t("reports.schedules.col.sent"), align: "right", cell: (r) => `${r.recipients.filter((x) => x.status === "sent").length}/${r.recipients.length}` },
+              { key: "sent", header: t("reports.schedules.col.sent"), align: "right", cell: (r) => `${(r.recipients ?? []).filter((x) => x.status === "sent").length}/${(r.recipients ?? []).length}` },
               { key: "status", header: t("reports.schedules.col.status"), cell: (r) => <RunStatus status={r.status} /> },
             ]}
           />
@@ -197,7 +197,7 @@ function RunsCard({ keyFilter }: { keyFilter: string }) {
             <div>
               <h3 className="mb-1 font-semibold">{t("reports.schedules.recipients")}</h3>
               <ul className="space-y-1">
-                {open.recipients.map((r) => (
+                {(open.recipients ?? []).map((r) => (
                   <li key={r.email} className="flex flex-wrap items-center gap-2">
                     <Mail className="size-3.5 text-slate-400" aria-hidden /> {r.name ? `${r.name} · ` : ""}{r.email}
                     <Badge tone={r.status === "sent" ? "green" : r.status === "failed" ? "red" : "slate"}>{tx(`reports.schedules.rstatus.${r.status}`, undefined, r.status)}</Badge>
@@ -209,7 +209,7 @@ function RunsCard({ keyFilter }: { keyFilter: string }) {
             <div>
               <h3 className="mb-1 font-semibold">{t("reports.schedules.attachments")}</h3>
               <ul className="space-y-1">
-                {open.attachments.map((a, i) => <li key={i} className="text-slate-600">{a.name || a.part} · {a.format.toUpperCase()} · {a.lang} · {tx(`reports.schedules.astatus.${a.status}`, undefined, a.status)}</li>)}
+                {(open.attachments ?? []).map((a, i) => <li key={i} className="text-slate-600">{a.name || a.part} · {a.format.toUpperCase()} · {a.lang} · {tx(`reports.schedules.astatus.${a.status}`, undefined, a.status)}</li>)}
               </ul>
             </div>
           </div>
