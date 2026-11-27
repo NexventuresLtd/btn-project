@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import "fake-indexeddb/auto";
 import { createDeviceSecret } from "./crypto";
 import { UserDB } from "./db";
-import { SyncEngine } from "./engine";
+import { PENDING_RETRY_MS, SyncEngine } from "./engine";
 import { registerOfflineRecordType } from "./registry";
 import { OfflineStore, type WireRecord } from "./store";
 import { httpTransport, SYNC_SCHEMA_VERSION } from "./transport";
@@ -23,6 +23,7 @@ function mockServer() {
   const firstOutcome = new Map<string, string>(); // uuid -> rejected/conflict (server remembered the first answer)
   const resolved = new Map<string, string>(); // uuid -> resolution by a manager
   let pullReset = false;
+  let pullPending = 0; // next N pulls answer pending: true
   const log: WireRecord[] = [];
   const batches: number[] = [];
   let script: ("ok" | "network" | "500" | "400" | "revoked" | "401" | "final" | "426" | "toonew")[] = [];
@@ -32,6 +33,10 @@ function mockServer() {
     const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
     if (url.includes("/sync/records")) return json(200, { items: [...resolved.entries()].map(([uuid, resolution]) => ({ uuid, revision: 1, status: resolution === "keep_client" ? "accepted" : "conflict", conflictStatus: "resolved", resolution })) });
     if (url.includes("/sync/pull") && pullReset) return json(200, { changes: [{ entity: "workers", id: "w1", op: "upsert", data: { name: "Only" } }], cursor: "c2", hasMore: false, reset: true });
+    if (url.includes("/sync/pull") && pullPending > 0) {
+      pullPending--;
+      return json(200, { changes: [], cursor: "cp", hasMore: false, pending: true });
+    }
     if (url.includes("/sync/pull")) return json(200, { changes: [{ entity: "test_marks", id: "srv1", op: "upsert", data: { date: "2026-11-20", worker: "w9", status: "PRESENT" } }, { entity: "workers", id: "w9", op: "upsert", data: { name: "Ann" } }], cursor: "c1", hasMore: false });
     schemaHeaders.push(new Headers(init.headers).get("X-Sync-Schema"));
     const step = script.shift() ?? "ok";
@@ -60,7 +65,7 @@ function mockServer() {
     });
     return json(200, { results, serverTime: new Date().toISOString(), ...(step === "final" ? { deviceStatus: "revoked" } : {}) });
   };
-  return { fetch, applied, log, batches, rules, firstOutcome, resolved, schemaHeaders, setReset: (v: boolean) => (pullReset = v), setScript: (s: typeof script) => (script = s) };
+  return { fetch, applied, log, batches, rules, firstOutcome, resolved, schemaHeaders, setReset: (v: boolean) => (pullReset = v), setPending: (n: number) => (pullPending = n), setScript: (s: typeof script) => (script = s) };
 }
 
 let n = 0;
@@ -211,6 +216,24 @@ describe("sync engine", () => {
     e2.resume();
     await e2.sync();
     expect(await store.counts()).toMatchObject({ pending: 0 });
+  });
+
+  it("OFF-11: a pull answering pending (rows still in flight on the server) is retried shortly, a bounded number of times", async () => {
+    const srv = mockServer();
+    const e = engineFor(srv);
+    srv.setPending(1);
+    await e.sync();
+    expect(timers.map((t) => t.ms)).toEqual([PENDING_RETRY_MS]);
+    timers.shift()!.fn();
+    await e.sync();
+    expect(await store.listRef("workers")).toHaveLength(1); // the retry pulled the held-back rows
+    expect(timers).toHaveLength(0); // not pending any more: no extra retry
+    srv.setPending(100);
+    for (let i = 0; i < 8; i++) {
+      timers.length = 0;
+      await e.sync();
+    }
+    expect(timers).toHaveLength(0); // gives up after the bounded number of quick retries
   });
 
   it("§9.2: sends its sync schema version; an upgrade-required answer blocks sync without rejecting anything", async () => {

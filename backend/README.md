@@ -18,9 +18,9 @@ make test                 # go test ./...   (make test-race, make vet, make benc
 `go` not on PATH (snap)? `make GO=/snap/go/current/bin/go test`.
 Env vars: see `.env.example` (+ `APP_ENV`, `TRUSTED_PROXIES`, `REQUEST_TIMEOUT_SECONDS`, `DB_MAX_CONNS`, `RATE_LIMIT_GLOBAL_PER_MIN`, `RATE_LIMIT_AUTH_PER_MIN`, `RATE_LIMIT_SESSION_PER_MIN`, `RATE_LIMIT_IP_FLOOD_PER_MIN`, `TEST_DATABASE_URL`).
 
-Rate limits (NFR-P1): signed-in requests are limited **per user** (`RATE_LIMIT_GLOBAL_PER_MIN`, default 600/min; the signed-in
+Rate limits (NFR-P1): signed-in requests are limited **per user** (`RATE_LIMIT_GLOBAL_PER_MIN`, default 1200/min per user across all of their tabs and devices; the signed-in
 `/api/auth/*` calls — `/me`, logout, language, offline key/PIN — `RATE_LIMIT_SESSION_PER_MIN`, default 120/min), so a whole
-site behind one NAT address never shares a bucket. Anonymous requests are limited per IP (600/min), the unauthenticated
+site behind one NAT address never shares a bucket. There is no per-IP bucket for other traffic: the unauthenticated
 sign-in steps (login, codes, resets, passkey sign-in, refresh) per IP at `RATE_LIMIT_AUTH_PER_MIN` (30/min), and a per-IP
 flood guard (`RATE_LIMIT_IP_FLOOD_PER_MIN`, 30000/min) applies before the session is resolved.
 

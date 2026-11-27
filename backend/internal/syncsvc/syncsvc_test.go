@@ -968,6 +968,125 @@ func TestSchemaVersionsEnforced(t *testing.T) {
 	}
 }
 
+// NFR-M1 / OFF-11: the bound of a page series never drops. A writer whose xid predates the series starts writing a
+// synced table in the middle of it: the later pages still deliver every row below the first page's bound (hasMore
+// stays true until they are out), the series ends with pending=true while the writer is in flight, and its row
+// comes after it commits — nothing skipped, nothing duplicated.
+func TestPullPageSeriesKeepsItsBound(t *testing.T) {
+	f := setup(t)
+	ctx := t.Context()
+	type out struct {
+		Changes []struct {
+			Entity string         `json:"entity"`
+			ID     string         `json:"id"`
+			Data   map[string]any `json:"data"`
+		} `json:"changes"`
+		Cursor  string `json:"cursor"`
+		HasMore bool   `json:"hasMore"`
+		Pending bool   `json:"pending"`
+	}
+	pull := func(cursor string, limit int) out {
+		t.Helper()
+		var o out
+		f.e.Decode(f.dc.Do("GET", fmt.Sprintf("/api/sync/pull?entities=test_notes,products&limit=%d&cursor=%s", limit, cursor), nil), &o)
+		return o
+	}
+	base := pull("", 500)
+	// The late writer gets its xid now (before the notes exist and before the series starts) but writes nothing yet.
+	late, err := f.e.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = late.Rollback(context.Background()) }()
+	if _, err := late.Exec(ctx, `SELECT pg_current_xact_id()`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		if _, err := f.e.Pool.Exec(ctx, `INSERT INTO t_sync_note (id, plant_id, body) VALUES ($1, $2, 'n')`, fmt.Sprintf("series-%02d", i), f.plant); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := pull(base.Cursor, 3)
+	if !first.HasMore || len(first.Changes) != 3 {
+		t.Fatalf("first page: %d hasMore=%v", len(first.Changes), first.HasMore)
+	}
+	// Mid-series the old transaction writes a synced row: it now holds the sync lock with an xid below the cursor.
+	if _, err := late.Exec(ctx, `UPDATE "Product" SET name = name || ' (late)' WHERE code = (SELECT min(code) FROM "Product")`); err != nil {
+		t.Fatal(err)
+	}
+	notes := map[string]int{}
+	for _, c := range first.Changes {
+		notes[c.ID]++
+	}
+	cur, last := first.Cursor, first
+	for i := 0; i < 10 && last.HasMore; i++ {
+		last = pull(cur, 3)
+		cur = last.Cursor
+		for _, c := range last.Changes {
+			if c.Entity == "test_notes" {
+				notes[c.ID]++
+			}
+		}
+	}
+	if len(notes) != 10 {
+		t.Fatalf("page series ended early: %d of 10 notes (%v)", len(notes), notes)
+	}
+	for id, n := range notes {
+		if n != 1 {
+			t.Fatalf("note %s delivered %d times", id, n)
+		}
+	}
+	if !last.Pending {
+		t.Fatal("pending must signal the in-flight synced write")
+	}
+	if err := late.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	after := pull(cur, 500)
+	got := 0
+	for _, c := range after.Changes {
+		if c.Entity == "products" && strings.HasSuffix(fmt.Sprint(c.Data["name"]), "(late)") {
+			got++
+		}
+	}
+	if got != 1 || after.Pending {
+		t.Fatalf("late write after commit: %d (pending=%v)", got, after.Pending)
+	}
+}
+
+// WRK-01: the offline worker list carries the registration status, so a supervisor's pending registration shows as
+// pending on the device too (and nothing beyond the minimised capture fields leaves the server).
+func TestPullWorkersCarryRegistrationStatus(t *testing.T) {
+	f := setup(t)
+	ctx := t.Context()
+	for i, st := range []string{"PENDING", "APPROVED"} {
+		if _, err := f.e.Pool.Exec(ctx, `INSERT INTO "Worker" (id, "firstName", "lastName", "plantId", "dailyWage", "nationalId", "registrationStatus")
+			VALUES ($1, 'Reg', $2, $3, 3000, $4, $2)`, fmt.Sprintf("reg-w%d", i), st, f.plant, fmt.Sprintf("11990000000000%02d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var o struct {
+		Changes []struct {
+			Entity string         `json:"entity"`
+			ID     string         `json:"id"`
+			Data   map[string]any `json:"data"`
+		} `json:"changes"`
+	}
+	f.e.Decode(f.dc.Do("GET", "/api/sync/pull?entities=workers", nil), &o)
+	got := map[string]any{}
+	for _, c := range o.Changes {
+		if c.Entity == "workers" {
+			got[c.ID] = c.Data["registrationStatus"]
+			if c.Data["nationalId"] != nil || c.Data["dailyWage"] != nil {
+				t.Fatalf("worker data not minimised: %v", c.Data)
+			}
+		}
+	}
+	if got["reg-w0"] != "PENDING" || got["reg-w1"] != "APPROVED" {
+		t.Fatalf("registration status in the pull: %v", got)
+	}
+}
+
 func TestMonitorLedgerDrillDown(t *testing.T) {
 	f := setup(t)
 	res := f.dc.Push(note(0, f.plant, "a"), note(0, f.plant, "", ""))

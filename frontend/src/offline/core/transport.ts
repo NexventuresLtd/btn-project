@@ -49,6 +49,8 @@ export interface PullResponse {
   hasMore: boolean;
   /** role / site / entity filter changed: the server restarted from zero — drop local copies first */
   reset?: boolean;
+  /** rows of transactions still in flight on the server may arrive shortly: pull again soon (OFF-11) */
+  pending?: boolean;
 }
 
 /** GET /sync/records — latest server state of records (badges after a manager resolved a conflict). */
@@ -190,7 +192,7 @@ export function httpTransport(opts: { base?: string; fetch?: FetchLike; headers?
       const q = new URLSearchParams({ limit: String(limit) });
       if (cursor) q.set("cursor", cursor);
       const r = await call<Partial<PullResponse> & { more?: boolean; next?: string }>(`/sync/pull?${q}`, { timeoutMs });
-      return { changes: r?.changes ?? [], cursor: r?.cursor ?? r?.next ?? cursor, hasMore: !!(r?.hasMore ?? r?.more), reset: !!r?.reset };
+      return { changes: r?.changes ?? [], cursor: r?.cursor ?? r?.next ?? cursor, hasMore: !!(r?.hasMore ?? r?.more), reset: !!r?.reset, pending: !!r?.pending };
     },
     async recordStates(uuids) {
       if (!uuids.length) return [];

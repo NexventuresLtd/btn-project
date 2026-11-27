@@ -2,7 +2,7 @@
 # BTN Operations — external uptime probe (SRS NFR-M2). POSIX sh + curl only, so it runs on any small Linux box,
 # in the `uptime` docker-compose profile (curl image) or from a systemd timer.
 #
-#   uptime-check.sh [--env-file FILE] [--loop SECONDS] [--test-alert]
+#   uptime-check.sh [--env-file FILE] [--loop SECONDS] [--test-alert] [--notify SUBJECT < body]
 #
 # Run it from OUTSIDE the API host (another VM, the office server, a cheap VPS): the in-process health job dies with
 # the API process, this one does not. Every run:
@@ -16,6 +16,8 @@
 #      and/or a webhook (UPTIME_WEBHOOK_URL: JSON POST {"text": ...}, works with Slack/Mattermost/Google Chat/ntfy).
 #
 # --loop N   keep running, one check every N seconds (container mode).  --test-alert   send a test alert and exit.
+# --notify S send S + the body read from stdin through the configured alert channels and exit (used by
+#            deploy/restore-drill.sh, so every BTN alert goes through one mechanism); exit 1 if no channel worked.
 # Exit codes: 0 all checks passed · 1 usage/config error · 2 at least one check failed (systemd marks the unit failed).
 # Settings: deploy/uptime.env.example. Schedule: deploy/btn-ops-uptime.timer (every minute).
 set -u
@@ -26,11 +28,13 @@ die() { printf '%s [btn-uptime] ERROR: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$
 ENV_FILE=""
 LOOP=0
 TEST_ALERT=0
+NOTIFY=""
 while [ $# -gt 0 ]; do
   case $1 in
     --env-file) [ $# -ge 2 ] || die "--env-file needs a path"; ENV_FILE=$2; shift 2 ;;
     --loop) [ $# -ge 2 ] || die "--loop needs seconds"; LOOP=$2; shift 2 ;;
     --test-alert) TEST_ALERT=1; shift ;;
+    --notify) [ $# -ge 2 ] || die "--notify needs a subject"; NOTIFY=$2; shift 2 ;;
     -h | --help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown option: $1 (see --help)" ;;
   esac
@@ -46,6 +50,7 @@ fi
 
 : "${UPTIME_BASE_URL:=}"
 : "${UPTIME_URLS:=}"
+if [ -z "$UPTIME_URLS" ] && [ -n "$NOTIFY" ]; then UPTIME_URLS="(notify only)"; fi
 if [ -z "$UPTIME_URLS" ]; then
   [ -n "$UPTIME_BASE_URL" ] || die "set UPTIME_BASE_URL (e.g. https://operations.btnlimited.com) or UPTIME_URLS"
   base=${UPTIME_BASE_URL%/}
@@ -208,6 +213,17 @@ Next steps: btnops status · btnops logs (on the API server) · docs: README →
   return 2
 }
 
+if [ -n "$NOTIFY" ]; then
+  [ -n "$UPTIME_ALERT_EMAIL" ] || [ -n "$UPTIME_WEBHOOK_URL" ] || die "--notify: no alert channel configured"
+  body=$(cat)
+  ok=0
+  log "NOTIFY: $NOTIFY"
+  if [ -n "$UPTIME_ALERT_EMAIL" ] && send_email "$NOTIFY" "$body"; then ok=1; fi
+  if [ -n "$UPTIME_WEBHOOK_URL" ] && send_webhook "$NOTIFY
+$body"; then ok=1; fi
+  [ $ok -eq 1 ] || exit 1
+  exit 0
+fi
 if [ $TEST_ALERT -eq 1 ]; then
   alert "[TEST] $UPTIME_NAME uptime alert" "Test alert from the external uptime probe on $(host_name). URLs checked: $UPTIME_URLS"
   exit $?

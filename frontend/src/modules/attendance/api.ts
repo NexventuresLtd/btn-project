@@ -25,6 +25,8 @@ export interface RosterEntry {
   version?: number;
   lent?: boolean;
   homePlant?: PlantRef;
+  /** WRK-01: a supervisor's registration still waiting for Finance approval (from the pulled worker list) */
+  registrationStatus?: "PENDING" | "APPROVED";
   elsewhere?: { plantCode: string; status: AttendanceStatus }[];
   paidOn?: string | null;
   pendingCorrectionId?: string | null;

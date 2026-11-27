@@ -53,12 +53,16 @@ export interface EngineOptions {
 }
 
 const MAX_BATCH = 200;
+/** pull again this soon while the server reports rows still in flight (`pending`), at most PENDING_RETRIES times */
+export const PENDING_RETRY_MS = 3_000;
+const PENDING_RETRIES = 5;
 
 export class SyncEngine {
   private o: Required<Pick<EngineOptions, "now" | "random" | "setTimer" | "clearTimer" | "maxBatch" | "pullPageSize" | "maxPullPages">> & EngineOptions;
   private running: Promise<SyncOutcome> | null = null;
   private again = false;
   private timer: unknown = null;
+  private pendingRetries = 0;
   private listeners = new Set<() => void>();
   state: EngineState;
 
@@ -165,6 +169,7 @@ export class SyncEngine {
       if (this.o.pull !== false) {
         this.set({ phase: "pulling" });
         let cursor = (await store.getMeta<string>("cursor")) ?? null;
+        let pending = false;
         for (let page = 0; page < this.o.maxPullPages; page++) {
           let res;
           try {
@@ -181,8 +186,18 @@ export class SyncEngine {
           pulled += res.changes.length;
           cursor = res.cursor;
           await store.setMeta("cursor", cursor); // resumable: the cursor advances page by page
+          pending = !!res.pending;
           if (!res.hasMore) break;
         }
+        // The server held rows of still-open transactions back: come back for them shortly (bounded).
+        if (pending && this.pendingRetries < PENDING_RETRIES) {
+          this.pendingRetries++;
+          this.stop();
+          this.timer = this.o.setTimer(() => {
+            this.timer = null;
+            void this.sync();
+          }, PENDING_RETRY_MS);
+        } else if (!pending) this.pendingRetries = 0;
       }
       // conflicts a manager may have resolved since (best effort)
       if (transport.recordStates) {

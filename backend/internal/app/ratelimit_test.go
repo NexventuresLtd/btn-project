@@ -61,7 +61,7 @@ func TestSharedIPUsersAreLimitedPerUser(t *testing.T) {
 	e := apptest.New(t, apptest.Options{KeepRateLimits: true, Config: func(c *config.Config) {
 		c.GlobalRateLimit, c.IPFloodLimit = def.GlobalRateLimit, def.IPFloodLimit
 	}})
-	if def.GlobalRateLimit != 600 || def.AuthRateLimit != 30 {
+	if def.GlobalRateLimit != 1200 || def.AuthRateLimit != 30 {
 		t.Skipf("non-default limits in the environment: %d/%d", def.GlobalRateLimit, def.AuthRateLimit)
 	}
 	users := make([]*testutil.TestUser, 60)
@@ -87,5 +87,17 @@ func TestSharedIPUsersAreLimitedPerUser(t *testing.T) {
 	}
 	if r := e.Do("GET", "/api/auth/me", nil, users[1]); r.StatusCode != 200 {
 		t.Fatalf("another user on the same IP throttled: %d", r.StatusCode)
+	}
+	// Requests without a valid session from the shared IP (public endpoints, an expired access token) are not
+	// throttled per IP either: they get their normal answer, not 429 (only the sign-in steps and the flood guard
+	// limit per IP).
+	expired := &testutil.TestUser{Token: "expired-or-garbage-token"}
+	for i := 0; i < 400; i++ {
+		if r := e.Do("GET", "/api/public/branding", nil, nil); r.StatusCode != 200 {
+			t.Fatalf("anonymous public request %d from the shared IP: %d", i, r.StatusCode)
+		}
+		if r := e.Do("GET", "/api/lookups", nil, expired); r.StatusCode != 401 {
+			t.Fatalf("expired-session request %d from the shared IP: %d (want 401, not 429)", i, r.StatusCode)
+		}
 	}
 }

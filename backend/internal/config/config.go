@@ -38,7 +38,7 @@ type Config struct {
 	RequestTimeout  time.Duration
 	DBMaxConns      int32
 	AssetsDir       string // optional override dir for logo files (backend/assets)
-	GlobalRateLimit int    // requests per minute per signed-in user, or per IP for anonymous requests
+	GlobalRateLimit int    // requests per minute per signed-in user (all of the user's tabs and devices together)
 	AuthRateLimit   int    // requests per minute per IP on the unauthenticated /api/auth/* steps (login, codes, resets)
 	IPFloodLimit    int    // requests per minute per IP before the session is resolved (flood guard, shared NAT safe)
 	SessionLimit    int    // requests per minute per user on the signed-in /api/auth/* calls (/me, logout, language, …)
@@ -160,7 +160,7 @@ func FromEnv() (*Config, error) {
 		RequestTimeout:  time.Duration(atoi("REQUEST_TIMEOUT_SECONDS", 30)) * time.Second,
 		DBMaxConns:      int32(atoi("DB_MAX_CONNS", 20)),
 		AssetsDir:       get("ASSETS_DIR", ""),
-		GlobalRateLimit: atoi("RATE_LIMIT_GLOBAL_PER_MIN", 600),
+		GlobalRateLimit: atoi("RATE_LIMIT_GLOBAL_PER_MIN", 1200),
 		AuthRateLimit:   atoi("RATE_LIMIT_AUTH_PER_MIN", 30),
 		IPFloodLimit:    atoi("RATE_LIMIT_IP_FLOOD_PER_MIN", 30000),
 		SessionLimit:    atoi("RATE_LIMIT_SESSION_PER_MIN", 120),

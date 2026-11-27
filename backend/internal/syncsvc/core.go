@@ -25,10 +25,12 @@ func init() {
 	RegisterPull("customers", func(ctx context.Context, a Actor, since Cursor) ([]Change, error) {
 		return Rows(ctx, a, since, "customers", `SELECT c.id, to_jsonb(c) - 'server_xid' - 'server_version', c.server_version, c.server_xid FROM "Customer" c`)
 	}, PullRequires("sales.view", "sales.create", "deliveries.create", "customers.manage"))
-	// Workers: only what capture screens need (no national id, MoMo number or wage — NFR-D2 data minimisation).
+	// Workers: only what capture screens need (no national id, MoMo number or wage — NFR-D2 data minimisation), plus the
+	// WRK-01 registration status so a supervisor's still-unapproved registrations show as pending offline too.
 	RegisterPull("workers", func(ctx context.Context, a Actor, since Cursor) ([]Change, error) {
 		return Rows(ctx, a, since, "workers", `SELECT w.id, jsonb_build_object('id', w.id, 'firstName', w."firstName", 'lastName', w."lastName",
-			'jobTitle', w."jobTitle", 'plantId', w."plantId", 'isActive', w."isActive", 'startDate', w."startDate"),
+			'jobTitle', w."jobTitle", 'plantId', w."plantId", 'isActive', w."isActive", 'startDate', w."startDate",
+			'registrationStatus', w."registrationStatus"),
 			w.server_version, w.server_xid FROM "Worker" w WHERE ($1 = '' OR w."plantId" = $1)`, a.ScopedPlantID())
 	}, PullRequires("attendance.view", "attendance.record", "workers.manage", "payroll.view"))
 	RegisterPull("refdata", func(ctx context.Context, a Actor, since Cursor) ([]Change, error) {

@@ -58,7 +58,7 @@ func Close() {
 	pool.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if admin, err := pgxpool.New(ctx, baseU.String()); err == nil {
+	if admin, err := pgxpool.New(ctx, adminURL(baseU.String())); err == nil {
 		_, _ = admin.Exec(ctx, `DROP DATABASE IF EXISTS `+quoteIdent(dbName)+` WITH (FORCE)`)
 		admin.Close()
 	}
@@ -74,7 +74,7 @@ func Config(t testing.TB) *config.Config {
 // Pool returns the pool bound to this process's database (cloned from the migrated template on first use).
 func Pool(t testing.TB) *pgxpool.Pool {
 	t.Helper()
-	once.Do(func() { setErr = setup() })
+	once.Do(func() { setErr = setupWithRetry() })
 	if setErr != nil {
 		t.Fatalf("test database setup: %v (is PostgreSQL up and DATABASE_URL set in backend/.env?)", setErr)
 	}
@@ -113,6 +113,36 @@ func migrationsHash() (string, error) {
 	return hex.EncodeToString(h.Sum(nil))[:10], nil
 }
 
+// setupWithRetry retries while PostgreSQL is out of connection slots (SQLSTATE 53300 "too many clients"): with
+// every package of `go test ./...` starting at once on a many-core machine, the slots free up within seconds.
+func setupWithRetry() error {
+	var err error
+	for i := 0; i < 60; i++ {
+		if err = setup(); err == nil || !outOfSlots(err) {
+			return err
+		}
+		time.Sleep(time.Duration(500+100*i) * time.Millisecond)
+	}
+	return err
+}
+
+func outOfSlots(err error) bool {
+	m := err.Error()
+	return strings.Contains(m, "53300") || strings.Contains(m, "too many clients") || strings.Contains(m, "remaining connection slots")
+}
+
+// adminURL is url with a small connection cap: the maintenance pools only run a few sequential statements.
+func adminURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	q := u.Query()
+	q.Set("pool_max_conns", "2")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 func setup() error {
 	config.LoadDotEnvUp()
 	c, err := config.FromEnv()
@@ -141,7 +171,7 @@ func setup() error {
 		return err
 	}
 	base := strings.TrimPrefix(baseU.Path, "/")
-	admin, err := pgxpool.New(ctx, cfg.TestDatabaseURL)
+	admin, err := pgxpool.New(ctx, adminURL(cfg.TestDatabaseURL))
 	if err != nil {
 		return err
 	}
@@ -162,7 +192,9 @@ func setup() error {
 	if err := createFromTemplate(ctx, admin, dbName, tpl); err != nil {
 		return err
 	}
-	pool, err = db.Connect(ctx, withDB(baseU, dbName), 10)
+	// 6 connections per test process: enough for tests that hold a few transactions open while issuing requests,
+	// and 24 parallel packages stay well under PostgreSQL's default max_connections (100).
+	pool, err = db.Connect(ctx, withDB(baseU, dbName), 6)
 	return err
 }
 

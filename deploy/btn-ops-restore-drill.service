@@ -1,0 +1,46 @@
+# /etc/systemd/system/btn-ops-restore-drill.service — quarterly restore drill (SRS NFR-R1).
+# Restores the newest encrypted backup (deploy/backup.sh format) into a throw-away database, checks the migration
+# version, row counts and ledger balances (against the live DB, read-only), drops the database, and mails/posts the
+# PASS/FAIL report through the uptime alert channels (/etc/btn-ops/uptime.env, see deploy/uptime-check.sh).
+# Started by btn-ops-restore-drill.timer; run by hand with:
+#   systemctl start btn-ops-restore-drill && journalctl -u btn-ops-restore-drill -e
+# Install (on the server that holds the backups, after btn-ops-backup.timer is set up):
+#   install -m 640 -o root -g btnops deploy/uptime.env.example /etc/btn-ops/uptime.env   # alert channels only
+#   cp deploy/btn-ops-restore-drill.service deploy/btn-ops-restore-drill.timer /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now btn-ops-restore-drill.timer
+# backup.env needs RESTORE_DATABASE_URL (a CREATEDB role on the same server) and, to compare balances,
+# DATABASE_URL (the read-only backup role is enough). Remote drills: add --remote to ExecStart.
+[Unit]
+Description=BTN Operations quarterly restore drill
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=btnops
+Group=btnops
+ExecStart=/opt/btn-ops/deploy/restore-drill.sh --env-file /etc/btn-ops/backup.env
+Environment=TZ=Africa/Kigali
+StateDirectory=btn-ops-backup
+CacheDirectory=btn-ops-backup
+Environment=HOME=/var/lib/btn-ops-backup XDG_CACHE_HOME=/var/cache/btn-ops-backup
+UMask=0077
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=6h
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+# the restore report is written next to the backups
+ReadWritePaths=/var/backups/btn-ops
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+CapabilityBoundingSet=

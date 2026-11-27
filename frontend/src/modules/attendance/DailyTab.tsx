@@ -15,6 +15,7 @@ import { ProvisionalTag, SyncBadge } from "@/offline/ui/SyncBadge";
 import { approveDays, ATTENDANCE_KEY, dayFraction, recordAttendance, STATUSES, submitDay, useRoster, validOvertime, worked, type AttendanceStatus, type RosterEntry } from "./api";
 import { ATTENDANCE_TYPE, type AttendanceMark } from "./offline";
 import { CorrectionModal, LendModal } from "./DailyDialogs";
+import { PendingRegistrationBadge } from "@/modules/payroll/WorkersPage";
 import type { useSiteSelection } from "./AttendancePage";
 
 type Site = ReturnType<typeof useSiteSelection>;
@@ -288,6 +289,7 @@ export function DailyTab({ site }: { site: Site }) {
                       <p className="flex flex-wrap items-center gap-2 font-medium whitespace-nowrap text-slate-900">{e.name}{showBadge ? <SyncBadge status={l._status} /> : null}</p>
                       <p className="text-xs text-slate-500">{e.jobTitle}</p>
                       <div className="mt-1 flex flex-wrap gap-1">
+                        {e.registrationStatus === "PENDING" ? <PendingRegistrationBadge /> : null}
                         {e.lent && e.homePlant ? <Badge tone="red">{t("attendance.lend.from", { site: e.homePlant.code })}</Badge> : null}
                         {elsewhere.map((x) => <Badge key={x.plantCode} tone="amber">{t("attendance.alsoAt", { site: x.plantCode, status: t(`attendance.status.${x.status}`) })}</Badge>)}
                         {e.paidOn ? <Badge tone="navy">{t("attendance.paidOn", { number: e.paidOn })}</Badge> : null}

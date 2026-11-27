@@ -72,6 +72,22 @@ registerOfflineRecordType<AttendanceMark>({
   },
 });
 
+/** Pulled worker reference rows (backend syncsvc "workers" entity). */
+interface PulledWorker {
+  _id: string;
+  registrationStatus?: "PENDING" | "APPROVED";
+}
+
+/** WRK-01: adds each worker's registration status from the pulled worker list (pure). */
+export function withRegistrationStatus<E extends { workerId: string; registrationStatus?: "PENDING" | "APPROVED" }>(entries: E[], pulled: PulledWorker[]): E[] {
+  if (!pulled.length) return entries;
+  const status = new Map(pulled.map((w) => [w._id, w.registrationStatus]));
+  return entries.map((e) => {
+    const s = e.registrationStatus ?? status.get(e.workerId);
+    return s ? { ...e, registrationStatus: s } : e;
+  });
+}
+
 interface CachedWorkers {
   plant: Roster["plant"];
   workers: { workerId: string; name: string; jobTitle: string }[];
@@ -94,6 +110,8 @@ export async function fetchRoster(plantId: string, date: string, signal?: AbortS
         return { key: markKey(m), date, data: m };
       }));
       if (r.day) void store.cachePut(`attendance:day:${plantId}:${date}`, r.day);
+      const pulled = await store.listRef<PulledWorker>("workers").catch(() => []);
+      return { ...r, entries: withRegistrationStatus(r.entries, pulled) };
     }
     return r;
   } catch (e) {
@@ -102,11 +120,16 @@ export async function fetchRoster(plantId: string, date: string, signal?: AbortS
     const cached = await store.cacheGet<CachedWorkers>(`attendance:workers:${plantId}`);
     if (!cached) throw e;
     const known = new Map((await store.listRecords<AttendanceMark>(ATTENDANCE_TYPE)).filter((m) => m.plantId === plantId && m.date === date).map((m) => [m.workerId, m]));
-    const entries: RosterEntry[] = cached.value.workers.map((w) => {
+    const pulledWorkers = await store.listRef<PulledWorker>("workers").catch(() => []);
+    const rows: RosterEntry[] = cached.value.workers.map((w) => {
       const k = known.get(w.workerId);
       return { ...w, status: k?.status ?? null, note: k?.note ?? null, overtimeHours: k?.overtimeHours ?? 0, exception: k?.exception ?? false,
         exceptionReason: k?.exceptionReason ?? null, version: k?.baseVersion ?? 0, elsewhere: [] };
     });
+    // registrations made on this device and not yet synced are pending too
+    const localRegs = new Set((await store.listRecords<{ plantId: string }>("worker_registration").catch(() => []))
+      .filter((r) => r._status !== "synced" && r._uuid).map((r) => r._uuid));
+    const entries = withRegistrationStatus(rows, pulledWorkers).map((e) => (localRegs.has(e.workerId) ? { ...e, registrationStatus: "PENDING" as const } : e));
     const zero = { present: 0, half: 0, absent: 0, leave: 0, unmarked: entries.length, total: entries.length, payableDays: 0 };
     // day lock state: the last server copy of the day, else the pulled approval states
     const cachedDay = await store.cacheGet<NonNullable<Roster["day"]>>(`attendance:day:${plantId}:${date}`);

@@ -29,7 +29,7 @@ Built from BTN's *Key Considerations for Software Development*.
 ```
 backend/    API — Go 1.26, Fiber v2, PostgreSQL (pgx), goose migrations, embedded fonts/logos
 frontend/   Web app — React 19, TypeScript, Vite, Tailwind CSS 4, React Router 7, TanStack Query
-deploy/     nginx (TLS), systemd units, encrypted backup + restore-test scripts
+deploy/     nginx (TLS), systemd units, encrypted backup, restore-test + quarterly restore-drill, uptime probe
 docs/       ARCHITECTURE.md — domain model and design; backend/README.md — backend conventions
 ```
 
@@ -229,6 +229,30 @@ What to check:
 
 Record the date, operator, backup name, result and total time in the operations log, and file the report.
 A `FAIL` is a priority incident: fix it and re-run the same week.
+
+**Scheduled drill (timer):** `deploy/btn-ops-restore-drill.timer` runs `deploy/restore-drill.sh` on 1 January, April,
+July and October at 03:00 Kigali time, so the quarterly test cannot be forgotten. The drill:
+1. runs `restore-test.sh --keep --compare` on the newest backup (same `backup.sh` file format and settings; add
+   `--remote` to `ExecStart` to drill the off-site copy) into a throw-away database `btn_restore_drill_<timestamp>`
+   (prefix `RESTORE_DRILL_DB_PREFIX`);
+2. checks that the restored migration version is at least the newest migration of the deployed release
+   (`RESTORE_DRILL_MIN_MIGRATION` overrides it) and that `User`, `Plant`, `Product`, `Material` and `AuditLog` are not empty;
+3. **balance check:** the stock and material balances per site and item and the approved petty-cash balance per float,
+   summed from the ledgers over the rows that existed at backup time, must equal the live database's (read-only
+   session). Without `DATABASE_URL`, no petty-cash float may be negative;
+4. drops the throw-away database (also on failure) and sends the `PASS`/`FAIL` report through the uptime alert channels
+   (`/etc/btn-ops/uptime.env`: e-mail via SMTP/sendmail and/or webhook, via `uptime-check.sh --notify`). A `FAIL`
+   always alerts; set `RESTORE_DRILL_NOTIFY_SUCCESS=0` to skip the `PASS` mail.
+
+```bash
+sudo cp deploy/btn-ops-restore-drill.service deploy/btn-ops-restore-drill.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now btn-ops-restore-drill.timer
+systemctl list-timers btn-ops-restore-drill.timer                  # next run
+sudo systemctl start btn-ops-restore-drill && journalctl -u btn-ops-restore-drill -e   # run one now
+```
+
+`backup.env` needs `RESTORE_DATABASE_URL` (a `CREATEDB` role on the same server) and `DATABASE_URL` (read-only) for
+the balance comparison. File the drill report with the operations log as for a manual test.
 
 ## Security summary
 

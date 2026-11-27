@@ -123,15 +123,18 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 		}
 		return ""
 	}, nil))
-	userLimiter := ratelimit.New(ratelimit.Rule{PerMinute: cfg.GlobalRateLimit, Burst: max(1, cfg.GlobalRateLimit/5)})
-	anonLimiter := ratelimit.New(ratelimit.Rule{PerMinute: cfg.GlobalRateLimit, Burst: max(1, cfg.GlobalRateLimit/5)})
+	// Signed-in requests: one bucket per user (all of that user's tabs and devices). Anonymous requests have no
+	// per-IP bucket here: the unauthenticated sign-in steps are limited per IP by the "auth" group, the public
+	// endpoints (health, branding, i18n, assets) are cheap and cached, and the flood guard above bounds the rest.
+	// (A 600/min per-IP bucket used to apply here to requests without a valid session — e.g. an expired access
+	// token — so one site behind a NAT address could be throttled; NFR-P1.)
+	userLimiter := ratelimit.New(ratelimit.Rule{PerMinute: cfg.GlobalRateLimit, Burst: max(1, cfg.GlobalRateLimit/4)})
 	byUser := ratelimit.Middleware(userLimiter, "user", ratelimit.Key)
-	byIP := ratelimit.Middleware(anonLimiter, "global", ratelimit.IPKey)
-	api.Use(func(c *fiber.Ctx) error { // per-user bucket when signed in, per-IP bucket otherwise
+	api.Use(func(c *fiber.Ctx) error {
 		if u := auth.FromCtx(c); u != nil {
 			return byUser(c)
 		}
-		return byIP(c)
+		return c.Next()
 	})
 
 	// ── public (no auth) ────────────────────────────────────────────────────

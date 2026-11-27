@@ -1,0 +1,16 @@
+# /etc/systemd/system/btn-ops-restore-drill.timer — quarterly restore drill (SRS NFR-R1):
+# 1 January, April, July and October at 03:00 Kigali time (after the 01:30 nightly backup).
+# Enable:  systemctl daemon-reload && systemctl enable --now btn-ops-restore-drill.timer
+# Check:   systemctl list-timers btn-ops-restore-drill.timer
+[Unit]
+Description=Quarterly BTN Operations restore drill (03:00 Africa/Kigali, 1 Jan/Apr/Jul/Oct)
+
+[Timer]
+OnCalendar=*-01,04,07,10-01 03:00:00 Africa/Kigali
+# A drill missed while the server was down runs at the next boot.
+Persistent=true
+AccuracySec=1min
+Unit=btn-ops-restore-drill.service
+
+[Install]
+WantedBy=timers.target
