@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, get, patch, post, put } from "@/lib/api";
 import type { RefItem } from "@/hooks/useLookups";
+import type { RemovedRow } from "./api";
 
 /** ADM-01 reference-data kinds (backend internal/refdata.Kinds, same order). */
 export const REF_KINDS = [
@@ -32,6 +33,15 @@ export function useRefData(kind: RefKind, all = false) {
 
 export const createRef = ({ kind, body }: { kind: RefKind; body: RefPayload }) => post<RefItem>(`/refdata/${kind}`, body as Record<string, unknown>);
 export const updateRef = ({ kind, id, body }: { kind: RefKind; id: string; body: RefPayload }) => patch<RefItem>(`/refdata/${kind}/${id}`, body as Record<string, unknown>);
+/** Removed items of a kind (SRS §6.3: kept, hidden, restorable). */
+export function useRemovedRef(kind: RefKind) {
+  return useQuery({
+    queryKey: [...REFDATA_KEY, kind, "removed"],
+    queryFn: ({ signal }) => get<{ items: RemovedRow[] }>(`/refdata/${kind}/removed`, signal).then((r) => r.items),
+  });
+}
+export const removeRef = ({ kind, id, reason }: { kind: RefKind; id: string; reason: string }) => api<{ ok: boolean }>(`/refdata/${kind}/${id}`, { method: "DELETE", body: { reason } });
+export const restoreRef = ({ kind, id }: { kind: RefKind; id: string }) => post<RefItem>(`/refdata/${kind}/${id}/restore`);
 export const reorderRef = ({ kind, ids }: { kind: RefKind; ids: string[] }) => put<{ items: RefItem[] }>(`/refdata/${kind}/order`, { ids });
 
 export interface Threshold {

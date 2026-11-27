@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
-import { Building2, Factory, Package, Pencil, Plus, Boxes } from "lucide-react";
+import { Building2, Factory, Package, Pencil, Plus, Boxes, Trash2 } from "lucide-react";
 import { useT, type T } from "@/i18n";
-import { Alert, Badge, Button, Card, Checkbox, DataTable, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Select, StatusBadge, Tabs, Textarea, type Column } from "@/components/ui";
+import { Alert, Badge, Button, Card, Checkbox, DataTable, EmptyState, ErrorState, Field, Input, Modal, PageHeader, RemoveDialog, Select, StatusBadge, Tabs, Textarea, type Column } from "@/components/ui";
 import { useLookups, type RefItem } from "@/hooks/useLookups";
 import { useAuth } from "@/auth/AuthProvider";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { formatInt, formatQty, formatRWF } from "@/lib/format";
-import { ADMIN_KEY, saveMasterRow, useMasterData, type Customer, type MasterEntity, type MasterRow, type Material, type Plant, type Product } from "./api";
+import { RemovedList } from "./RemovedList";
+import { ADMIN_KEY, removeMasterRow, restoreMasterRow, saveMasterRow, useMasterData, useRemovedMaster, type Customer, type MasterEntity, type MasterRow, type Material, type Plant, type Product } from "./api";
 import { Dim, SearchInput } from "./components";
 
 // ───────────────────────────── form definitions ─────────────────────────────
@@ -137,6 +138,16 @@ function MasterTable({ def, canEdit, onEdit, onCreate }: { def: EntityDef; canEd
   const query = useMasterData<MasterRow>(def.entity);
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(true);
+  // SRS §6.3: removed, never deleted: hidden from every list and dropdown, kept for history, restorable
+  const invalidate = [[...ADMIN_KEY, "masterdata", def.entity], [...ADMIN_KEY, "plantStats"], ["lookups"]];
+  const removed = useRemovedMaster(def.entity);
+  const [removing, setRemoving] = useState<MasterRow | null>(null);
+  const remove = useMutate((v: { id: string; reason: string }) => removeMasterRow({ entity: def.entity, ...v }), {
+    success: t("records.removedDone"),
+    invalidate,
+    onSuccess: () => setRemoving(null),
+  });
+  const restore = useMutate((id: string) => restoreMasterRow({ entity: def.entity, id }), { success: t("records.restored"), invalidate });
 
   const rows = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -144,7 +155,18 @@ function MasterTable({ def, canEdit, onEdit, onCreate }: { def: EntityDef; canEd
   }, [query.data, search, showInactive]);
 
   const actionCol: Column<MasterRow>[] = canEdit
-    ? [{ key: "actions", header: <span className="sr-only">{t("common.actions")}</span>, align: "right", className: "w-12", cell: (r) => <Button variant="ghost" size="icon" aria-label={t("admin.md.editAria", { name: def.title(r) })} onClick={() => onEdit(r)}><Pencil className="size-4" /></Button> }]
+    ? [{
+        key: "actions",
+        header: <span className="sr-only">{t("common.actions")}</span>,
+        align: "right",
+        className: "w-24",
+        cell: (r) => (
+          <div className="flex justify-end gap-1">
+            <Button variant="ghost" size="icon" aria-label={t("admin.md.editAria", { name: def.title(r) })} onClick={() => onEdit(r)}><Pencil className="size-4" /></Button>
+            <Button variant="ghost" size="icon" aria-label={`${t("records.remove")} ${def.title(r)}`} title={t("records.remove")} onClick={() => setRemoving(r)} className="text-slate-500 hover:bg-red-50 hover:text-red-600"><Trash2 className="size-4" /></Button>
+          </div>
+        ),
+      }]
     : [];
 
   const columns: Column<MasterRow>[] = (() => {
@@ -221,6 +243,17 @@ function MasterTable({ def, canEdit, onEdit, onCreate }: { def: EntityDef; canEd
       ) : (
         <DataTable columns={[...columns, ...actionCol]} rows={rows} rowKey={(r) => r.id} loading={query.isLoading} empty={t(`admin.md.${def.entity}.noMatch`, { q: search })} />
       )}
+      <RemovedList items={removed.data} onRestore={canEdit ? (r) => restore.mutate(r.id) : undefined} restoringId={restore.isPending ? restore.variables : undefined} className="border-t border-line px-5 py-3" />
+      <RemoveDialog
+        open={!!removing}
+        onClose={() => setRemoving(null)}
+        onConfirm={(reason) => removing && remove.mutate({ id: removing.id, reason })}
+        title={t("records.removeTitle", { name: removing ? def.title(removing) : "" })}
+        message={def.entity === "plants" ? t("records.removeSiteMsg") : t("records.removeMasterMsg")}
+        loading={remove.isPending}
+        error={remove.error}
+        onlineOnly
+      />
     </Card>
   );
 }

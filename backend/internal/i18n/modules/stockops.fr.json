@@ -82,5 +82,9 @@
   "stock.export.number": "Numéro",
   "stock.export.source": "Origine",
   "stock.export.status": "Statut",
-  "stock.export.value": "Valeur (RWF)"
+  "stock.export.value": "Valeur (RWF)",
+  "masterdata.plant_in_use": "Ce lieu a encore {users} utilisateur(s) actif(s) et {workers} travailleur(s) actif(s). Affectez-les à un autre lieu ou désactivez-les d'abord.",
+  "masterdata.removed_twin": "Un enregistrement retiré utilise déjà ce code. Restaurez-le depuis la liste des éléments retirés au lieu d'en créer un nouveau.",
+  "masterdata.edit_removed": "Cet enregistrement a été retiré. Restaurez-le avant de le modifier.",
+  "masterdata.not_removed": "Cet enregistrement n'est pas retiré"
 }

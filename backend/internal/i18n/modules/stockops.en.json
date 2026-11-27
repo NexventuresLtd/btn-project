@@ -82,5 +82,9 @@
   "stock.export.number": "Number",
   "stock.export.source": "Source",
   "stock.export.status": "Status",
-  "stock.export.value": "Value (RWF)"
+  "stock.export.value": "Value (RWF)",
+  "masterdata.plant_in_use": "This location still has {users} active user(s) and {workers} active worker(s). Move them to another location or deactivate them first.",
+  "masterdata.removed_twin": "A removed record already uses this code. Restore it from the Removed list instead of creating a new one.",
+  "masterdata.edit_removed": "This record was removed. Restore it before editing it.",
+  "masterdata.not_removed": "This record is not removed"
 }

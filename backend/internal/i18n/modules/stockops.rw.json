@@ -82,5 +82,9 @@
   "stock.export.number": "Nimero",
   "stock.export.source": "Inkomoko",
   "stock.export.status": "Imiterere",
-  "stock.export.value": "Agaciro (RWF)"
+  "stock.export.value": "Agaciro (RWF)",
+  "masterdata.plant_in_use": "Iki kibanza kiracyafite abakoresha {users} bakora n'abakozi {workers} bakora. Banza ubimurire ahandi cyangwa ubahagarike.",
+  "masterdata.removed_twin": "Iyi kode isanzwe ikoreshwa n'icyakuweho. Cyigarure uhereye ku rutonde rw'ibyakuweho aho gushyiraho igishya.",
+  "masterdata.edit_removed": "Iki cyakuweho. Banza ukigarure mbere yo kugihindura.",
+  "masterdata.not_removed": "Iki ntabwo cyakuweho"
 }

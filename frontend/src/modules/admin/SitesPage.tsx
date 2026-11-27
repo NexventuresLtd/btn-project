@@ -1,11 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router";
-import { Building2, Landmark, MapPin, Pencil, Plus, Power, Users, Warehouse } from "lucide-react";
+import { Building2, Landmark, MapPin, Pencil, Plus, Power, Trash2, Users, Warehouse } from "lucide-react";
 import { useT, type T } from "@/i18n";
-import { Alert, Badge, Button, Card, Checkbox, EmptyState, ErrorState, Field, Input, Modal, PageHeader, Select, Spinner, StatusBadge } from "@/components/ui";
+import { Alert, Badge, Button, Card, Checkbox, EmptyState, ErrorState, Field, Input, Modal, PageHeader, RemoveDialog, Select, Spinner, StatusBadge } from "@/components/ui";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { formatInt } from "@/lib/format";
-import { ADMIN_KEY, LOCATION_KINDS, saveMasterRow, usePlantStats, type LocationKind, type PlantStat } from "./api";
+import { ADMIN_KEY, LOCATION_KINDS, removeMasterRow, restoreMasterRow, saveMasterRow, usePlantStats, useRemovedMaster, type LocationKind, type PlantStat } from "./api";
+import { RemovedList } from "./RemovedList";
 
 const KIND_ICON: Record<LocationKind, typeof Building2> = { SITE: Building2, HQ: Landmark, WAREHOUSE: Warehouse };
 const KIND_TONE = { SITE: "navy", HQ: "amber", WAREHOUSE: "green" } as const;
@@ -21,6 +22,16 @@ export function SitesPage() {
     success: t("admin.sites.updated"),
     invalidate: INVALIDATE,
   });
+
+  // SRS §6.3: a location is removed (hidden everywhere, kept for history), never deleted; restorable below
+  const [removing, setRemoving] = useState<PlantStat | null>(null);
+  const removed = useRemovedMaster("plants");
+  const remove = useMutate((v: { id: string; reason: string }) => removeMasterRow({ entity: "plants", ...v }), {
+    success: t("records.removedDone"),
+    invalidate: INVALIDATE,
+    onSuccess: () => setRemoving(null),
+  });
+  const restore = useMutate((id: string) => restoreMasterRow({ entity: "plants", id }), { success: t("records.restored"), invalidate: INVALIDATE });
 
   const [kind, setKind] = useState<LocationKind | "">("");
   const all = query.data ?? [];
@@ -90,6 +101,9 @@ export function SitesPage() {
                 >
                   {s.isActive ? t("admin.sites.inactive") : t("admin.sites.active")}
                 </Button>
+                <Button variant="ghost" size="icon" aria-label={`${t("records.remove")} ${s.code}`} title={t("records.remove")} onClick={() => setRemoving(s)} className="text-slate-500 hover:bg-red-50 hover:text-red-600">
+                  <Trash2 className="size-3.5" />
+                </Button>
                 {s.workerCount > 0 ? (
                   <Link to={`/payroll/workers?plantId=${s.plantId}`} className="ml-auto text-xs font-semibold text-navy-700 hover:underline">{t("admin.sites.workers", { count: s.workerCount })}</Link>
                 ) : null}
@@ -100,6 +114,17 @@ export function SitesPage() {
         </div>
       )}
 
+      <RemovedList items={removed.data} onRestore={(r) => restore.mutate(r.id)} restoringId={restore.isPending ? restore.variables : undefined} className="mt-6" />
+      <RemoveDialog
+        open={!!removing}
+        onClose={() => setRemoving(null)}
+        onConfirm={(reason) => removing && remove.mutate({ id: removing.plantId, reason })}
+        title={t("records.removeTitle", { name: removing ? `${removing.code} — ${removing.name}` : "" })}
+        message={t("records.removeSiteMsg")}
+        loading={remove.isPending}
+        error={remove.error}
+        onlineOnly
+      />
       <SiteModal open={editing !== null} site={editing === "new" ? null : editing} onClose={() => setEditing(null)} />
     </>
   );

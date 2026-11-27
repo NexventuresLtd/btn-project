@@ -30,6 +30,7 @@ func plantStats(c *fiber.Ctx, d *deps.Deps) error {
 		FROM "Plant" p
 		LEFT JOIN (SELECT "plantId", count(*) AS n FROM "Worker" WHERE "isActive" GROUP BY "plantId") w ON w."plantId" = p.id
 		LEFT JOIN (SELECT "plantId", count(*) AS n FROM "User" WHERE "isActive" AND "plantId" IS NOT NULL GROUP BY "plantId") u ON u."plantId" = p.id
+		WHERE p.removed_at IS NULL
 		ORDER BY p.code ASC`)
 	if err != nil {
 		return err

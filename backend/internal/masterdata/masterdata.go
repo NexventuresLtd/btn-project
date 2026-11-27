@@ -300,6 +300,7 @@ func Register(r fiber.Router, d *deps.Deps) {
 		md.Get("/"+e.path, func(c *fiber.Ctx) error { return list(c, d, e) })
 		md.Post("/"+e.path, auth.RequirePermission(e.perm), func(c *fiber.Ctx) error { return create(c, d, e) })
 		md.Patch("/"+e.path+"/:id", auth.RequirePermission(e.perm), func(c *fiber.Ctx) error { return patch(c, d, e) })
+		registerRemoval(md, d, e) // GET …/removed, DELETE …/:id, POST …/:id/restore (removal.go)
 	}
 	r.Get("/lookups", func(c *fiber.Ctx) error { return lookups(c, d) })
 }
@@ -313,7 +314,7 @@ func fetch(ctx context.Context, q db.DBTX, e *entity, where string, args ...any)
 }
 
 func list(c *fiber.Ctx, d *deps.Deps, e *entity) error {
-	items, err := fetch(httpx.Ctx(c), d.Pool, e, "")
+	items, err := fetch(httpx.Ctx(c), d.Pool, e, ` WHERE removed_at IS NULL`)
 	if err != nil {
 		return err
 	}
@@ -362,6 +363,9 @@ func create(c *fiber.Ctx, d *deps.Deps, e *entity) error {
 			return err
 		}
 	}
+	if err := removedTwin(ctx, d.Pool, e, cols); err != nil {
+		return err
+	}
 	row, err := db.TxVal(ctx, d.Pool, func(tx pgx.Tx) (any, error) {
 		names, ph, args := make([]string, len(cols)), make([]string, len(cols)), make([]any, len(cols))
 		for i, cv := range cols {
@@ -401,6 +405,11 @@ func patch(c *fiber.Ctx, d *deps.Deps, e *entity) error {
 		}
 	}
 	row, err := db.TxVal(ctx, d.Pool, func(tx pgx.Tx) (any, error) {
+		if removed, err := removedAt(ctx, tx, e, id); err != nil {
+			return nil, err
+		} else if removed {
+			return nil, httpx.Conflict("masterdata.edit_removed") // restore it first
+		}
 		before, err := one(ctx, tx, e, id)
 		if err != nil {
 			return nil, err

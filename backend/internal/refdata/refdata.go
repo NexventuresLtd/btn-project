@@ -135,7 +135,7 @@ func scan(rows pgx.Rows, lang i18n.Lang) ([]Item, error) {
 
 // List returns the items of kind (active only unless includeInactive), in display order.
 func List(ctx context.Context, q db.DBTX, kind string, includeInactive bool, lang i18n.Lang) ([]Item, error) {
-	sql := `SELECT ` + selectCols + ` FROM refdata_item WHERE kind=$1`
+	sql := `SELECT ` + selectCols + ` FROM refdata_item WHERE kind=$1 AND removed_at IS NULL`
 	if !includeInactive {
 		sql += ` AND is_active`
 	}
@@ -219,6 +219,7 @@ func Register(r fiber.Router, d *deps.Deps) {
 	g.Post("/:kind", auth.RequirePermission("masterdata.manage"), h.create)
 	g.Put("/:kind/order", auth.RequirePermission("masterdata.manage"), h.reorder)
 	g.Patch("/:kind/:id", auth.RequirePermission("masterdata.manage"), h.update)
+	registerRemoval(g, h) // GET /:kind/removed, DELETE /:kind/:id, POST /:kind/:id/restore (removal.go)
 	registerApprovals(r, d)
 }
 
@@ -344,6 +345,11 @@ func (h *handler) create(c *fiber.Ctx) error {
 	if !hasMeta {
 		meta = []byte("{}")
 	}
+	if hit, err := removedCode(ctx, h.d.Pool, kind, code); err != nil {
+		return err
+	} else if hit {
+		return httpx.NewKey(409, "conflict", "masterdata.removed_twin")
+	}
 	lang := httpx.Lang(c)
 	item, err := db.TxVal(ctx, h.d.Pool, func(tx pgx.Tx) (Item, error) {
 		sortOrder := sortN.I()
@@ -408,6 +414,11 @@ func (h *handler) update(c *fiber.Ctx) error {
 	}
 	lang := httpx.Lang(c)
 	item, err := db.TxVal(ctx, h.d.Pool, func(tx pgx.Tx) (Item, error) {
+		if removed, err := isRemoved(ctx, tx, kind, id); err != nil {
+			return Item{}, err
+		} else if removed {
+			return Item{}, httpx.Conflict("masterdata.edit_removed") // restore it first
+		}
 		before, err := one(ctx, tx, kind, id, lang)
 		if err != nil {
 			return Item{}, err

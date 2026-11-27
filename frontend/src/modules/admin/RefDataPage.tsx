@@ -12,9 +12,10 @@ import { formatRWF } from "@/lib/format";
 import { formatDateTime } from "@/lib/dates";
 import { cn } from "@/lib/cn";
 import {
-  APPROVAL_DOMAINS, REF_KINDS, REFDATA_KEY, createRef, createThreshold, deleteThreshold, fetchLevels, reorderRef, updateRef, updateThreshold,
-  useRefData, useThresholds, type ApprovalDomain, type ApprovalLevel, type RefKind, type Threshold,
+  APPROVAL_DOMAINS, REF_KINDS, REFDATA_KEY, createRef, createThreshold, deleteThreshold, fetchLevels, removeRef, reorderRef, restoreRef, updateRef, updateThreshold,
+  useRefData, useRemovedRef, useThresholds, type ApprovalDomain, type ApprovalLevel, type RefKind, type Threshold,
 } from "./refdataApi";
+import { RemovedList } from "./RemovedList";
 
 type Tab = RefKind | "thresholds";
 const LANGS_ORDER: Lang[] = ["en", "am", "rw", "fr"];
@@ -80,6 +81,11 @@ function KindPanel({ kind }: { kind: RefKind }) {
 
   const toggle = useMutate((r: RefItem) => updateRef({ kind, id: r.id, body: { isActive: !r.isActive } }), { success: t("refdata.saved"), invalidate: INVALIDATE });
   const reorder = useMutate(reorderRef, { success: t("refdata.reordered"), invalidate: INVALIDATE });
+  // SRS §6.3: removed, never deleted: leaves every dropdown, records that use the code keep its name; restorable
+  const removed = useRemovedRef(kind);
+  const [removing, setRemoving] = useState<RefItem | null>(null);
+  const remove = useMutate((v: { id: string; reason: string }) => removeRef({ kind, ...v }), { success: t("records.removedDone"), invalidate: INVALIDATE, onSuccess: () => setRemoving(null) });
+  const restore = useMutate((id: string) => restoreRef({ kind, id }), { success: t("records.restored"), invalidate: INVALIDATE });
 
   function move(item: RefItem, dir: -1 | 1) {
     const ids = all.map((r) => r.id);
@@ -130,6 +136,7 @@ function KindPanel({ kind }: { kind: RefKind }) {
           <Button size="sm" variant="ghost" icon={<Power className="size-3.5" />} loading={toggle.isPending && toggle.variables?.id === r.id} onClick={() => toggle.mutate(r)} className={r.isActive ? "text-red-600 hover:bg-red-50" : "text-emerald-700 hover:bg-emerald-50"}>
             {r.isActive ? t("refdata.deactivate") : t("refdata.activate")}
           </Button>
+          <Button size="sm" variant="ghost" aria-label={`${t("records.remove")} ${r.name}`} title={t("records.remove")} onClick={() => setRemoving(r)} className="px-1.5 text-slate-500 hover:bg-red-50 hover:text-red-600"><Trash2 className="size-3.5" /></Button>
         </div>
       ),
     },
@@ -157,6 +164,17 @@ function KindPanel({ kind }: { kind: RefKind }) {
           empty={<EmptyState icon={<ListTree />} title={t("refdata.empty")} description={t("refdata.emptyText")} action={<Button onClick={() => setEditing("new")}>{t("refdata.new")}</Button>} />}
         />
       )}
+      <RemovedList items={removed.data} onRestore={(r) => restore.mutate(r.id)} restoringId={restore.isPending ? restore.variables : undefined} className="border-t border-line px-5 py-3" />
+      <RemoveDialog
+        open={!!removing}
+        onClose={() => setRemoving(null)}
+        onConfirm={(reason) => removing && remove.mutate({ id: removing.id, reason })}
+        title={t("records.removeTitle", { name: removing ? `${removing.code} — ${removing.name}` : "" })}
+        message={t("records.removeMasterMsg")}
+        loading={remove.isPending}
+        error={remove.error}
+        onlineOnly
+      />
       <ItemModal kind={kind} item={editing === "new" ? null : editing} open={editing !== null} onClose={() => setEditing(null)} />
     </Card>
   );

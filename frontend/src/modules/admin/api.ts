@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { get, patch, post, put, qs } from "@/lib/api";
+import { api, get, patch, post, put, qs } from "@/lib/api";
 
 export const ADMIN_KEY = ["admin"] as const;
 
@@ -120,6 +120,28 @@ export function useMasterData<T extends MasterRow>(entity: MasterEntity) {
 
 export const saveMasterRow = ({ entity, id, body }: { entity: MasterEntity; id?: string; body: Record<string, unknown> }) =>
   id ? patch<MasterRow>(`/masterdata/${entity}/${id}`, body) : post<MasterRow>(`/masterdata/${entity}`, body);
+
+/** A removed row (SRS §6.3: kept, hidden, restorable). */
+export interface RemovedRow {
+  id: string;
+  code: string | null;
+  name: string;
+  removedAt: string;
+  reason: string | null;
+  removedBy: string;
+}
+
+export function useRemovedMaster(entity: MasterEntity) {
+  return useQuery({
+    queryKey: [...ADMIN_KEY, "masterdata", entity, "removed"],
+    queryFn: ({ signal }) => get<{ items: RemovedRow[] }>(`/masterdata/${entity}/removed`, signal).then((r) => r.items),
+  });
+}
+
+/** Remove (never delete) with a reason; it leaves every list and dropdown. */
+export const removeMasterRow = ({ entity, id, reason }: { entity: MasterEntity; id: string; reason: string }) =>
+  api<{ ok: boolean }>(`/masterdata/${entity}/${id}`, { method: "DELETE", body: { reason } });
+export const restoreMasterRow = ({ entity, id }: { entity: MasterEntity; id: string }) => post<MasterRow>(`/masterdata/${entity}/${id}/restore`);
 
 // ───────────────────────────── Sites (plants + quick stats) ─────────────────────────────
 

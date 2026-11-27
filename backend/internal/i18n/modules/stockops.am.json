@@ -82,5 +82,9 @@
   "stock.export.number": "ቁጥር",
   "stock.export.source": "ምንጭ",
   "stock.export.status": "ሁኔታ",
-  "stock.export.value": "ዋጋ (RWF)"
+  "stock.export.value": "ዋጋ (RWF)",
+  "masterdata.plant_in_use": "ይህ ቦታ አሁንም {users} ንቁ ተጠቃሚዎች እና {workers} ንቁ ሠራተኞች አሉት። መጀመሪያ ወደ ሌላ ቦታ ያዛውሯቸው ወይም ያቦዝኗቸው።",
+  "masterdata.removed_twin": "የተወገደ መዝገብ ይህን ኮድ አስቀድሞ ይጠቀማል። አዲስ ከመፍጠር ይልቅ ከተወገዱት ዝርዝር ይመልሱት።",
+  "masterdata.edit_removed": "ይህ መዝገብ ተወግዷል። ከማስተካከልዎ በፊት ይመልሱት።",
+  "masterdata.not_removed": "ይህ መዝገብ አልተወገደም"
 }
