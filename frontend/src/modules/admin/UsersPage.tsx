@@ -295,6 +295,11 @@ function UserModal({ open, user, isSelf, onClose, onCreated }: {
             {lookups?.plants.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
           </Select>
         </Field>
+        {form.role ? (
+          <div className="sm:col-span-2" aria-live="polite">
+            <Alert tone="blue" title={tx(`enums.role.${form.role}`, undefined, form.role)}>{tx(`enums.roleDesc.${form.role}`, undefined, "")}</Alert>
+          </div>
+        ) : null}
         {user ? (
           <div className="sm:col-span-2">
             <Checkbox label={t("admin.users.field.active")} checked={form.isActive} disabled={isSelf} onChange={(e) => set("isActive", e.target.checked)} />
