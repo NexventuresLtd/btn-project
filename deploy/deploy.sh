@@ -133,8 +133,25 @@ if ((DO_FRONTEND)); then
     apt_install nodejs; NODE="$(command -v node)"
   fi
   PATH="$(dirname "$NODE"):$PATH"; export PATH
-  PNPM="$(find_tool pnpm "$(dirname "$NODE")")" || { corepack enable pnpm >/dev/null 2>&1 && PNPM="$(command -v pnpm)"; } || PNPM=""
-  ok "node: $NODE ($("$NODE" -v))  pnpm: ${PNPM:-npx pnpm}"
+  NODE_BIN="$(dirname "$NODE")"
+  # pnpm: already installed → corepack (ships with Node) → npm i -g → apt's npm (Debian's nodejs has no npm/npx)
+  PNPM="$(find_tool pnpm "$NODE_BIN")" || PNPM=""
+  if [[ -z "$PNPM" ]] && COREPACK="$(find_tool corepack "$NODE_BIN")"; then
+    "$COREPACK" enable pnpm >/dev/null 2>&1 && "$COREPACK" prepare pnpm@10 --activate >/dev/null 2>&1 || true
+    PNPM="$(find_tool pnpm "$NODE_BIN")" || PNPM=""
+  fi
+  if [[ -z "$PNPM" ]]; then
+    NPM="$(find_tool npm "$NODE_BIN")" || NPM=""
+    if [[ -z "$NPM" ]] && ((INSTALL_PKGS)); then apt_install npm; NPM="$(find_tool npm "$NODE_BIN")" || NPM=""; fi
+    if [[ -n "$NPM" ]]; then
+      log "Installing pnpm 10 (npm install -g pnpm@10)"
+      "$NPM" install -g --silent pnpm@10 >/dev/null 2>&1 || true
+      PNPM="$(find_tool pnpm "$NODE_BIN" "$("$NPM" prefix -g 2>/dev/null)/bin")" || PNPM=""
+    fi
+  fi
+  [[ -n "$PNPM" ]] || die "pnpm is required to build the web app and could not be installed.
+   Install it (npm install -g pnpm@10, or: apt-get install npm && npm install -g pnpm@10) or rerun with --install-packages"
+  ok "node: $NODE ($("$NODE" -v))  pnpm: $PNPM ($("$PNPM" --version 2>/dev/null))"
 fi
 
 # ── 2. service user + directories ───────────────────────────────────────────
@@ -314,8 +331,7 @@ if ((DO_FRONTEND)); then
     ok "web app unchanged since the last deploy — build skipped (--force-build to rebuild)"
   else
     log "Building the web app"
-    pn() { if [[ -n "$PNPM" ]]; then "$PNPM" "$@"; else npx --yes pnpm@10 "$@"; fi; }
-    ( cd "$FRONTEND" && CI=true pn install --frozen-lockfile --reporter=silent && CI=true pn run build )
+    ( cd "$FRONTEND" && CI=true "$PNPM" install --frozen-lockfile --reporter=silent && CI=true "$PNPM" run build )
     echo "$BUILD_SHA" > "$STATE_DIR/frontend.sha"
     ok "web app built → $FRONTEND/dist"
   fi
