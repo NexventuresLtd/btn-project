@@ -77,18 +77,21 @@ docker compose run --rm api-tools /app/seed            # first install only
 Put the TLS reverse proxy from `deploy/nginx.conf` in front of `127.0.0.1:8080`.
 
 **VM / bare metal, scripted (recommended):** web on `https://operations.btnlimited.com`, API on
-`https://operation-api.btnlimited.com`. Point both DNS A records at the server, create `backend/.env.production` from
-`backend/.env.example` (real `DATABASE_URL` with host `127.0.0.1`, `SMTP_*`, `SUPER_ADMIN_*`), then from the checkout:
+`https://operation-api.btnlimited.com`. The production settings live in `backend/.env.p` — gitignored, never committed
+(see `backend/.env.example` for every key). Point both DNS A records at the server, then:
 
 ```bash
-sudo CERTBOT_EMAIL=you@yourdomain bash deploy/deploy.sh   # builds Go + web app, DB role/database, migrate, seed,
-                                                          # systemd btn-ops-api, nginx sites, Let's Encrypt
-btnops status | btnops logs | btnops update | btnops help # afterwards
+git clone https://github.com/nexventures-ltd/btn-project.git && cd btn-project   # on the server
+scp backend/.env.p <server>:~/btn-project/backend/.env.p                          # from your computer, once
+sudo bash deploy/deploy.sh --install-packages   # tools, DB, Go API, web app, nginx, Let's Encrypt, nightly backups
+btnops status | btnops logs | btnops update | btnops help                         # afterwards
 ```
 
-The script sets the domain-derived values in `backend/.env` itself (`APP_URL`, `FRONTEND_ORIGIN`, `WEBAUTHN_*`, `PORT`,
-`TRUSTED_PROXIES`, `APP_ENV=production`) and generates `OTP_PEPPER` if it is missing. `sudo bash deploy/deploy.sh --help`
-lists the options.
+`deploy.sh` re-applies `backend/.env.p` whenever it changes, forces the domain-derived values (`APP_URL`,
+`FRONTEND_ORIGIN`, `WEBAUTHN_*`, `PORT`, `TRUSTED_PROXIES`, `APP_ENV=production`), generates `OTP_PEPPER` when missing and
+uses `OPS_ALERT_EMAIL` as the Let's Encrypt contact. The frontend needs no env file: it calls `/api` on its own origin.
+Env files and secrets are blocked by `.gitignore`, the `.githooks/pre-commit` hook (`git config core.hooksPath .githooks`)
+and CI. `sudo bash deploy/deploy.sh --help` lists the options.
 
 **VM / bare metal, by hand:** build static binaries (`make build`, or the command in `deploy/btn-ops-api.service`),
 copy them to `/opt/btn-ops/backend/bin/`, put `.env` next to them, install the systemd unit (it runs

@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-# superseded — this project is managed with deploy/lsc (see deploy/deploy.sh)
-exec "$(dirname "$0")/lsc" "$@"

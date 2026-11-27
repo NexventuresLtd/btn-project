@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Refuses commits that contain env files or secrets (only *.example templates may be committed).
+# Enabled per clone with:  git config core.hooksPath .githooks
+set -euo pipefail
+bad="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '(^|/)(\.env(\..*)?|[^/]*\.env(\..*)?|[^/]*\.(pass|pem|key))$' | grep -vE '\.example$' || true)"
+if [[ -n "$bad" ]]; then
+  printf '✖ refusing to commit env/secret files:\n%s\n  unstage them: git restore --staged <file>\n' "$bad" >&2
+  exit 1
+fi

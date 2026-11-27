@@ -5,10 +5,16 @@ coverage/
 *.tsbuildinfo
 .vite/
 
-# environment & secrets (templates are committed)
+# environment & secrets — NEVER committed (templates *.example are; checked by .githooks/pre-commit and CI)
 .env
 .env.*
+*.env
+*.env.*
 !.env.example
+!*.env.example
+*.pass
+*.pem
+*.key
 
 # business data — contains personal data (national IDs, phone numbers)
 /data/samples/

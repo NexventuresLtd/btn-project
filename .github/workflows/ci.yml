@@ -148,6 +148,10 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: no env files or secrets in the repository
+        run: |
+          bad="$(git ls-files | grep -E '(^|/)(\.env(\..*)?|[^/]*\.env(\..*)?|[^/]*\.(pass|pem|key))$' | grep -vE '\.example$' || true)"
+          if [ -n "$bad" ]; then echo "::error::env/secret files are tracked:"; echo "$bad"; exit 1; fi
       - name: bash -n + shellcheck
         run: |
           for f in deploy/*.sh frontend/e2e/*.sh; do bash -n "$f"; done

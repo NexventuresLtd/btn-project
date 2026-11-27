@@ -11,8 +11,8 @@
 #  • Code: synced to APP_DIR (default /opt/btn-ops, the path the backup units expect)
 #
 #  Usage (on the server, from a checkout of this repository, as a sudoer):
-#     sudo CERTBOT_EMAIL=you@yourdomain bash deploy/deploy.sh   # first run: full install (email for Let's Encrypt)
-#     sudo bash deploy/deploy.sh                    # update (idempotent; the certbot email is remembered)
+#     sudo bash deploy/deploy.sh --install-packages # first run: everything (tools, DB, API, web, nginx, TLS, backups)
+#     sudo bash deploy/deploy.sh                    # update (idempotent)
 #     sudo bash deploy/deploy.sh --backend-only     # Go API only (skip the frontend build)
 #     sudo bash deploy/deploy.sh --frontend-only    # rebuild + publish the web app only
 #     sudo bash deploy/deploy.sh --no-certbot       # don't request TLS certificates
@@ -23,12 +23,15 @@
 #                                                   # one in DATABASE_URL (off by default)
 #  Overrides:  WEB_DOMAIN=… API_DOMAIN=… APP_DIR=… RUN_USER=… CERTBOT_EMAIL=…
 #
-#  First install: create backend/.env.production (or backend/.env) from backend/.env.example with real
-#  DATABASE_URL (host 127.0.0.1), SMTP_* and SUPER_ADMIN_* values. Domains, APP_ENV, PORT, TRUSTED_PROXIES,
-#  WEBAUTHN_* and OTP_PEPPER are filled in by this script. DNS A records for both domains must point here.
+#  Production env: backend/.env.p (gitignored — copy it onto the server once: scp backend/.env.p server:…/backend/).
+#  It is applied to $APP_DIR/backend/.env on the first run and again whenever .env.p changes. Domains, APP_ENV,
+#  PORT, TRUSTED_PROXIES and WEBAUTHN_* are forced by this script; OTP_PEPPER is generated when missing.
+#  The Let's Encrypt e-mail is CERTBOT_EMAIL, else OPS_ALERT_EMAIL / SUPER_ADMIN_EMAIL from the env file.
+#  DNS A records for both domains must point here.
 #
-#  Scope: only btn-ops-api.service, the two nginx sites, /etc/nginx/conf.d/btn-ops.conf, the database
-#  role/database from DATABASE_URL and /usr/local/bin/btnops are touched. nginx is reloaded, never restarted.
+#  Scope: only btn-ops-api.service, btn-ops-backup.{service,timer}, the two nginx sites,
+#  /etc/nginx/conf.d/btn-ops.conf, /etc/btn-ops/, the database from DATABASE_URL and /usr/local/bin/btnops
+#  are touched. nginx is reloaded, never restarted.
 #  Afterwards:  btnops status | logs | restart | update | help
 # ─────────────────────────────────────────────────────────────────────────────
 set -Eeuo pipefail
@@ -57,7 +60,7 @@ for a in "$@"; do case "$a" in
   --backend-only) DO_FRONTEND=0;; --frontend-only) DO_BACKEND=0;; --no-certbot) DO_CERTBOT=0;;
   --install-packages) INSTALL_PKGS=1;; --set-db-password) SET_DB_PASSWORD=1;; --seed) DO_SEED=1;;
   --force-build) FORCE_BUILD=1;; --verbose|-v) set -x;;
-  -h|--help) sed -n 2,32p "$0"; exit 0;; *) echo "unknown option $a (see --help)"; exit 1;; esac; done
+  -h|--help) sed -n 2,35p "$0"; exit 0;; *) echo "unknown option $a (see --help)"; exit 1;; esac; done
 
 WARNINGS=()
 log()  { printf '\e[1;34m▶ %s\e[0m\n' "$*"; }
@@ -152,16 +155,28 @@ fi
 APP_VERSION="$(git -c safe.directory="$SRC_DIR" -C "$SRC_DIR" describe --always --dirty 2>/dev/null || true)"
 
 # ── 4. environment file (backend/.env) ──────────────────────────────────────
-if [[ ! -f "$ENV_FILE" ]]; then
-  for f in "$SRC_DIR/backend/.env.production" "$SRC_DIR/backend/.env"; do
-    [[ -f "$f" ]] && { cp "$f" "$ENV_FILE"; ok "created $ENV_FILE from $f"; break; }
-  done
-fi
-[[ -f "$ENV_FILE" ]] || die "no backend/.env yet. Create it once, then rerun:
-       cp backend/.env.example backend/.env.production && nano backend/.env.production
-   Fill in DATABASE_URL (host 127.0.0.1), SMTP_*, MAIL_FROM, SUPER_ADMIN_*, OPS_ALERT_EMAIL.
-   (deploy.sh sets the domains, APP_ENV, PORT, TRUSTED_PROXIES, WEBAUTHN_* and OTP_PEPPER itself.)"
 envget() { { grep -E "^$1=" "$ENV_FILE" || true; } | tail -1 | cut -d= -f2- | sed -E 's/^"(.*)"$/\1/; s/^'"'"'(.*)'"'"'$/\1/'; }
+# production env source: backend/.env.p (gitignored), else .env.production; applied when new or changed
+PROD_ENV=""; for f in "$SRC_DIR/backend/.env.p" "$SRC_DIR/backend/.env.production"; do [[ -f "$f" ]] && { PROD_ENV="$f"; break; }; done
+if [[ -n "$PROD_ENV" ]]; then
+  PROD_SHA="$(sha1sum "$PROD_ENV" | cut -d' ' -f1)"
+  if [[ ! -f "$ENV_FILE" || "$(cat "$STATE_DIR/env.sha" 2>/dev/null)" != "$PROD_SHA" ]]; then
+    OLD_PEPPER=""
+    if [[ -f "$ENV_FILE" ]]; then OLD_PEPPER="$(envget OTP_PEPPER)"; cp -p "$ENV_FILE" "$ENV_FILE.bak.$(date +%Y%m%d-%H%M%S)"; fi
+    cp "$PROD_ENV" "$ENV_FILE"
+    # keep a pepper generated earlier when .env.p has none (changing it would invalidate pending codes)
+    if [[ -n "$OLD_PEPPER" ]] && [[ -z "$(envget OTP_PEPPER)" || "$(envget OTP_PEPPER)" == *CHANGE_ME* ]]; then
+      sed -i '/^OTP_PEPPER=/d' "$ENV_FILE"; printf 'OTP_PEPPER="%s"\n' "$OLD_PEPPER" >> "$ENV_FILE"
+    fi
+    echo "$PROD_SHA" > "$STATE_DIR/env.sha"
+    ok "applied $(basename "$PROD_ENV") → $ENV_FILE"
+  fi
+elif [[ ! -f "$ENV_FILE" && -f "$SRC_DIR/backend/.env" ]]; then
+  cp "$SRC_DIR/backend/.env" "$ENV_FILE"; warn "no backend/.env.p — started from the development backend/.env"
+fi
+[[ -f "$ENV_FILE" ]] || die "no production env file. Copy backend/.env.p from your computer into $SRC_DIR/backend/ and rerun:
+       scp backend/.env.p <server>:$SRC_DIR/backend/.env.p
+   (or create it from backend/.env.example: DATABASE_URL with host 127.0.0.1, SMTP_*, SUPER_ADMIN_*)"
 envset() {  # envset KEY VALUE — writes KEY="VALUE" (replacing an existing line)
   local v="${2//\\/\\\\}"; v="${v//&/\\&}"; v="${v//|/\\|}"
   if grep -qE "^$1=" "$ENV_FILE"; then sed -i "s|^$1=.*|$1=\"$v\"|" "$ENV_FILE"; else printf '%s="%s"\n' "$1" "$2" >> "$ENV_FILE"; fi
@@ -192,10 +207,19 @@ envset DATA_DIR "$DATA_DIR"
 PEPPER="$(envget OTP_PEPPER)"
 if placeholder "$PEPPER" || (( ${#PEPPER} < 32 )); then envset OTP_PEPPER "$(openssl rand -hex 32)"; ok "generated OTP_PEPPER"; fi
 chown root:"$RUN_USER" "$ENV_FILE"; chmod 640 "$ENV_FILE"
+# Let's Encrypt contact: CERTBOT_EMAIL, else the alert / administrator address from the env file
+for k in OPS_ALERT_EMAIL SUPER_ADMIN_EMAIL SMTP_USER; do
+  [[ -n "$CERTBOT_EMAIL" ]] && break
+  v="$(envget "$k")"
+  if [[ "$v" == *@* ]] && ! placeholder "$v"; then CERTBOT_EMAIL="$v"; fi
+done
 
 # checks that would otherwise only fail at runtime
 DATABASE_URL="$(envget DATABASE_URL)"
 [[ -n "$DATABASE_URL" ]] || die "DATABASE_URL is empty in $ENV_FILE"
+if [[ "$DATABASE_URL" =~ ^postgres(ql)?\+[a-z0-9]+:// ]]; then  # SQLAlchemy style (postgresql+psycopg://) → plain URL for Go
+  DATABASE_URL="postgresql://${DATABASE_URL#*://}"; envset DATABASE_URL "$DATABASE_URL"; ok "DATABASE_URL: dropped the SQLAlchemy driver suffix"
+fi
 [[ "$DATABASE_URL" != *CHANGE_ME* ]] || die "DATABASE_URL in $ENV_FILE still contains CHANGE_ME — put the real database password there"
 urldecode() { local s="${1//+/ }"; printf '%b' "${s//%/\\x}"; }
 if [[ "$DATABASE_URL" =~ ^postgres(ql)?://([^:@/]+)(:([^@]*))?@([^:/?]+)(:([0-9]+))?/([^?]+) ]]; then
@@ -234,6 +258,11 @@ fi
 if ((LOCAL_DB)) && [[ -z "$(pg_super -tA <<<"SELECT 1 FROM pg_database WHERE datname = :'db'")" ]]; then
   pg_super <<<"SELECT format('CREATE DATABASE %I OWNER %I TEMPLATE template0 ENCODING %L', :'db', :'u', 'UTF8') \gexec"
   ok "created database '$DB_NAME' (owner $DB_USER)"; DO_SEED=1
+elif ! pg_try "$DB_NAME" && pg_try postgres; then  # no local admin access: create it with the DATABASE_URL role (needs CREATEDB)
+  if PGPASSWORD="$DB_PASS" psql -X -w -q -v ON_ERROR_STOP=1 -v db="$DB_NAME" -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d postgres \
+       <<<"SELECT format('CREATE DATABASE %I TEMPLATE template0 ENCODING %L', :'db', 'UTF8') \gexec"; then
+    ok "created database '$DB_NAME' as $DB_USER"; DO_SEED=1
+  else die "could not create database '$DB_NAME' as $DB_USER (needs CREATEDB)"; fi
 fi
 pg_try "$DB_NAME" || die "cannot connect to database '$DB_NAME' as $DB_USER@$DB_HOST:$DB_PORT (does it exist? does pg_hba.conf allow scram/md5 from $DB_HOST?)"
 ok "PostgreSQL connection OK"
@@ -300,7 +329,7 @@ log "Writing nginx configuration (our two sites only)"
 {
   echo "# managed by $APP_DIR/deploy/deploy.sh — BTN Operations"
   # shellcheck disable=SC2016  # $binary_remote_addr is an nginx variable
-  grep -rqs --exclude=btn-ops.conf 'zone=btn_auth:' /etc/nginx/ || echo 'limit_req_zone $binary_remote_addr zone=btn_auth:10m rate=10r/m;'
+  grep -rqs --exclude=btn-ops.conf 'zone=btn_auth:' /etc/nginx/ || echo 'limit_req_zone $binary_remote_addr zone=btn_auth:10m rate=300r/m;'
   echo "upstream btn_ops_api { server 127.0.0.1:$API_PORT; keepalive 16; }"
 } > /etc/nginx/conf.d/btn-ops.conf
 NGINX_VER="$(nginx -v 2>&1 | sed -nE 's#.*nginx/([0-9]+)\.([0-9]+)\.([0-9]+).*#\1 \2 \3#p')"
@@ -340,7 +369,7 @@ if ((DO_CERTBOT)) && command -v certbot >/dev/null; then
   for d in "$WEB_DOMAIN" "$API_DOMAIN"; do
     if [[ -f "/etc/letsencrypt/live/$d/fullchain.pem" ]]; then ok "certificate present for $d"; continue; fi
     if [[ -z "$CERTBOT_EMAIL" ]]; then
-      warn "no certificate for $d: CERTBOT_EMAIL is not set — rerun as: sudo CERTBOT_EMAIL=you@yourdomain bash deploy/deploy.sh"
+      warn "no certificate for $d: no e-mail for Let's Encrypt (set OPS_ALERT_EMAIL in backend/.env.p, or CERTBOT_EMAIL=…)"
       TLS_MISSING+=("$d"); continue
     fi
     if ! getent ahosts "$d" >/dev/null 2>&1; then
@@ -355,6 +384,37 @@ if ((DO_CERTBOT)) && command -v certbot >/dev/null; then
   ((${#TLS_MISSING[@]})) || ok "TLS in place (renewed automatically by certbot.timer)"
 elif ((DO_CERTBOT)); then
   warn "certbot is not installed — no TLS yet (apt-get install certbot, then: btnops cert)"
+fi
+
+# ── 9b. nightly encrypted database backup (btn-ops-backup.timer, 01:30 Africa/Kigali) ──
+if ((DO_BACKEND)); then
+  if ! command -v gpg >/dev/null && ((INSTALL_PKGS)); then apt_install gnupg; fi
+  if ! command -v gpg >/dev/null; then
+    warn "gpg is not installed — nightly backups NOT enabled (apt-get install gnupg, then rerun deploy)"
+  else
+    log "Enabling nightly encrypted backups"
+    install -d -m 750 -o "$RUN_USER" -g "$RUN_USER" /var/backups/btn-ops
+    chmod 755 "$APP_DIR"/deploy/*.sh
+    if [[ ! -s "$CONF_DIR/backup.pass" ]]; then
+      head -c 48 /dev/urandom | base64 > "$CONF_DIR/backup.pass"
+      warn "new backup passphrase in $CONF_DIR/backup.pass — keep a copy OFF this server (sudo cat $CONF_DIR/backup.pass); without it no backup can be restored"
+    fi
+    chown "$RUN_USER:$RUN_USER" "$CONF_DIR/backup.pass"; chmod 400 "$CONF_DIR/backup.pass"
+    if [[ ! -f "$CONF_DIR/backup.env" ]]; then
+      printf '%s\n' "# written by deploy/deploy.sh — see deploy/backup.env.example for every option (off-site copy, retention…)" \
+        "DATABASE_URL='$DATABASE_URL'" "BACKUP_DIR=/var/backups/btn-ops" "BACKUP_KEEP_DAILY=14" "BACKUP_KEEP_WEEKLY=8" \
+        "BACKUP_KEEP_MONTHLY=12" "BACKUP_PASSPHRASE_FILE=$CONF_DIR/backup.pass" > "$CONF_DIR/backup.env"
+    else  # keep the database in step with the app
+      v="${DATABASE_URL//&/\\&}"; sed -i "s|^DATABASE_URL=.*|DATABASE_URL='${v//|/\\|}'|" "$CONF_DIR/backup.env"
+    fi
+    chown root:"$RUN_USER" "$CONF_DIR/backup.env"; chmod 640 "$CONF_DIR/backup.env"
+    for u in btn-ops-backup.service btn-ops-backup.timer; do
+      sed -e "s|/opt/btn-ops|$APP_DIR|g" -e "s|^User=.*|User=$RUN_USER|" -e "s|^Group=.*|Group=$RUN_USER|" "$APP_DIR/deploy/$u" > "/etc/systemd/system/$u"
+    done
+    systemctl daemon-reload
+    systemctl enable --now btn-ops-backup.timer >/dev/null 2>&1
+    ok "backups: $(systemctl list-timers btn-ops-backup.timer --no-legend 2>/dev/null | awk '{print "next run "$1" "$2" "$3}') (run one now: btnops backup)"
+  fi
 fi
 
 # ── 10. management CLI ──────────────────────────────────────────────────────
