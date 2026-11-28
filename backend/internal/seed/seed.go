@@ -19,7 +19,7 @@ import (
 
 // Catalog seeds locations (sites + HQ), products, materials, reference data, approval thresholds and the
 // default settings (no users). Safe to repeat: existing rows are never changed.
-func Catalog(ctx context.Context, pool *pgxpool.Pool) error {
+func Catalog(ctx context.Context, pool db.DBTX) error {
 	for _, p := range catalog.Plants {
 		if _, err := pool.Exec(ctx, `INSERT INTO "Plant" (id, code, name, kind) VALUES ($1,$2,$3,$4) ON CONFLICT (code) DO NOTHING`, db.NewID(), p.Code, p.Name, p.Kind); err != nil {
 			return err

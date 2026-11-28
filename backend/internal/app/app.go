@@ -38,6 +38,7 @@ import (
 	"btn-ops/internal/stock"
 	"btn-ops/internal/stockcount"
 	"btn-ops/internal/syncsvc"
+	"btn-ops/internal/sysreset"
 	"btn-ops/internal/transfers"
 	"btn-ops/internal/users"
 	"btn-ops/internal/workforce"
@@ -168,6 +169,7 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 	masterdata.Register(api, d)      // /api/masterdata/*, /api/lookups
 	users.Register(api, d)           // /api/users
 	adminapi.Register(api, d)        // /api/audit, /api/settings
+	sysreset.Register(api, d)        // /api/admin/system/reset (SUPER_ADMIN)
 
 	d.Auth.DeviceRoutes(api.Group("/account/devices")) // F3: own devices
 	d.Auth.AdminDeviceRoutes(api.Group("/devices"))    // F3: any user's devices (devices.manage)

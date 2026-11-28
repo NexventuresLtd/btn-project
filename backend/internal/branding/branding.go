@@ -59,10 +59,16 @@ var (
 	reKey   = regexp.MustCompile(`^[A-Za-z0-9_.:\-]{1,200}$`)
 )
 
+// brandCache holds the public branding payload; Invalidate clears it (e.g. after a system reset).
+var brandCache = cache.New[[]byte](10*time.Minute, 16)
+
+// Invalidate drops the cached public branding.
+func Invalidate() { brandCache.Clear() }
+
 // Register mounts the public endpoints (/api/public/*, no auth) and the SUPER_ADMIN endpoints
 // (/api/admin/branding*, /api/admin/i18n*) on the /api router r.
 func Register(r fiber.Router, d *deps.Deps) {
-	h := &handler{d: d, cache: cache.New[[]byte](10*time.Minute, 16)}
+	h := &handler{d: d, cache: brandCache}
 	g := r.Group("/public")
 	g.Get("/branding", h.getBranding)
 	g.Get("/assets/:id", h.getAsset)

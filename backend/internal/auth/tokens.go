@@ -208,6 +208,13 @@ func (s *Service) RevokeAllSessions(ctx context.Context, userID, exceptSessionID
 	return err
 }
 
+// InvalidateAllSessions drops every cached session (after a system reset wiped the session table).
+func (s *Service) InvalidateAllSessions() {
+	if s.sessions != nil {
+		s.sessions.Clear()
+	}
+}
+
 // InvalidateUser drops cached session lookups for a user (call after role/active/language/device changes).
 func (s *Service) InvalidateUser(userID string) {
 	if s.sessions != nil {

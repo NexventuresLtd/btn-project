@@ -5,6 +5,7 @@ import { useT, type T } from "@/i18n";
 import { fieldError, useMutate } from "@/hooks/useMutate";
 import { formatRWF } from "@/lib/format";
 import { useAuth } from "@/auth/AuthProvider";
+import { SystemResetCard } from "@/modules/superadmin/SystemResetCard";
 import { ADMIN_KEY, LOCKOUT_BOUNDS, saveSettings, useSettings, type CompanySettings, type Settings } from "./api";
 
 interface FormState {
@@ -55,7 +56,7 @@ export function SettingsPage() {
   const { t, tx } = useT();
   const settings = useSettings();
   const { user } = useAuth();
-  const canLockout = user?.role === "SUPER_ADMIN"; // AUTH-05: the lockout policy is the Super Administrator's
+  const canLockout = user?.role === "SUPER_ADMIN"; // AUTH-05: the lockout policy (and the system reset) are the Super Administrator's
   const [form, setForm] = useState<FormState | null>(null);
   const [touched, setTouched] = useState(false);
   useEffect(() => {
@@ -188,6 +189,7 @@ export function SettingsPage() {
           <Button type="submit" disabled={!dirty} loading={save.isPending}>{t("admin.settings.save")}</Button>
         </div>
       </form>
+      {canLockout ? <SystemResetCard /> : null}
     </>
   );
 }
