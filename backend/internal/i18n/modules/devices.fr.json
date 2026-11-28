@@ -12,5 +12,8 @@
   "mail.reset_link_intro": "Utilisez le bouton ci-dessous pour choisir un nouveau mot de passe.",
   "mail.reset_link_button": "Réinitialiser mon mot de passe",
   "mail.reset_link_expiry": "Le lien expire dans {minutes} minutes et ne fonctionne qu'une seule fois.",
-  "mail.reset_or_code": "Ou saisissez ce code sur la page de réinitialisation :"
+  "mail.reset_or_code": "Ou saisissez ce code sur la page de réinitialisation :",
+  "auth.view_as_read_only": "Vous consultez l’application avec un autre rôle. Les modifications sont désactivées : quittez « Voir en tant que » pour modifier.",
+  "auth.view_as_role": "Choisissez un rôle à prévisualiser.",
+  "auth.view_as_site": "Choisissez un site pour ce rôle."
 }

@@ -12,5 +12,8 @@
   "mail.reset_link_intro": "Use the button below to choose a new password.",
   "mail.reset_link_button": "Reset my password",
   "mail.reset_link_expiry": "The link expires in {minutes} minutes and works only once.",
-  "mail.reset_or_code": "Or enter this code on the reset page:"
+  "mail.reset_or_code": "Or enter this code on the reset page:",
+  "auth.view_as_read_only": "You are viewing the app as another role. Changes are disabled — exit “View as” to make changes.",
+  "auth.view_as_role": "Choose a role to view as.",
+  "auth.view_as_site": "Choose a site for this role."
 }

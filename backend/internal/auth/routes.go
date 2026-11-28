@@ -42,21 +42,24 @@ func (s *Service) Routes(r fiber.Router) {
 	r.Post("/offline-package", sess, s.offlinePackage)
 	r.Put("/offline-pin", sess, s.offlinePin)
 	r.Delete("/offline-pin", sess, s.offlinePin)
+	r.Post("/view-as", sess, s.viewAsStart)
+	r.Delete("/view-as", sess, s.viewAsStop)
 }
 
 // UserPayload is the /api/auth/me user object.
 type UserPayload struct {
-	ID                 string     `json:"id"`
-	Email              string     `json:"email"`
-	Name               string     `json:"name"`
-	Role               Role       `json:"role"`
-	RoleLabel          string     `json:"roleLabel"`
-	Plant              *PlantRef  `json:"plant"`
-	MustChangePassword bool       `json:"mustChangePassword"`
-	LastLoginAt        *time.Time `json:"lastLoginAt"`
-	Language           string     `json:"language"`
-	PasskeyCount       int        `json:"passkeyCount"`
-	Permissions        []string   `json:"permissions"`
+	ID                 string      `json:"id"`
+	Email              string      `json:"email"`
+	Name               string      `json:"name"`
+	Role               Role        `json:"role"`
+	RoleLabel          string      `json:"roleLabel"`
+	Plant              *PlantRef   `json:"plant"`
+	MustChangePassword bool        `json:"mustChangePassword"`
+	LastLoginAt        *time.Time  `json:"lastLoginAt"`
+	Language           string      `json:"language"`
+	PasskeyCount       int         `json:"passkeyCount"`
+	Permissions        []string    `json:"permissions"`
+	ViewAs             *ViewAsInfo `json:"viewAs,omitempty"`
 }
 
 // PlantRef is the short plant object used in payloads.
@@ -263,6 +266,7 @@ func (s *Service) me(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	s.previewPayload(c, u, p)
 	out := fiber.Map{"user": p, "device": nil, "accessExpiresAt": u.AccessExpiresAt}
 	if u.DeviceRowID != "" {
 		if d, err := s.DeviceByRow(c.UserContext(), u.DeviceRowID, u.DeviceRowID); err == nil {

@@ -12,5 +12,8 @@
   "mail.reset_link_intro": "Kanda kuri buto iri hasi kugira ngo uhitemo ijambobanga rishya.",
   "mail.reset_link_button": "Hindura ijambobanga ryanjye",
   "mail.reset_link_expiry": "Link irangira nyuma y'iminota {minutes} kandi ikoreshwa inshuro imwe gusa.",
-  "mail.reset_or_code": "Cyangwa andika iyi kode ku rupapuro rwo guhindura:"
+  "mail.reset_or_code": "Cyangwa andika iyi kode ku rupapuro rwo guhindura:",
+  "auth.view_as_read_only": "Urimo kureba porogaramu nk’undi mwanya. Guhindura ntibyemewe — sohoka muri “Reba nka” kugira ngo uhindure.",
+  "auth.view_as_role": "Hitamo umwanya ushaka kureba nka wo.",
+  "auth.view_as_site": "Hitamo aho bakorera kuri uyu mwanya."
 }

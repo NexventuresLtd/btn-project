@@ -12,5 +12,8 @@
   "mail.reset_link_intro": "አዲስ የይለፍ ቃል ለመምረጥ ከታች ያለውን ቁልፍ ይጫኑ።",
   "mail.reset_link_button": "የይለፍ ቃሌን ቀይር",
   "mail.reset_link_expiry": "አገናኙ በ{minutes} ደቂቃ ውስጥ ያበቃል እና አንድ ጊዜ ብቻ ይሠራል።",
-  "mail.reset_or_code": "ወይም ይህን ኮድ በመለወጫ ገጹ ላይ ያስገቡ፦"
+  "mail.reset_or_code": "ወይም ይህን ኮድ በመለወጫ ገጹ ላይ ያስገቡ፦",
+  "auth.view_as_read_only": "መተግበሪያውን እንደ ሌላ ሚና እያዩ ነው። ለውጦች ተሰናክለዋል — ለመቀየር ከ“እንደ … ይመልከቱ” ይውጡ።",
+  "auth.view_as_role": "ለማየት ሚና ይምረጡ።",
+  "auth.view_as_site": "ለዚህ ሚና ቦታ ይምረጡ።"
 }

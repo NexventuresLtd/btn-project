@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, get, post, setUnauthorizedHandler } from "@/lib/api";
+import { ApiError, del, get, post, setUnauthorizedHandler } from "@/lib/api";
 import { isLang, setLang, type Lang } from "@/i18n";
 import { afterSignOut, confirmSignOut, getOfflineState, subscribeOffline } from "@/offline/runtime";
 import { authState, forgetSharedMe, meRetry, meRetryDelay, sharedMe } from "./session";
@@ -27,6 +27,8 @@ export interface CurrentUser {
   permissions: string[];
   language?: Lang;
   passkeyCount?: number;
+  /** set while a Super Administrator previews the app as another role ("View as"); role/permissions/plant are the previewed ones */
+  viewAs?: { realRole: string } | null;
 }
 
 interface AuthCtx {
@@ -38,6 +40,10 @@ interface AuthCtx {
   logout: () => Promise<boolean>;
   /** server unreachable: `user` (if any) comes from the device's offline package (F4) */
   offline: boolean;
+  /** Super Administrator: preview the app as another role (read-only); plantId for site roles */
+  startViewAs: (role: string, plantId?: string) => Promise<void>;
+  /** leave the preview */
+  exitViewAs: () => Promise<void>;
 }
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -76,6 +82,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (userLang && isLang(userLang)) setLang(userLang);
   }, [userLang, user?.id]);
+  // the preview changes who the server thinks we are: drop every cached response and reload /me
+  const switchView = async (call: () => Promise<unknown>) => {
+    await call();
+    forgetSharedMe();
+    qc.removeQueries({ predicate: (q) => q.queryKey[0] !== ME_KEY[0] || q.queryKey[1] !== ME_KEY[1] });
+    await qc.invalidateQueries({ queryKey: ME_KEY });
+  };
   const value: AuthCtx = {
     user,
     loading: isLoading || transient,
@@ -92,6 +105,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       qc.removeQueries({ predicate: (q) => q.queryKey[0] !== ME_KEY[0] || q.queryKey[1] !== ME_KEY[1] });
       return true;
     },
+    startViewAs: (role, plantId) => switchView(() => post("/auth/view-as", { role, plantId: plantId ?? "" })),
+    exitViewAs: () => switchView(() => del("/auth/view-as")),
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

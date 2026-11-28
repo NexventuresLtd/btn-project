@@ -110,6 +110,7 @@ func (s *Service) setTokenCookies(c *fiber.Ctx, tp TokenPair) {
 func (s *Service) clearTokenCookies(c *fiber.Ctx) {
 	s.clearCookie(c, SessionCookie, "/")
 	s.clearCookie(c, RefreshCookie, refreshPath)
+	s.clearCookie(c, ViewAsCookie, "/")
 }
 
 func insertAccess(ctx context.Context, q db.DBTX, sessionID string, ttl time.Duration) (string, time.Time, error) {
@@ -314,6 +315,9 @@ func (s *Service) LoadSession() fiber.Handler {
 			s.sessions.Delete(h)
 		}
 		u := e.user
+		if err := applyViewAs(c, &u); err != nil {
+			return err
+		}
 		c.Locals("user", &u)
 		c.Locals("userId", u.ID)
 		if u.DeviceID != "" {

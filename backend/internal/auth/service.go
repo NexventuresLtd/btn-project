@@ -29,6 +29,7 @@ type User struct {
 	DeviceID           string    // client device id (X-Device-Id) of the session; "" for dev/test sessions
 	DeviceRowID        string    // device table row id; "" for dev/test sessions
 	AccessExpiresAt    time.Time // when the current access token stops being accepted
+	RealRole           Role      // SUPER_ADMIN while previewing another role ("View as"); "" otherwise
 }
 
 // Can reports whether the user holds a permission.

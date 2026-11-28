@@ -1,6 +1,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
-import { ChevronDown, CircleHelp, Compass, KeyRound, LifeBuoy, LogOut, Menu, ShieldCheck, X } from "lucide-react";
+import { ChevronDown, CircleHelp, Compass, Eye, EyeOff, KeyRound, LifeBuoy, LogOut, Menu, ShieldCheck, X } from "lucide-react";
+import { ViewAsBar, ViewAsDialog } from "@/components/ViewAs";
 import { NAV } from "@/app/nav";
 import { prefetchRoute } from "@/app/prefetch";
 import { useAuth } from "@/auth/AuthProvider";
@@ -82,8 +83,9 @@ function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 function UserMenu() {
-  const { user, logout } = useAuth();
+  const { user, logout, exitViewAs } = useAuth();
   const { t, tx } = useT();
+  const [viewAsOpen, setViewAsOpen] = useState(false);
   const { startTour } = useGuide();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -126,9 +128,15 @@ function UserMenu() {
           <button role="menuitem" onClick={() => go("/account/password")} className={item}><KeyRound className="size-4 shrink-0 text-slate-400" /> {t("layout.menu.changePassword")}</button>
           <button role="menuitem" onClick={() => { setOpen(false); startTour(); }} className={item}><Compass className="size-4 shrink-0 text-slate-400" /> {t("layout.menu.takeTour")}</button>
           <button role="menuitem" onClick={() => go("/help")} className={item}><LifeBuoy className="size-4 shrink-0 text-slate-400" /> {t("layout.menu.help")}</button>
+          {user.viewAs ? (
+            <button role="menuitem" onClick={() => { setOpen(false); void exitViewAs().then(() => navigate("/")); }} className={item}><EyeOff className="size-4 shrink-0 text-slate-400" /> {t("layout.viewAs.exit")}</button>
+          ) : user.role === "SUPER_ADMIN" ? (
+            <button role="menuitem" onClick={() => { setOpen(false); setViewAsOpen(true); }} className={item}><Eye className="size-4 shrink-0 text-slate-400" /> {t("layout.viewAs.menu")}</button>
+          ) : null}
           <button role="menuitem" onClick={() => void logout().then((ok) => ok && navigate("/login"))} className="flex w-full items-center gap-2.5 border-t border-line px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50"><LogOut className="size-4 shrink-0" /> {t("layout.menu.signOut")}</button>
         </div>
       ) : null}
+      <ViewAsDialog open={viewAsOpen} onClose={() => setViewAsOpen(false)} />
     </div>
   );
 }
@@ -169,6 +177,7 @@ export function AppLayout() {
             </div>
           ) : null}
           <div className="lg:pl-64">
+            <ViewAsBar />
             <header className="sticky top-0 z-10 flex h-[72px] items-center justify-between gap-2 border-b border-line bg-white/85 px-3 backdrop-blur-md sm:gap-4 sm:px-8">
               <button onClick={() => setMobileOpen(true)} className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 lg:hidden" aria-label={t("common.openMenu")}><Menu className="size-5" /></button>
               <div className="hidden lg:block" />
