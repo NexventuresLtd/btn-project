@@ -26,7 +26,6 @@ func TestSystemReset(t *testing.T) {
 	if r := e.Do("POST", "/api/masterdata/products", map[string]any{"code": "DEMO1", "name": "Demo block", "unit": "PCS", "defaultPrice": 100}, super); r.StatusCode != 201 {
 		t.Fatalf("create: %d %s", r.StatusCode, e.Text(r))
 	}
-	plants := count(t, e, `SELECT count(*) FROM "Plant"`)
 	var hashBefore string
 	_ = e.Pool.QueryRow(t.Context(), `SELECT "passwordHash" FROM "User" WHERE id = $1`, super.ID).Scan(&hashBefore)
 
@@ -65,11 +64,16 @@ func TestSystemReset(t *testing.T) {
 	if n := count(t, e, `SELECT count(*) FROM "Product" WHERE code = 'DEMO1'`); n != 0 {
 		t.Fatal("demo product survived")
 	}
-	if n := count(t, e, `SELECT count(*) FROM "Plant"`); n != plants {
-		t.Fatalf("catalogue not restored: %d plants, want %d", n, plants)
+	for _, tbl := range []string{"Plant", "Product", "Material", "Customer"} {
+		if n := count(t, e, `SELECT count(*) FROM "`+tbl+`"`); n != 0 {
+			t.Fatalf("master data survived: %d rows in %s", n, tbl)
+		}
 	}
-	if n := count(t, e, `SELECT count(*) FROM "Product"`); n == 0 {
-		t.Fatal("catalogue products not restored")
+	if n := count(t, e, `SELECT count(*) FROM refdata_item`); n == 0 {
+		t.Fatal("default reference lists not restored")
+	}
+	if n := count(t, e, `SELECT count(*) FROM "Setting"`); n == 0 {
+		t.Fatal("default settings not restored")
 	}
 	if n := count(t, e, `SELECT count(*) FROM "AuditLog" WHERE action = 'system.reset' AND "userId" = $1`, super.ID); n != 1 {
 		t.Fatalf("audit rows: %d", n)

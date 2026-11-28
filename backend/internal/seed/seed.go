@@ -46,6 +46,12 @@ func Catalog(ctx context.Context, pool db.DBTX) error {
 		WHEN code IN ('VISCO90','BPOWDER') THEN 'ADDITIVE' ELSE 'OTHER' END WHERE category IS NULL`); err != nil {
 		return err
 	}
+	return Defaults(ctx, pool)
+}
+
+// Defaults seeds the reference lists, approval thresholds and default settings — everything Catalog seeds except the
+// locations, products and materials (a system reset starts from these alone). Safe to repeat.
+func Defaults(ctx context.Context, pool db.DBTX) error {
 	if err := refdata.SeedDefaults(ctx, pool); err != nil {
 		return err
 	}

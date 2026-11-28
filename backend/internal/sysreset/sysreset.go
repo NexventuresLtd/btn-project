@@ -1,6 +1,6 @@
 // Package sysreset is the Super Administrator's "Reset system" action: every record is wiped except the Super
-// Administrator accounts, then the install-time catalogue (sites, products, materials, reference lists, approval
-// limits, default settings) is put back — the state of a fresh install, without having to recreate the database.
+// Administrator accounts — master data included (sites, products, materials, customers). Only the default reference
+// lists, approval limits and settings are put back, so the administrators can rebuild the master data from scratch.
 //
 //	POST /api/admin/system/reset {code, password}   SUPER_ADMIN only
 //
@@ -98,10 +98,10 @@ func reset(c *fiber.Ctx, d *deps.Deps) error {
 			return err
 		}
 		kept = int(tag.RowsAffected())
-		if err := seed.Catalog(ctx, tx); err != nil {
+		if err := seed.Defaults(ctx, tx); err != nil {
 			return err
 		}
-		return audit.Record(c, tx, audit.Input{Action: "system.reset", Entity: "System", Summary: "System reset: all data wiped, catalogue restored",
+		return audit.Record(c, tx, audit.Input{Action: "system.reset", Entity: "System", Summary: "System reset: all data and master data wiped",
 			After: map[string]any{"tables": len(tables), "superAdminsKept": kept}})
 	})
 	if err != nil {
