@@ -11,6 +11,7 @@ import { reportsRoutes } from "@/modules/reports/routes";
 import { productionRoutes } from "@/modules/production/routes";
 import { stockRoutes } from "@/modules/stock/routes";
 import { materialsRoutes } from "@/modules/materials/routes";
+import { catalogRoutes } from "@/modules/catalog/routes"; // products + material list (replaces Administration → Master data)
 import { salesRoutes } from "@/modules/sales/routes";
 import { pettycashRoutes } from "@/modules/pettycash/routes";
 import { payrollRoutes } from "@/modules/payroll/routes";
@@ -49,6 +50,7 @@ export const router = createBrowserRouter([
       ...productionRoutes,
       ...stockRoutes,
       ...materialsRoutes,
+      ...catalogRoutes,
       ...salesRoutes,
       ...pettycashRoutes,
       ...payrollRoutes,

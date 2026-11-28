@@ -4,9 +4,11 @@ package refdata
 // removed_by_id / removed_reason and made inactive: it leaves every dropdown and stops validating new input, while
 // records that already store its code keep showing its name. It keeps its code and can be restored.
 //
-//	GET    /api/refdata/:kind/removed        removed items, newest first   (masterdata.manage)
-//	DELETE /api/refdata/:kind/:id {reason}   remove                        (masterdata.manage)
-//	POST   /api/refdata/:kind/:id/restore    restore (active again)        (masterdata.manage)
+//	GET    /api/refdata/:kind/removed        removed items, newest first
+//	DELETE /api/refdata/:kind/:id {reason}   remove
+//	POST   /api/refdata/:kind/:id/restore    restore (active again)
+//
+// All three need CanManage (masterdata.manage; catalog.manage for unit / product_category / material_category).
 
 import (
 	"context"
@@ -32,9 +34,9 @@ type RemovedItem struct {
 }
 
 func registerRemoval(g fiber.Router, h *handler) {
-	g.Get("/:kind/removed", auth.RequirePermission("masterdata.manage"), h.removedList)
-	g.Delete("/:kind/:id", auth.RequirePermission("masterdata.manage"), h.remove)
-	g.Post("/:kind/:id/restore", auth.RequirePermission("masterdata.manage"), h.restore)
+	g.Get("/:kind/removed", requireManage(), kindManage, h.removedList)
+	g.Delete("/:kind/:id", requireManage(), kindManage, h.remove)
+	g.Post("/:kind/:id/restore", requireManage(), kindManage, h.restore)
 }
 
 func (h *handler) removedList(c *fiber.Ctx) error {

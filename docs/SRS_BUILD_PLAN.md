@@ -89,6 +89,7 @@ Read access: SYSTEM_ADMIN reads every business module; Top management (MD, GM, O
 | `reports.view` | every role except LEAD/OP | Reports R |
 | `users.view`, `audit.view` | SA, MD, GM, OA | Top Mgt R |
 | `users.manage`, `settings.manage`, `masterdata.manage`, `devices.manage`, `reports.schedule`, `admin.monitor` | SA | Admin C R U |
+| `catalog.manage` | SA, MD, GM, PM | products, materials, recipes, units and product/material categories (owner decision, beyond §8) |
 | `data.export` | SA, MD, GM, OA, FM | ADM-05 authorised users (FM for FIN-07 accounting) |
 | `sync.resolve` | PM, SUP (own site) | §5.5 |
 

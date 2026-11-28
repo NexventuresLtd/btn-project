@@ -152,7 +152,9 @@ var permGrants = map[Permission][]grant{
 	"reports.view": {{"reports", "R"}}, "reports.schedule": {{"admin", "CU"}},
 	"sync.resolve": {{"production", "U"}, {"attendance", "U"}, {"stock", "A"}},
 	"users.view":   {{"admin", "R"}}, "users.manage": {{"admin", "CU"}}, "masterdata.manage": {{"admin", "CU"}},
-	"audit.view": {{"admin", "R"}}, "settings.manage": {{"admin", "CU"}}, "admin.monitor": {{"admin", "R"}},
+	// catalog.manage: Admin C U, the Production Manager's production A and Top Mgt's procurement A (owner decision)
+	"catalog.manage": {{"admin", "CU"}, {"production", "A"}, {"procurement", "A"}},
+	"audit.view":     {{"admin", "R"}}, "settings.manage": {{"admin", "CU"}}, "admin.monitor": {{"admin", "R"}},
 	"data.export":    {{"admin", "R"}, {"finance", "A"}}, // ADM-05 "authorised users": administration + finance (FIN-07)
 	"devices.manage": {{"admin", "CU"}},
 }
@@ -231,7 +233,8 @@ func TestSRSRoleMatrix(t *testing.T) {
 		{PRO, "income.view", true}, {SUP, "expenses.record", false}, {STO, "expenses.record", false}, {SUP, "pettycash.custodian", false},
 		{SYS, "expenses.view", true}, {SYS, "procurement.view", true}, {SYS, "reports.view", true},
 		{GM, "users.manage", false}, {GM, "users.view", true}, {MD, "settings.manage", false}, {GM, "devices.manage", false},
-		{PM, "masterdata.manage", false},
+		{PM, "masterdata.manage", false}, {PM, "catalog.manage", true}, {SUP, "catalog.manage", false}, {OA, "catalog.manage", false},
+		{FM, "catalog.manage", false}, {MD, "catalog.manage", true},
 	} {
 		if Can(c.r, c.p) != c.want {
 			t.Errorf("%s / %s: got %v want %v", c.r, c.p, Can(c.r, c.p), c.want)

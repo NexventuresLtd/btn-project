@@ -9,23 +9,28 @@ import type { RemovedRow } from "./api";
  * "Show removed (n)" toggle + the removed rows with who, when, why and a Restore button (SRS §6.3: master data is
  * never deleted, only removed and kept). Renders nothing while there is nothing removed.
  */
-export function RemovedList({ items, onRestore, restoringId, className }: {
+export function RemovedList({ items, onRestore, restoringId, className, alwaysOpen }: {
   items: RemovedRow[] | undefined;
+  /** show the rows without the toggle (e.g. inside a "Removed" dialog) */
+  alwaysOpen?: boolean;
   onRestore?: (row: RemovedRow) => void;
   restoringId?: string;
   className?: string;
 }) {
   const { t } = useT();
-  const [open, setOpen] = useState(false);
+  const [toggled, setOpen] = useState(false);
+  const open = alwaysOpen || toggled;
   if (!items?.length) return null;
   const withCode = items.some((r) => r.code);
   return (
     <div className={className ?? "mt-4"}>
-      <Button variant="ghost" size="sm" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        {open ? t("records.hideRemoved") : t("records.showRemoved", { count: items.length })}
-      </Button>
+      {alwaysOpen ? null : (
+        <Button variant="ghost" size="sm" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          {open ? t("records.hideRemoved") : t("records.showRemoved", { count: items.length })}
+        </Button>
+      )}
       {open ? (
-        <Card className="mt-2">
+        <Card className={alwaysOpen ? "border-0 shadow-none" : "mt-2"}>
           <p className="px-5 pt-4 text-sm font-medium text-slate-700">{t("records.removedTitle")}</p>
           <DataTable
             columns={[

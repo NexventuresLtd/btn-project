@@ -22,6 +22,7 @@ import (
 	"btn-ops/internal/finance"
 	"btn-ops/internal/httpx"
 	"btn-ops/internal/income"
+	"btn-ops/internal/insights"
 	"btn-ops/internal/masterdata"
 	"btn-ops/internal/materials"
 	"btn-ops/internal/openapi"
@@ -199,6 +200,7 @@ func New(d *deps.Deps, extra ...func(api fiber.Router)) *fiber.App {
 	income.Register(api.Group("/income"), d)           // finance records: money in
 	budgets.Register(api.Group("/budgets"), d)         // P5
 	finance.Register(api.Group("/finance"), d)         // P5 FIN-04/06 finance dashboard
+	insights.Register(api.Group("/insights"), d)       // per-product story and site P&L (Products page)
 	workforce.Register(api.Group("/workforce"), d)     // P4
 	privacy.Register(api.Group("/privacy"), d)         // F2 NFR-D2
 	dataimport.Register(api.Group("/data/import"), d)  // F2 CSV import

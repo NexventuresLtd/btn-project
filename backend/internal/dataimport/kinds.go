@@ -63,7 +63,7 @@ var siteCol = column{Name: "site", Required: true, Type: TCode, Example: "BTN-1"
 
 var kinds = []*kindSpec{
 	{
-		Name: "products", Perm: "masterdata.manage", plan: planProducts,
+		Name: "products", Perm: "catalog.manage", plan: planProducts,
 		Columns: []column{
 			{Name: "code", Required: true, Type: TCode, Example: "HB25", Aliases: []string{"productCode"}},
 			{Name: "name", Required: true, Type: TText, Example: "Hollow Block 25", Aliases: []string{"productName"}},
@@ -76,7 +76,7 @@ var kinds = []*kindSpec{
 		Examples: [][]string{{"HB25", "Hollow Block 25", "25 x 20 x 40 cm", "Pcs", "1800", "70", "yes"}, {"PV8", "Pavers 8 cm", "", "Pcs", "450", "62", "yes"}},
 	},
 	{
-		Name: "materials", Perm: "masterdata.manage", plan: planMaterials,
+		Name: "materials", Perm: "catalog.manage", plan: planMaterials,
 		Columns: []column{
 			{Name: "code", Required: true, Type: TCode, Example: "GRAVEL", Aliases: []string{"materialCode"}},
 			{Name: "name", Required: true, Type: TText, Example: "Gravel 3/8", Aliases: []string{"materialName"}},

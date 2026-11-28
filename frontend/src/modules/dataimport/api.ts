@@ -4,7 +4,7 @@ import { API_BASE, ensureFreshSession, get, qs, upload } from "@/lib/api";
 export const IMPORT_KEY = ["dataimport"] as const;
 
 /** Permissions that open the import page (one per kind; mirrors internal/dataimport kinds). */
-export const IMPORT_PERMISSIONS = ["masterdata.manage", "customers.manage", "workers.manage", "stock.adjust", "materials.adjust"];
+export const IMPORT_PERMISSIONS = ["masterdata.manage", "catalog.manage", "customers.manage", "workers.manage", "stock.adjust", "materials.adjust"];
 
 export interface ImportColumn {
   name: string;

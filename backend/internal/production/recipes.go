@@ -1,11 +1,11 @@
 package production
 
 // PRD-10 recipes: material per unit of product, versioned by effective date (the version in force on an entry's
-// date is the latest with effectiveFrom ≤ date). Admin-managed (masterdata.manage).
+// date is the latest with effectiveFrom ≤ date). Managed with catalog.manage (or masterdata.manage).
 //
 //	GET    /recipes                         production.view — every product with its current version and history
-//	POST   /recipes {productId, effectiveFrom, note, items:[{materialId, qtyPerUnit}]}   masterdata.manage (upsert of that version)
-//	DELETE /recipes/:id                     masterdata.manage
+//	POST   /recipes {productId, effectiveFrom, note, items:[{materialId, qtyPerUnit}]}   catalog.manage | masterdata.manage (upsert of that version)
+//	DELETE /recipes/:id                     catalog.manage | masterdata.manage
 
 import (
 	"context"

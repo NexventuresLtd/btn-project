@@ -6,10 +6,10 @@
 // API (mounted by app.go, all behind RequireAuth):
 //
 //	GET   /api/refdata                     every kind, active items (all signed-in users; cached, ETag/304)
-//	GET   /api/refdata/:kind               one kind, active items (?all=1 with masterdata.manage adds inactive)
-//	POST  /api/refdata/:kind               create (masterdata.manage)
-//	PATCH /api/refdata/:kind/:id           update names / active / sort / metadata (masterdata.manage)
-//	PUT   /api/refdata/:kind/order         {ids:[…]} reorder (masterdata.manage)
+//	GET   /api/refdata/:kind               one kind, active items (?all=1 with manage rights adds inactive)
+//	POST  /api/refdata/:kind               create (masterdata.manage; catalog.manage for unit / product_category / material_category)
+//	PATCH /api/refdata/:kind/:id           update names / active / sort / metadata (same)
+//	PUT   /api/refdata/:kind/order         {ids:[…]} reorder (same)
 //	GET   /api/approval-thresholds         list (settings.manage)       ┐ see internal/approvals
 //	POST/PATCH/DELETE /api/approval-thresholds[/:id] (settings.manage) │
 //	GET   /api/approvals/levels?domain=&amount=  required levels (any signed-in user)
@@ -216,11 +216,34 @@ func Register(r fiber.Router, d *deps.Deps) {
 	g := r.Group("/refdata")
 	g.Get("/", h.all)
 	g.Get("/:kind", h.list)
-	g.Post("/:kind", auth.RequirePermission("masterdata.manage"), h.create)
-	g.Put("/:kind/order", auth.RequirePermission("masterdata.manage"), h.reorder)
-	g.Patch("/:kind/:id", auth.RequirePermission("masterdata.manage"), h.update)
+	g.Post("/:kind", requireManage(), kindManage, h.create)
+	g.Put("/:kind/order", requireManage(), kindManage, h.reorder)
+	g.Patch("/:kind/:id", requireManage(), kindManage, h.update)
 	registerRemoval(g, h) // GET /:kind/removed, DELETE /:kind/:id, POST /:kind/:id/restore (removal.go)
 	registerApprovals(r, d)
+}
+
+// catalogKinds are the lists behind the Products and Materials pages: catalog.manage edits them too (every other
+// kind stays masterdata.manage).
+var catalogKinds = map[string]bool{KindProductCategory: true, KindMaterialCategory: true, KindUnit: true}
+
+// CanManage reports whether role may edit the items of kind.
+func CanManage(role auth.Role, kind string) bool {
+	return auth.Can(role, "masterdata.manage") || (catalogKinds[kind] && auth.Can(role, "catalog.manage"))
+}
+
+// requireManage is the coarse guard of the write routes (and their OpenAPI permission note); kindManage, which
+// follows it, applies CanManage to the requested kind (an unknown kind reaches the handler's 404 only for
+// masterdata.manage holders).
+func requireManage() fiber.Handler {
+	return auth.RequirePermission("masterdata.manage", "catalog.manage")
+}
+
+func kindManage(c *fiber.Ctx) error {
+	if !CanManage(auth.MustUser(c).Role, c.Params("kind")) {
+		return httpx.Forbidden()
+	}
+	return c.Next()
 }
 
 func kindParam(c *fiber.Ctx) (string, error) {
@@ -253,7 +276,7 @@ func (h *handler) list(c *fiber.Ctx) error {
 		return err
 	}
 	u := auth.MustUser(c)
-	all := c.Query("all") == "1" && auth.Can(u.Role, "masterdata.manage")
+	all := c.Query("all") == "1" && CanManage(u.Role, kind)
 	lang := httpx.Lang(c)
 	key := kind + ":" + string(lang) + ":" + strconv.FormatBool(all) + ":" + strconv.FormatInt(Version(), 10)
 	body, err := store.GetOrLoad(httpx.Ctx(c), key, func(ctx context.Context) ([]byte, error) {

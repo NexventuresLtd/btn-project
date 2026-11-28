@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { Check, Copy, MoreHorizontal, Search, X } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Check, Copy, Search, X } from "lucide-react";
+import { MoreMenu, type MoreMenuItem } from "@/components/ui/MoreMenu";
 import { toast } from "sonner";
 import { cn } from "@/lib/cn";
 import { useT } from "@/i18n";
@@ -38,127 +38,10 @@ export function SearchInput({ value, onChange, placeholder, className }: { value
   );
 }
 
-export interface MenuItem {
-  label: string;
-  icon?: ReactNode;
-  onClick: () => void;
-  tone?: "default" | "danger";
-  hidden?: boolean;
-}
-
-/**
- * Row action menu. Rendered in a portal with fixed positioning so it is not
- * clipped by the table's horizontal scroll container.
- */
+/** Row action menu: the shared "⋯" menu (components/ui/MoreMenu) with the compact row trigger. */
+export type MenuItem = MoreMenuItem;
 export function RowMenu({ items, label }: { items: MenuItem[]; label?: string }) {
-  const { t } = useT();
-  const [open, setOpen] = useState(false);
-  const btn = useRef<HTMLButtonElement>(null);
-  const menu = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const visible = items.filter((i) => !i.hidden);
-
-  useLayoutEffect(() => {
-    if (!open || !btn.current) return;
-    const place = () => {
-      const r = btn.current!.getBoundingClientRect();
-      const width = 224;
-      const height = menu.current?.offsetHeight ?? visible.length * 40 + 8;
-      const below = r.bottom + 6 + height <= window.innerHeight;
-      setPos({ top: below ? r.bottom + 6 : Math.max(8, r.top - 6 - height), left: Math.max(8, Math.min(window.innerWidth - width - 8, r.right - width)) });
-    };
-    place();
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
-  }, [open, visible.length]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!menu.current?.contains(e.target as Node) && !btn.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setOpen(false);
-        btn.current?.focus();
-      }
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (open) menu.current?.querySelector<HTMLButtonElement>("button")?.focus();
-  }, [open, pos]);
-
-  if (!visible.length) return null;
-  return (
-    <>
-      <button
-        ref={btn}
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((o) => !o);
-        }}
-        className={cn("grid size-8 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900", open && "bg-slate-100 text-slate-900")}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={label ?? t("common.actions")}
-      >
-        <MoreHorizontal className="size-4" />
-      </button>
-      {open
-        ? createPortal(
-            <div
-              ref={menu}
-              role="menu"
-              style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999 }}
-              className="fixed z-50 w-56 rounded-xl border border-line bg-white p-1 shadow-xl shadow-navy-950/10"
-              onKeyDown={(e) => {
-                const buttons = [...(menu.current?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
-                const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
-                if (e.key === "ArrowDown") {
-                  e.preventDefault();
-                  buttons[(i + 1) % buttons.length]?.focus();
-                } else if (e.key === "ArrowUp") {
-                  e.preventDefault();
-                  buttons[(i - 1 + buttons.length) % buttons.length]?.focus();
-                }
-              }}
-            >
-              {visible.map((item) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setOpen(false);
-                    item.onClick();
-                  }}
-                  className={cn(
-                    "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium transition outline-none [&>svg]:size-4",
-                    item.tone === "danger" ? "text-red-600 hover:bg-red-50 focus:bg-red-50" : "text-slate-700 hover:bg-slate-100 focus:bg-slate-100",
-                  )}
-                >
-                  {item.icon}
-                  {item.label}
-                </button>
-              ))}
-            </div>,
-            document.body,
-          )
-        : null}
-    </>
-  );
+  return <MoreMenu items={items} label={label} size="row" />;
 }
 
 /** A secret shown once (temporary password) with a copy button. */

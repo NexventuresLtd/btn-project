@@ -1,0 +1,4 @@
+{
+ "insights.v.month": "Month must be YYYY-MM",
+ "insights.v.months": "Months must be a whole number from 1"
+}

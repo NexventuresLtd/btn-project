@@ -86,7 +86,8 @@ PDF toolkit, i18n keys, test helpers) are in **`backend/README.md`**.
   `seed.Catalog`). Records elsewhere store the **code**; validate with `refdata.Valid(ctx, q, kind, code)`
   and display with `refdata.Name(...)` or the API's resolved `name`. Codes are immutable; deactivate instead
   of deleting. `GET /api/refdata[/:kind]` (all signed-in users, cached, ETag/304; `/api/lookups` embeds
-  `refdata`), writes need `masterdata.manage`.
+  `refdata`), writes need `masterdata.manage` (`catalog.manage` also edits `unit`, `product_category`,
+  `material_category`).
 - `internal/approvals`: table `approval_threshold (domain, level, min_amount, max_amount, permission, role,
   label, is_active)`; `approvals.Levels(ctx, domain, amount) ([]Level, error)` returns the levels whose
   `[min, max)` band contains the amount (one per level, lowest first; empty = no approval). Domains:

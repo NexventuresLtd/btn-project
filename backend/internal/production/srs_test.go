@@ -473,7 +473,7 @@ func TestRecipesAndVariance(t *testing.T) {
 	f := setup(t)
 	e := f.e
 	pm := e.User(auth.RoleProductionManager)
-	adm := e.User(auth.RoleSystemAdmin) // recipes are reference data (ADM-01, masterdata.manage)
+	adm := e.User(auth.RoleSystemAdmin) // recipes: catalog.manage (PM, top management, admin) or masterdata.manage
 	sup := e.User(auth.RoleSupervisor)
 	var sand string
 	_ = e.Pool.QueryRow(context.Background(), `SELECT id FROM "Material" WHERE code <> 'CEMENT' ORDER BY "sortOrder" LIMIT 1`).Scan(&sand)
@@ -481,8 +481,11 @@ func TestRecipesAndVariance(t *testing.T) {
 	if r := e.Do("POST", "/api/production/recipes", recipe, sup); r.StatusCode != 403 {
 		t.Fatalf("sup recipe: %d", r.StatusCode)
 	}
-	if r := e.Do("POST", "/api/production/recipes", recipe, pm); r.StatusCode != 403 {
-		t.Fatalf("pm recipe (masterdata.manage is the administrator's): %d", r.StatusCode)
+	if r := e.Do("POST", "/api/production/recipes", recipe, e.User(auth.RoleSalesManager)); r.StatusCode != 403 {
+		t.Fatalf("sales recipe: %d", r.StatusCode)
+	}
+	if r := e.Do("POST", "/api/production/recipes", recipe, pm); r.StatusCode != 201 { // catalog.manage
+		t.Fatalf("pm recipe: %d %s", r.StatusCode, e.Text(r))
 	}
 	if r := e.Do("POST", "/api/production/recipes", recipe, adm); r.StatusCode != 201 {
 		t.Fatalf("recipe: %d %s", r.StatusCode, e.Text(r))

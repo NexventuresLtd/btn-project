@@ -31,7 +31,7 @@ export function RecipesPage() {
   const materials = lookups?.materials ?? [];
   const [draft, setDraft] = useState<Draft | null>(null);
   const [deleting, setDeleting] = useState<Recipe | null>(null);
-  const manage = can("masterdata.manage");
+  const manage = can("catalog.manage") || can("masterdata.manage");
 
   const save = useMutate(() => post<Recipe>("/production/recipes", {
     productId: draft!.productId, effectiveFrom: draft!.effectiveFrom, note: draft!.note.trim() || null,

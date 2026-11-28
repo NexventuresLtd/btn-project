@@ -1,0 +1,4 @@
+{
+ "insights.v.month": "Le mois doit être au format AAAA-MM",
+ "insights.v.months": "Le nombre de mois doit être un entier à partir de 1"
+}

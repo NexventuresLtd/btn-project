@@ -149,6 +149,9 @@ var Matrix = []permRule{
 	{"users.view", rr(SYS, MD, GM, OA)},
 	{"users.manage", rr(SYS)},
 	{"masterdata.manage", rr(SYS)},
+	// Products, materials, their recipes and the product/material category and unit lists (the "Products" and
+	// "Materials" pages): top management, the Production Manager and the administrator (owner decision, beyond §8).
+	{"catalog.manage", rr(MD, GM, PM, SYS)},
 	{"audit.view", rr(SYS, MD, GM, OA)},
 	{"settings.manage", rr(SYS)},
 	{"admin.monitor", rr(SYS)},               // jobs, health, errors, sync monitor, devices

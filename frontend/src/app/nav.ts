@@ -1,5 +1,5 @@
 import {
-  ArrowLeftRight, RefreshCcw, BarChart3, Boxes, Building2, CalendarCheck, CircleHelp, ClipboardCheck, ClipboardList, Factory, FileText, FilePlus2, HandCoins,
+  ArrowLeftRight, RefreshCcw, BarChart3, Boxes, Building2, CalendarCheck, CircleHelp, ClipboardCheck, Factory, FileText, FilePlus2, HandCoins,
   LayoutDashboard, ListTree, PackageSearch, Palette, PiggyBank, Receipt, ReceiptText, ScrollText, Settings, ShoppingCart, Store, Truck, Type, Users,
   UserCog, UsersRound, Wallet,
 } from "lucide-react";
@@ -7,6 +7,7 @@ import { Activity, CalendarClock } from "lucide-react"; // F1: jobs + monitoring
 import { ChartPie, Route } from "lucide-react"; // P5: finance dashboard, purchase trace
 import { GitMerge, MonitorSmartphone, RadioTower } from "lucide-react"; // F3: sync review, devices, sync monitor
 import { Upload } from "lucide-react"; // F2: data import
+import { Package, ShoppingBag } from "lucide-react"; // products + material list (catalog)
 import { DatabaseBackup } from "lucide-react"; // F2: data export (ADM-05)
 import { ShieldCheck } from "lucide-react"; // F2: personal data (NFR-D2)
 import { ArrowDownToLine, CircleOff, Link2, TrendingUp } from "lucide-react"; // finance records: income, cash flow, unbudgeted, linked records
@@ -29,6 +30,9 @@ export interface NavGroup {
   items: NavItem[];
 }
 
+/** Products and the material list: anyone who works with them may look; catalog.manage edits. */
+const CATALOG_VIEW = ["production.view", "sales.view", "stock.view", "materials.view", "catalog.manage"];
+
 /** Single source of truth for the sidebar. Routes are registered in app/router.tsx. */
 export const NAV: NavGroup[] = [
   {
@@ -48,8 +52,10 @@ export const NAV: NavGroup[] = [
     labelKey: "layout.nav.operations",
     items: [
       { labelKey: "layout.nav.production", to: "/production", icon: Factory, permission: "production.view" },
+      { labelKey: "catalog.nav.products", to: "/products", icon: ShoppingBag, permission: CATALOG_VIEW },
       { labelKey: "layout.nav.stock", to: "/stock", icon: Boxes, permission: "stock.view" },
       { labelKey: "layout.nav.materials", to: "/materials", icon: PackageSearch, permission: "materials.view" },
+      { labelKey: "catalog.nav.materials", to: "/materials/list", icon: Package, permission: CATALOG_VIEW },
       { labelKey: "transfers.nav", to: "/transfers", icon: ArrowLeftRight, permission: "transfers.view" },
       { labelKey: "stockcount.nav", to: "/stock-counts", icon: ClipboardCheck, permission: ["stockcount.record", "stockcount.approve"] },
     ],
@@ -101,9 +107,8 @@ export const NAV: NavGroup[] = [
     items: [
       { labelKey: "layout.nav.users", to: "/admin/users", icon: UserCog, permission: ["users.manage", "users.view"] },
       { labelKey: "layout.nav.sites", to: "/admin/sites", icon: Building2, permission: "masterdata.manage" },
-      { labelKey: "layout.nav.masterData", to: "/admin/master-data", icon: ClipboardList, permission: "masterdata.manage" },
       { labelKey: "refdata.nav", to: "/admin/reference-data", icon: ListTree, permission: "masterdata.manage" },
-      { labelKey: "dataimport.nav", to: "/admin/import", icon: Upload, permission: ["masterdata.manage", "customers.manage", "workers.manage", "stock.adjust", "materials.adjust"] },
+      { labelKey: "dataimport.nav", to: "/admin/import", icon: Upload, permission: ["masterdata.manage", "catalog.manage", "customers.manage", "workers.manage", "stock.adjust", "materials.adjust"] },
       { labelKey: "exports.nav", to: "/admin/data-export", icon: DatabaseBackup, permission: "data.export" },
       { labelKey: "layout.nav.audit", to: "/admin/audit", icon: ScrollText, permission: "audit.view" },
       { labelKey: "privacy.nav", to: "/admin/privacy", icon: ShieldCheck, permission: ["users.manage", "data.export"] },

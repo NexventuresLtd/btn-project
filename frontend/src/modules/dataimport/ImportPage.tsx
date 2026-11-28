@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type DragEvent } from "react";
+import { useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, Boxes, Building2, CheckCircle2, CircleDashed, Download, FileSpreadsheet, FileUp, History, PackageSearch, PlusCircle, RefreshCw,
@@ -37,7 +38,9 @@ export function ImportPage() {
   const kindsQ = useImportKinds();
   const kinds = kindsQ.data?.items ?? [];
   const limits = kindsQ.data?.limits ?? { maxBytes: 2 * 1024 * 1024, maxRows: 10_000 };
-  const [kindName, setKindName] = useState<string | null>(null);
+  const [params] = useSearchParams();
+  // ?kind=products opens the page on that kind (links from the Products / Materials ⋯ menus)
+  const [kindName, setKindName] = useState<string | null>(() => params.get("kind"));
   const kind = kinds.find((k) => k.kind === kindName) ?? kinds[0] ?? null;
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);

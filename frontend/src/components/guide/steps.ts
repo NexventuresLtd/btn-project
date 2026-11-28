@@ -25,6 +25,7 @@ export const TOUR_STEPS: TourStep[] = [
   { id: "connection", target: "connection" },
   { id: "production", target: "nav:/production", perm: ["production.record"] },
   { id: "productionSections", target: "production-nav", perm: ["production.view"], route: "/production" },
+  { id: "products", target: "nav:/products", perm: ["production.view", "sales.view", "stock.view", "materials.view", "catalog.manage"] },
   { id: "stock", target: "nav:/stock", perm: ["stock.view"] },
   { id: "stockTools", target: "stock-op-receipt", perm: ["stock.record"], route: "/stock" }, // P2 STK-03/05
   { id: "materials", target: "nav:/materials", perm: ["materials.view"] },

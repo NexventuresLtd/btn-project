@@ -155,7 +155,7 @@ var entities = []*entity{
 		},
 	},
 	{
-		path: "products", name: "Product", table: `"Product"`, perm: "masterdata.manage", orderBy: `"sortOrder" ASC, name ASC`,
+		path: "products", name: "Product", table: `"Product"`, perm: "catalog.manage", orderBy: `"sortOrder" ASC, name ASC`,
 		selectCols: `id, code, name, dimensions, unit, category, "reorderLevel", "defaultPrice", "sortOrder", "isActive", "createdAt"`,
 		collect:    collect[Product](nil),
 		check:      refCheck(refdata.KindProductCategory),
@@ -204,7 +204,7 @@ var entities = []*entity{
 		},
 	},
 	{
-		path: "materials", name: "Material", table: `"Material"`, perm: "masterdata.manage", orderBy: `"sortOrder" ASC, name ASC`,
+		path: "materials", name: "Material", table: `"Material"`, perm: "catalog.manage", orderBy: `"sortOrder" ASC, name ASC`,
 		selectCols: `id, code, name, unit, category, "minLevel"::text AS "minLevel", "sortOrder", "isActive", "createdAt"`,
 		collect:    collect[Material](func(m *Material) { m.MinLevel = db.TrimDecimal(m.MinLevel) }),
 		check:      refCheck(refdata.KindMaterialCategory),
